@@ -1,14 +1,21 @@
+using CesiumForUnity;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
     public sealed class RuntimeGlobeCameraController : MonoBehaviour
     {
-        [SerializeField] private float orbitSensitivity = 0.2f;
+        [SerializeField] private float orbitSensitivity = 100f;
         [SerializeField] private float panSpeed = 10_000f;
         [SerializeField] private float zoomSensitivity = 5f;
         [SerializeField] private float minimumFieldOfView = 10f;
         [SerializeField] private float maximumFieldOfView = 75f;
+
+        private CesiumGlobeAnchor _globeAnchor;
+        private NasaGibsRasterController _rasterController;
+        private double _longitude;
+        private double _latitude;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AddToMainCamera()
@@ -24,10 +31,28 @@ namespace Argus.Simulation.Unity
         {
             Vector2 mouseDelta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y"));
 
-            if (Input.GetMouseButton(0))
+            if (_globeAnchor == null)
             {
-                transform.Rotate(Vector3.up, -mouseDelta.x * orbitSensitivity, Space.Self);
-                transform.Rotate(Vector3.right, mouseDelta.y * orbitSensitivity, Space.Self);
+                _globeAnchor = GetComponentInParent<CesiumGlobeAnchor>();
+                if (_globeAnchor != null)
+                {
+                    double3 position = _globeAnchor.longitudeLatitudeHeight;
+                    _longitude = position.x;
+                    _latitude = position.y;
+                }
+            }
+
+            if (_rasterController == null)
+            {
+                _rasterController = FindFirstObjectByType<NasaGibsRasterController>();
+            }
+
+            if (Input.GetMouseButton(0) && _globeAnchor != null)
+            {
+                _longitude = Mathf.Repeat((float)(_longitude - mouseDelta.x * orbitSensitivity) + 180f, 360f) - 180f;
+                _latitude = Mathf.Clamp((float)(_latitude + mouseDelta.y * orbitSensitivity), -85f, 85f);
+                double3 position = _globeAnchor.longitudeLatitudeHeight;
+                _globeAnchor.longitudeLatitudeHeight = new double3(_longitude, _latitude, position.z);
             }
 
             if (Input.GetMouseButton(2))
@@ -45,6 +70,17 @@ namespace Argus.Simulation.Unity
                     minimumFieldOfView,
                     maximumFieldOfView);
             }
+
+        }
+
+        private void OnGUI()
+        {
+            if (_rasterController == null)
+            {
+                return;
+            }
+
+            GUI.Label(new Rect(12f, 12f, 320f, 24f), "DAY + NIGHT LIGHTS");
         }
     }
 }

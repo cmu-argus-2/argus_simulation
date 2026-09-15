@@ -47,3 +47,4 @@ While the game is running, interact with the Game view:
 - Left-drag to turn the camera.
 - Middle-drag to pan the camera.
 - Use the scroll wheel to zoom.
+- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar hemisphere.
