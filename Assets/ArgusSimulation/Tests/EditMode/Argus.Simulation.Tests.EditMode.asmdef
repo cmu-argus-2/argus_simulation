@@ -1,0 +1,14 @@
+{
+  "name": "Argus.Simulation.Tests.EditMode",
+  "rootNamespace": "Argus.Simulation.Tests",
+  "references": [
+    "Argus.Simulation.Core"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "autoReferenced": false
+}

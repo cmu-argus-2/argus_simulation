@@ -1,0 +1,13 @@
+{
+  "name": "Argus.Simulation.Editor",
+  "rootNamespace": "Argus.Simulation.Editor",
+  "references": [
+    "Argus.Simulation.Core",
+    "Argus.Simulation.Unity",
+    "CesiumForUnity"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "autoReferenced": true
+}
