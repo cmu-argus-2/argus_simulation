@@ -24,7 +24,7 @@ The `.env` file is ignored by Git.
 From a terminal:
 
 ```bash
-cd /Users/sidqian/Downloads/Code/argus-visual
+cd argus-visual
 
 UNITY_EDITOR="/Applications/Unity/Hub/Editor/6000.6.0f1/Unity.app/Contents/MacOS/Unity"
 "$UNITY_EDITOR" -projectPath "$PWD"
@@ -38,13 +38,14 @@ When Unity opens for the first time:
 
 The generated scene is saved at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 
-NASA imagery defaults to `MODIS_Terra_CorrectedReflectance_TrueColor` for `2025-01-15`. To change it, select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
+NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-01-15`. To change it, select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
 
-## Game view controls
+## Simulator controls
 
-While the game is running, interact with the Game view:
-
-- Left-drag to turn the camera.
-- Middle-drag to pan the camera.
-- Use the scroll wheel to zoom.
+- Left-drag to turn the globe, middle-drag to pan, and scroll to zoom.
+- Use the top toolbar to pause, reset, or change simulation speed.
+- Use the mock pose panel to change orbit phase or altitude and apply pitch, yaw, or roll offsets while watching the four side-camera feeds.
+- **RESET POSE** restores the initial mock orbit position and removes all attitude offsets.
+- Toggle telemetry groups from the right-side sensor settings panel.
+- The four lower feeds show the outward-facing cameras mounted on the 1U CubeSat's +X, -X, +Y, and -Y side faces.
 - Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar hemisphere.

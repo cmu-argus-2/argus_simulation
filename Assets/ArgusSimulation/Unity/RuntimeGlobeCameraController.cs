@@ -1,6 +1,8 @@
 using CesiumForUnity;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 
 namespace Argus.Simulation.Unity
 {
@@ -29,7 +31,10 @@ namespace Argus.Simulation.Unity
 
         private void Update()
         {
-            Vector2 mouseDelta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y"));
+            Mouse mouse = Mouse.current;
+            Vector2 mouseDelta = mouse != null ? mouse.delta.ReadValue() : Vector2.zero;
+            bool pointerOverInterface = EventSystem.current != null &&
+                EventSystem.current.IsPointerOverGameObject();
 
             if (_globeAnchor == null)
             {
@@ -44,43 +49,41 @@ namespace Argus.Simulation.Unity
 
             if (_rasterController == null)
             {
-                _rasterController = FindFirstObjectByType<NasaGibsRasterController>();
+                _rasterController = FindAnyObjectByType<NasaGibsRasterController>();
             }
 
-            if (Input.GetMouseButton(0) && _globeAnchor != null)
+            if (!pointerOverInterface && mouse != null && mouse.leftButton.isPressed && _globeAnchor != null)
             {
-                _longitude = Mathf.Repeat((float)(_longitude - mouseDelta.x * orbitSensitivity) + 180f, 360f) - 180f;
-                _latitude = Mathf.Clamp((float)(_latitude + mouseDelta.y * orbitSensitivity), -85f, 85f);
+                const float pointerDeltaToDegrees = 0.002f;
+                _longitude = Mathf.Repeat(
+                    (float)(_longitude - mouseDelta.x * orbitSensitivity * pointerDeltaToDegrees) + 180f,
+                    360f) - 180f;
+                _latitude = Mathf.Clamp(
+                    (float)(_latitude + mouseDelta.y * orbitSensitivity * pointerDeltaToDegrees),
+                    -85f,
+                    85f);
                 double3 position = _globeAnchor.longitudeLatitudeHeight;
                 _globeAnchor.longitudeLatitudeHeight = new double3(_longitude, _latitude, position.z);
             }
 
-            if (Input.GetMouseButton(2))
+            if (!pointerOverInterface && mouse != null && mouse.middleButton.isPressed)
             {
-                Vector3 pan = (-transform.right * mouseDelta.x - transform.up * mouseDelta.y) * panSpeed;
-                transform.localPosition += pan * Time.deltaTime;
+                const float pointerDeltaToPanScale = 0.01f;
+                Vector3 pan = (-transform.right * mouseDelta.x - transform.up * mouseDelta.y) *
+                    panSpeed * pointerDeltaToPanScale;
+                transform.localPosition += pan;
             }
 
-            float scroll = Input.GetAxis("Mouse ScrollWheel");
-            if (Mathf.Abs(scroll) > Mathf.Epsilon)
+            float scroll = mouse != null ? mouse.scroll.ReadValue().y : 0f;
+            if (!pointerOverInterface && Mathf.Abs(scroll) > Mathf.Epsilon)
             {
+                const float scrollDeltaScale = 0.01f;
                 Camera camera = GetComponent<Camera>();
                 camera.fieldOfView = Mathf.Clamp(
-                    camera.fieldOfView - scroll * zoomSensitivity,
+                    camera.fieldOfView - scroll * zoomSensitivity * scrollDeltaScale,
                     minimumFieldOfView,
                     maximumFieldOfView);
             }
-
-        }
-
-        private void OnGUI()
-        {
-            if (_rasterController == null)
-            {
-                return;
-            }
-
-            GUI.Label(new Rect(12f, 12f, 320f, 24f), "DAY + NIGHT LIGHTS");
         }
     }
 }

@@ -4,7 +4,8 @@
   "references": [
     "Argus.Simulation.Core",
     "CesiumForUnity",
-    "Unity.Mathematics"
+    "Unity.Mathematics",
+    "Unity.InputSystem"
   ],
   "autoReferenced": true
 }

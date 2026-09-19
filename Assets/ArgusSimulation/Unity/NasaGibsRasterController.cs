@@ -43,7 +43,7 @@ namespace Argus.Simulation.Unity
 
             if (sunlight == null)
             {
-                sunlight = FindFirstObjectByType<Light>();
+                sunlight = FindAnyObjectByType<Light>();
             }
 
             if (sunlight == null || transform.parent == null)

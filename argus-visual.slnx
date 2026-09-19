@@ -2,5 +2,6 @@
   <Project Path="Argus.Simulation.Core.csproj" />
   <Project Path="Argus.Simulation.Unity.csproj" />
   <Project Path="Argus.Simulation.Tests.EditMode.csproj" />
+  <Project Path="Argus.Simulation.Tests.PlayMode.csproj" />
   <Project Path="Argus.Simulation.Editor.csproj" />
 </Solution>

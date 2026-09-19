@@ -15,6 +15,35 @@ namespace Argus.Simulation.Unity
 
         private CircularOrbitModel _model;
 
+        public double AltitudeMeters
+        {
+            get => altitudeMeters;
+            set
+            {
+                altitudeMeters = Math.Max(100_000.0, Math.Min(2_000_000.0, value));
+                _model = null;
+            }
+        }
+
+        public double PhaseDegrees
+        {
+            get => phaseDegrees;
+            set
+            {
+                phaseDegrees = ((value % 360.0) + 360.0) % 360.0;
+                _model = null;
+            }
+        }
+        public double EstimatedPeriodSeconds
+        {
+            get
+            {
+                double radius = CircularOrbitModel.EarthEquatorialRadiusMeters + altitudeMeters;
+                return 2.0 * Math.PI * Math.Sqrt(
+                    radius * radius * radius / CircularOrbitModel.EarthGravitationalParameter);
+            }
+        }
+
         public bool TryGetState(long sequence, double simulationTimeSeconds, out SpacecraftState state)
         {
             if (_model == null && !TryBuildModel())

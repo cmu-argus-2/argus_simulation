@@ -21,6 +21,15 @@ namespace Argus.Simulation.Unity
 
         public bool IsRunning { get; set; }
         public double SimulationTimeSeconds => _simulationTimeSeconds;
+        public double FixedStepSeconds => fixedStepSeconds;
+        public bool HasState { get; private set; }
+        public SpacecraftState LastState { get; private set; }
+        public ISpacecraftStateSource StateSource => _stateSource;
+        public double TimeScale
+        {
+            get => timeScale;
+            set => timeScale = Math.Max(0.0, value);
+        }
 
         private void Awake()
         {
@@ -66,6 +75,8 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
+            LastState = state;
+            HasState = true;
             StateProduced?.Invoke(state);
             _sequence++;
             _simulationTimeSeconds += fixedStepSeconds;
@@ -77,6 +88,7 @@ namespace Argus.Simulation.Unity
             _accumulatorSeconds = 0.0;
             _simulationTimeSeconds = 0.0;
             _sequence = 0;
+            HasState = false;
         }
 
         private void ResolveStateSource()

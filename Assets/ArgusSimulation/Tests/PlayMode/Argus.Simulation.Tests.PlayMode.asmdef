@@ -1,0 +1,13 @@
+{
+  "name": "Argus.Simulation.Tests.PlayMode",
+  "rootNamespace": "Argus.Simulation.Tests",
+  "references": [
+    "Argus.Simulation.Core",
+    "Argus.Simulation.Unity",
+    "CesiumForUnity"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "autoReferenced": false
+}
