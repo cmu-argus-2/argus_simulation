@@ -120,7 +120,7 @@ namespace Argus.Simulation.Unity
                 ~hiddenLayers,
                 0.05f,
                 10_000_000f,
-                75f);
+                9f);
         }
 
         private void RegisterCamera(Camera camera)
