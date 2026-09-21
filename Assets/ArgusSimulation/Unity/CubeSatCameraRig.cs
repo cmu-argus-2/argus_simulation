@@ -7,16 +7,20 @@ namespace Argus.Simulation.Unity
     [DisallowMultipleComponent]
     public sealed class CubeSatCameraRig : MonoBehaviour
     {
+        // Four side cameras remain for the dashboard.
+        // The fifth, NADIR EARTH -Z, is the navigation camera for EarthLoc.
         private static readonly string[] FeedNames =
         {
             "FORWARD  +X",
             "AFT  -X",
             "STARBOARD  +Y",
-            "PORT  -Y"
+            "PORT  -Y",
+            "NADIR EARTH  -Z"
         };
 
-        private readonly List<Camera> _cameras = new List<Camera>(4);
-        private readonly List<RenderTexture> _renderTextures = new List<RenderTexture>(4);
+        private readonly List<Camera> _cameras = new List<Camera>(5);
+        private readonly List<RenderTexture> _renderTextures =
+            new List<RenderTexture>(5);
 
         private CesiumCameraManager _cameraManager;
 
@@ -43,20 +47,25 @@ namespace Argus.Simulation.Unity
                 sensorRig.SetParent(transform, false);
             }
 
-            // The foundation scene originally contained one nadir camera. The operational
-            // 1U configuration instead has one camera on each of the four lateral faces.
-            foreach (Camera legacyCamera in sensorRig.GetComponentsInChildren<Camera>(true))
+            foreach (Camera legacyCamera in
+                     sensorRig.GetComponentsInChildren<Camera>(true))
             {
                 legacyCamera.enabled = false;
                 legacyCamera.targetTexture = null;
             }
 
+            // Existing operational side cameras.
             RegisterFaceCamera(sensorRig, "Forward +X Camera", Vector3.right);
             RegisterFaceCamera(sensorRig, "Aft -X Camera", Vector3.left);
             RegisterFaceCamera(sensorRig, "Starboard +Y Camera", Vector3.up);
             RegisterFaceCamera(sensorRig, "Port -Y Camera", Vector3.down);
 
+            // The spacecraft uses NADIR TRACK pointing. In its body frame,
+            // -Z is therefore aimed at Earth. This is the navigation camera.
+            RegisterNadirEarthCamera(sensorRig);
+
             _cameraManager = CesiumCameraManager.GetOrCreate(gameObject);
+
             foreach (Camera camera in _cameras)
             {
                 if (!_cameraManager.additionalCameras.Contains(camera))
@@ -66,32 +75,69 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        private void RegisterFaceCamera(Transform sensorRig, string name, Vector3 outwardNormal)
+        private void RegisterFaceCamera(
+            Transform sensorRig,
+            string name,
+            Vector3 outwardNormal)
         {
             const float cameraMountOffsetMeters = 0.06f;
-            Quaternion localRotation = Quaternion.LookRotation(outwardNormal, Vector3.back);
+
+            Quaternion localRotation =
+                Quaternion.LookRotation(outwardNormal, Vector3.back);
+
             Camera camera = CreateCamera(
                 name,
                 sensorRig,
                 outwardNormal * cameraMountOffsetMeters,
                 localRotation);
 
+            ConfigureNavigationCamera(camera);
+            RegisterCamera(camera);
+        }
+
+        private void RegisterNadirEarthCamera(Transform sensorRig)
+        {
+            const float cameraMountOffsetMeters = 0.06f;
+
+            Camera camera = CreateCamera(
+                "Nadir Earth -Z Navigation Camera",
+                sensorRig,
+                Vector3.back * cameraMountOffsetMeters,
+                Quaternion.LookRotation(Vector3.back, Vector3.up));
+
+            ConfigureNavigationCamera(camera);
+            RegisterCamera(camera);
+        }
+
+        private static void ConfigureNavigationCamera(Camera camera)
+        {
             int hiddenLayers =
                 (1 << CubeSatVisualModel.OrbitMarkerLayer) |
                 (1 << CubeSatVisualModel.SpacecraftModelLayer);
-            ConfigureCamera(camera, ~hiddenLayers, 0.05f, 10_000_000f, 75f);
-            RegisterCamera(camera);
+
+            ConfigureCamera(
+                camera,
+                ~hiddenLayers,
+                0.05f,
+                10_000_000f,
+                75f);
         }
 
         private void RegisterCamera(Camera camera)
         {
             camera.enabled = true;
-            RenderTexture renderTexture = new RenderTexture(768, 432, 24, RenderTextureFormat.ARGB32)
+
+            RenderTexture renderTexture = new RenderTexture(
+                768,
+                432,
+                24,
+                RenderTextureFormat.ARGB32)
             {
                 name = camera.name + " Feed",
                 antiAliasing = 2,
                 useMipMap = false
             };
+
             renderTexture.Create();
             camera.targetTexture = renderTexture;
             _cameras.Add(camera);
@@ -108,6 +154,7 @@ namespace Argus.Simulation.Unity
             cameraObject.transform.SetParent(parent, false);
             cameraObject.transform.localPosition = localPosition;
             cameraObject.transform.localRotation = localRotation;
+
             return cameraObject.AddComponent<Camera>();
         }
 

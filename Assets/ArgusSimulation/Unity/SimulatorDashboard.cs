@@ -350,8 +350,8 @@ namespace Argus.Simulation.Unity
             {
                 return;
             }
-
-            for (int index = 0; index < _cameraRig.RenderTextures.Count; index++)
+            int previewCameraCount = Mathf.Min(4, _cameraRig.RenderTextures.Count);
+            for (int index = 0; index < previewCameraCount; index++)
             {
                 float left = index * 0.25f + 0.004f;
                 float right = (index + 1) * 0.25f - 0.004f;
