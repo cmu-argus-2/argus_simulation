@@ -256,7 +256,7 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            string safeEpisodeName = MakeSafeFileName(episodeName);
+            string safeEpisodeName = OutputNameSanitizer.Sanitize(episodeName, "episode");
             string runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
             _episodeDirectory = Path.Combine(
                 Application.persistentDataPath,
@@ -311,7 +311,9 @@ namespace Argus.Simulation.Unity
             // Render the camera now, then copy its RenderTexture to a PNG.
             camera.Render();
 
-            string safeCameraName = MakeSafeFileName(cameraRig.Names[cameraIndex]);
+            string safeCameraName = OutputNameSanitizer.Sanitize(
+                cameraRig.Names[cameraIndex],
+                "camera");
             string imageFileName =
                 $"capture_{captureNumber:D4}_frame_{state.Sequence:D6}_{safeCameraName}.png";
             string imagePath = Path.Combine(_episodeDirectory, imageFileName);
@@ -406,25 +408,5 @@ namespace Argus.Simulation.Unity
             return new[] { vector.X, vector.Y, vector.Z };
         }
 
-        private static string MakeSafeFileName(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return "episode";
-            }
-
-            char[] characters = value.ToCharArray();
-            for (int index = 0; index < characters.Length; index++)
-            {
-                if (!char.IsLetterOrDigit(characters[index]) &&
-                    characters[index] != '_' &&
-                    characters[index] != '-')
-                {
-                    characters[index] = '_';
-                }
-            }
-
-            return new string(characters);
-        }
     }
 }

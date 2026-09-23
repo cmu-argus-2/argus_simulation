@@ -10,6 +10,7 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.IO;
+using Argus.Simulation.Core;
 using CesiumForUnity;
 using Unity.Mathematics;
 using UnityEngine;
@@ -320,11 +321,12 @@ namespace Argus.Simulation.Unity
             string timestamp = DateTime.UtcNow.ToString(
                 "yyyyMMddTHHmmssZ",
                 CultureInfo.InvariantCulture);
+            string safeMapName = OutputNameSanitizer.Sanitize(mapName, "map");
 
             _outputDirectory = Path.Combine(
                 Application.persistentDataPath,
                 "CesiumReferenceMaps",
-                mapName + "_" + timestamp);
+                safeMapName + "_" + timestamp);
 
             Directory.CreateDirectory(_outputDirectory);
 

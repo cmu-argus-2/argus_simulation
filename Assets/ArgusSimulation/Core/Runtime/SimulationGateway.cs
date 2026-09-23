@@ -5,6 +5,8 @@ namespace Argus.Simulation.Core
     // Deterministic closed-loop session used by in-process agents and future transport adapters.
     public sealed class SimulationGateway
     {
+        private const double TimeToleranceSeconds = 1e-9;
+
         private readonly ISimulationEngine _engine;
         private SimulationConfiguration _configuration;
         private long _nextSequence;
@@ -52,7 +54,8 @@ namespace Argus.Simulation.Core
             EnsureInitialized();
             if (!commands.IsValid ||
                 commands.Sequence != _nextSequence ||
-                Math.Abs(commands.ApplyAtSimulationTimeSeconds - _nextSimulationTimeSeconds) > 1e-9)
+                Math.Abs(commands.ApplyAtSimulationTimeSeconds - _nextSimulationTimeSeconds) >
+                    TimeToleranceSeconds)
             {
                 throw new ArgumentException(
                     "Commands must target the gateway's next sequence and simulation time.",
@@ -63,16 +66,92 @@ namespace Argus.Simulation.Core
                 _nextSequence,
                 _nextSimulationTimeSeconds,
                 commands);
-            if (!_engine.TryStep(input, out SimulationSnapshot snapshot) || !snapshot.IsValid)
+            if (!_engine.TryStep(input, out SimulationSnapshot snapshot))
             {
                 throw new InvalidOperationException(
-                    $"Simulation backend '{_engine.BackendName}' failed to produce a valid snapshot.");
+                    $"Simulation backend '{_engine.BackendName}' failed to produce a snapshot.");
+            }
+
+            if (!TryValidateSnapshot(snapshot, input, out string validationError))
+            {
+                throw new InvalidOperationException(
+                    $"Simulation backend '{_engine.BackendName}' produced an invalid or " +
+                    $"out-of-sync snapshot: {validationError}");
             }
 
             _nextSequence++;
             _nextSimulationTimeSeconds = _nextSequence * _configuration.FixedStepSeconds;
             SnapshotProduced?.Invoke(snapshot);
             return snapshot;
+        }
+
+        private bool TryValidateSnapshot(
+            SimulationSnapshot snapshot,
+            SimulationStepInput input,
+            out string validationError)
+        {
+            if (!snapshot.IsValid)
+            {
+                validationError = "the snapshot contract is invalid.";
+                return false;
+            }
+
+            if (!string.Equals(snapshot.RunId, _configuration.RunId, StringComparison.Ordinal))
+            {
+                validationError =
+                    $"run ID '{snapshot.RunId}' does not match '{_configuration.RunId}'.";
+                return false;
+            }
+
+            if (snapshot.Spacecraft.Sequence != input.Sequence)
+            {
+                validationError =
+                    $"state sequence {snapshot.Spacecraft.Sequence} does not match " +
+                    $"requested sequence {input.Sequence}.";
+                return false;
+            }
+
+            if (Math.Abs(
+                    snapshot.Spacecraft.SimulationTimeSeconds - input.SimulationTimeSeconds) >
+                TimeToleranceSeconds)
+            {
+                validationError =
+                    $"state time {snapshot.Spacecraft.SimulationTimeSeconds:R} does not match " +
+                    $"requested time {input.SimulationTimeSeconds:R}.";
+                return false;
+            }
+
+            DateTimeOffset expectedTimestamp =
+                _configuration.EpochUtc.AddSeconds(input.SimulationTimeSeconds);
+            if (snapshot.Spacecraft.TimestampUtc != expectedTimestamp)
+            {
+                validationError =
+                    $"state timestamp {snapshot.Spacecraft.TimestampUtc:O} does not match " +
+                    $"expected timestamp {expectedTimestamp:O}.";
+                return false;
+            }
+
+            if (snapshot.AppliedCommands.Sequence != input.Sequence)
+            {
+                validationError =
+                    $"command sequence {snapshot.AppliedCommands.Sequence} does not match " +
+                    $"requested sequence {input.Sequence}.";
+                return false;
+            }
+
+            if (Math.Abs(
+                    snapshot.AppliedCommands.ApplyAtSimulationTimeSeconds -
+                    input.SimulationTimeSeconds) > TimeToleranceSeconds)
+            {
+                validationError =
+                    $"command time " +
+                    $"{snapshot.AppliedCommands.ApplyAtSimulationTimeSeconds:R} does not match " +
+                    $"requested time {input.SimulationTimeSeconds:R}.";
+                return false;
+            }
+
+            validationError = null;
+            return true;
         }
 
         private void EnsureInitialized()
