@@ -115,7 +115,7 @@ namespace Argus.Simulation.Unity
                     NasaGibsUrl.BuildTemplate(layer, date),
                     "1",
                     true,
-                    60.0);
+                    90.0);
 
                 if (!DateTimeOffset.TryParseExact(
                         nightDateUtc,
