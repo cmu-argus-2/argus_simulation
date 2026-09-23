@@ -40,6 +40,16 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
+        public void TryParseDate_AcceptsIsoDateOnly()
+        {
+            Assert.That(NasaGibsUrl.TryParseDate("2025-06-21", out DateTimeOffset date), Is.True);
+            Assert.That(date, Is.EqualTo(new DateTimeOffset(2025, 6, 21, 0, 0, 0, TimeSpan.Zero)));
+            Assert.That(NasaGibsUrl.TryParseDate("06/21/2025", out _), Is.False);
+            Assert.That(NasaGibsUrl.TryParseDate("2025-06-21T00:00:00Z", out _), Is.False);
+            Assert.That(NasaGibsUrl.TryParseDate(null, out _), Is.False);
+        }
+
+        [Test]
         public void BuildTemplate_RejectsUrlInjection()
         {
             Assert.Throws<ArgumentException>(() =>

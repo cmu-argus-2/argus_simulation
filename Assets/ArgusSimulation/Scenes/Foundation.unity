@@ -782,7 +782,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.NasaGibsRasterController
   layer: VIIRS_SNPP_CorrectedReflectance_TrueColor
-  observationDateUtc: 2025-01-15
+  observationDateUtc: 2025-06-21
   nightLayer: VIIRS_Night_Lights
   nightDateUtc: 2016-01-01
   maximumLevel: 8
@@ -958,7 +958,7 @@ MonoBehaviour:
   _maximumTextureSize: 2048
   _maximumSimultaneousTileLoads: 20
   _subTileCacheBytes: 16777216
-  _templateUrl: https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=VIIRS_SNPP_CorrectedReflectance_TrueColor&STYLES=default&FORMAT=image/png&TRANSPARENT=TRUE&TIME=2025-01-15&SRS=EPSG:4326&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}&WIDTH={width}&HEIGHT={height}
+  _templateUrl: https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=VIIRS_SNPP_CorrectedReflectance_TrueColor&STYLES=default&FORMAT=image/png&TRANSPARENT=TRUE&TIME=2025-06-21&SRS=EPSG:4326&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}&WIDTH={width}&HEIGHT={height}
   _projection: 1
   _specifyTilingScheme: 1
   _rootTilesX: 2

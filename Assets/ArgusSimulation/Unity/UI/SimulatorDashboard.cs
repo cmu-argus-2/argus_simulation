@@ -48,6 +48,10 @@ namespace Argus.Simulation.Unity
         private Text _speedButtonText;
         private Text _captureButtonText;
         private Text _poseStatusText;
+        private GameObject _settingsPanel;
+        private InputField _gtDateField;
+        private InputField _gtLayerField;
+        private Text _settingsStatusText;
         private float _nextTelemetryRefresh;
         private int _speedIndex;
         private double _initialAltitudeMeters;
@@ -178,6 +182,7 @@ namespace Argus.Simulation.Unity
             BuildPoseControlPanel(canvasTransform);
             BuildCameraFeedStrip(canvasTransform);
             BuildTelemetryPanel(canvasTransform);
+            BuildSettingsPanel(canvasTransform);
         }
 
         private void BuildTopBar(RectTransform parent)
@@ -209,7 +214,16 @@ namespace Argus.Simulation.Unity
                 TextAnchor.MiddleCenter,
                 new Color(0.98f, 0.72f, 0.22f),
                 new Vector2(0.37f, 0f),
-                new Vector2(0.54f, 1f));
+                new Vector2(0.46f, 1f));
+
+            Button settingsButton = CreateButton(
+                "Settings Button",
+                topBar,
+                "SETTINGS",
+                new Vector2(0.47f, 0.18f),
+                new Vector2(0.54f, 0.82f));
+            settingsButton.GetComponentInChildren<Text>().fontSize = 15;
+            settingsButton.onClick.AddListener(ToggleSettings);
 
             Button captureButton = CreateButton(
                 "Capture Button",
@@ -494,6 +508,138 @@ namespace Argus.Simulation.Unity
             _telemetryText.verticalOverflow = VerticalWrapMode.Overflow;
             ContentSizeFitter fitter = _telemetryText.gameObject.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        }
+
+        private void BuildSettingsPanel(RectTransform parent)
+        {
+            RectTransform panel = CreatePanel(
+                "Settings Panel",
+                parent,
+                new Vector2(0.20f, 0.36f),
+                new Vector2(0.50f, 0.78f),
+                RaisedPanelColor);
+            _settingsPanel = panel.gameObject;
+
+            CreateText(
+                "Settings Title",
+                panel,
+                "SETTINGS  /  GT IMAGERY",
+                22,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                AccentColor,
+                new Vector2(0.05f, 0.86f),
+                new Vector2(0.95f, 0.97f));
+
+            CreateText(
+                "GT Date Label",
+                panel,
+                "NASA GIBS DATE (UTC, YYYY-MM-DD)",
+                15,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                MutedTextColor,
+                new Vector2(0.05f, 0.74f),
+                new Vector2(0.95f, 0.83f));
+            _gtDateField = CreateInputField(
+                "GT Date Field",
+                panel,
+                NasaGibsRasterController.DefaultObservationDateUtc,
+                new Vector2(0.05f, 0.62f),
+                new Vector2(0.95f, 0.74f));
+
+            CreateText(
+                "GT Layer Label",
+                panel,
+                "NASA GIBS LAYER",
+                15,
+                FontStyle.Bold,
+                TextAnchor.MiddleLeft,
+                MutedTextColor,
+                new Vector2(0.05f, 0.49f),
+                new Vector2(0.95f, 0.58f));
+            _gtLayerField = CreateInputField(
+                "GT Layer Field",
+                panel,
+                NasaGibsUrl.DefaultLayer,
+                new Vector2(0.05f, 0.37f),
+                new Vector2(0.95f, 0.49f));
+
+            _settingsStatusText = CreateText(
+                "Settings Status",
+                panel,
+                string.Empty,
+                14,
+                FontStyle.Normal,
+                TextAnchor.UpperLeft,
+                MutedTextColor,
+                new Vector2(0.05f, 0.17f),
+                new Vector2(0.95f, 0.34f));
+            _settingsStatusText.horizontalOverflow = HorizontalWrapMode.Wrap;
+
+            Button applyButton = CreateButton(
+                "Apply Settings Button",
+                panel,
+                "APPLY",
+                new Vector2(0.05f, 0.04f),
+                new Vector2(0.48f, 0.15f));
+            applyButton.onClick.AddListener(ApplyImagerySettings);
+
+            Button closeButton = CreateButton(
+                "Close Settings Button",
+                panel,
+                "CLOSE",
+                new Vector2(0.52f, 0.04f),
+                new Vector2(0.95f, 0.15f));
+            closeButton.onClick.AddListener(ToggleSettings);
+
+            _settingsPanel.SetActive(false);
+        }
+
+        private void ToggleSettings()
+        {
+            bool opening = !_settingsPanel.activeSelf;
+            _settingsPanel.SetActive(opening);
+            if (!opening)
+            {
+                return;
+            }
+
+            _settingsStatusText.color = MutedTextColor;
+
+            NasaGibsRasterController imagery = FindAnyObjectByType<NasaGibsRasterController>();
+            if (imagery == null)
+            {
+                _settingsStatusText.text = "No NASA GIBS imagery controller in this scene.";
+                return;
+            }
+
+            _gtDateField.text = imagery.ObservationDateUtc;
+            _gtLayerField.text = imagery.Layer;
+            _settingsStatusText.text =
+                $"Launch option: {NasaGibsRasterController.DateCommandLineOption} YYYY-MM-DD " +
+                $"{NasaGibsRasterController.LayerCommandLineOption} LAYER";
+        }
+
+        private void ApplyImagerySettings()
+        {
+            NasaGibsRasterController imagery = FindAnyObjectByType<NasaGibsRasterController>();
+            if (imagery == null)
+            {
+                _settingsStatusText.text = "No NASA GIBS imagery controller in this scene.";
+                return;
+            }
+
+            if (imagery.TryConfigure(_gtLayerField.text, _gtDateField.text, out string error))
+            {
+                _settingsStatusText.text = $"Loading {imagery.Layer} for {imagery.ObservationDateUtc}.";
+                _settingsStatusText.color = new Color(0.3f, 1f, 0.58f);
+            }
+            else
+            {
+                _settingsStatusText.text = error;
+                _settingsStatusText.color = new Color(1f, 0.45f, 0.4f);
+            }
         }
 
         private void RefreshTelemetry()
@@ -819,6 +965,36 @@ namespace Argus.Simulation.Unity
                 Vector2.zero,
                 Vector2.one);
             return button;
+        }
+
+        private InputField CreateInputField(
+            string name,
+            RectTransform parent,
+            string value,
+            Vector2 anchorMin,
+            Vector2 anchorMax)
+        {
+            RectTransform root = CreatePanel(name, parent, anchorMin, anchorMax, PanelColor);
+            Text text = CreateText(
+                "Text",
+                root,
+                string.Empty,
+                17,
+                FontStyle.Normal,
+                TextAnchor.MiddleLeft,
+                TextColor,
+                Vector2.zero,
+                Vector2.one);
+            text.supportRichText = false;
+            text.rectTransform.offsetMin = new Vector2(12f, 0f);
+            text.rectTransform.offsetMax = new Vector2(-12f, 0f);
+
+            InputField field = root.gameObject.AddComponent<InputField>();
+            field.textComponent = text;
+            field.targetGraphic = root.GetComponent<Image>();
+            field.lineType = InputField.LineType.SingleLine;
+            field.text = value;
+            return field;
         }
 
         private Toggle CreateToggle(

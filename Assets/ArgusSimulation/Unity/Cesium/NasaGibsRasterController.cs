@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using Argus.Simulation.Core;
 using CesiumForUnity;
 using UnityEngine;
@@ -13,8 +12,16 @@ namespace Argus.Simulation.Unity
         private const string LegacyDefaultLayer =
             "MODIS_Terra_CorrectedReflectance_TrueColor";
 
+        public const string DateCommandLineOption = "-gt-date";
+        public const string LayerCommandLineOption = "-gt-layer";
+
+        // Northern summer solstice: VIIRS has gap-free daylight imagery all the way to the north
+        // pole. GIBS returns opaque black over whichever pole is in polar night, so no date covers
+        // both poles, and clipping the overlay short of a pole makes Cesium stretch its edge row.
+        public const string DefaultObservationDateUtc = "2025-06-21";
+
         [SerializeField] private string layer = NasaGibsUrl.DefaultLayer;
-        [SerializeField] private string observationDateUtc = "2025-01-15";
+        [SerializeField] private string observationDateUtc = DefaultObservationDateUtc;
         [SerializeField] private string nightLayer = "VIIRS_Night_Lights";
         [SerializeField] private string nightDateUtc = "2016-01-01";
         [SerializeField, Range(0, 8)] private int maximumLevel = 8;
@@ -29,8 +36,17 @@ namespace Argus.Simulation.Unity
         public string ActiveTemplateUrl =>
             _observationOverlay == null ? string.Empty : _observationOverlay.templateUrl;
 
+        public string Layer => layer;
+
+        public string ObservationDateUtc => observationDateUtc;
+
         private void OnEnable()
         {
+            if (Application.isPlaying)
+            {
+                ApplyCommandLineOverrides();
+            }
+
             ApplySettings();
         }
 
@@ -75,11 +91,41 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        public void Configure(string gibsLayer, string dateUtc)
+        public bool TryConfigure(string gibsLayer, string dateUtc, out string error)
         {
+            if (!TrySetImagery(gibsLayer, dateUtc, out error))
+            {
+                return false;
+            }
+
+            ApplySettings();
+            return true;
+        }
+
+        private bool TrySetImagery(string gibsLayer, string dateUtc, out string error)
+        {
+            gibsLayer = gibsLayer?.Trim();
+            dateUtc = dateUtc?.Trim();
+            if (!NasaGibsUrl.TryParseDate(dateUtc, out DateTimeOffset date))
+            {
+                error = "Date must use YYYY-MM-DD.";
+                return false;
+            }
+
+            try
+            {
+                NasaGibsUrl.BuildTemplate(gibsLayer, date);
+            }
+            catch (ArgumentException exception)
+            {
+                error = exception.Message;
+                return false;
+            }
+
             layer = gibsLayer;
             observationDateUtc = dateUtc;
-            ApplySettings();
+            error = null;
+            return true;
         }
 
         [ContextMenu("Apply NASA GIBS Settings")]
@@ -91,12 +137,7 @@ namespace Argus.Simulation.Unity
                 layer = NasaGibsUrl.DefaultLayer;
             }
 
-            if (!DateTimeOffset.TryParseExact(
-                    observationDateUtc,
-                    "yyyy-MM-dd",
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                    out DateTimeOffset date))
+            if (!NasaGibsUrl.TryParseDate(observationDateUtc, out DateTimeOffset date))
             {
                 Debug.LogError("NASA GIBS date must use YYYY-MM-DD.", this);
                 return;
@@ -117,12 +158,7 @@ namespace Argus.Simulation.Unity
                     true,
                     90.0);
 
-                if (!DateTimeOffset.TryParseExact(
-                        nightDateUtc,
-                        "yyyy-MM-dd",
-                        CultureInfo.InvariantCulture,
-                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                        out DateTimeOffset nightDate))
+                if (!NasaGibsUrl.TryParseDate(nightDateUtc, out DateTimeOffset nightDate))
                 {
                     Debug.LogError("NASA GIBS night date must use YYYY-MM-DD.", this);
                     return;
@@ -145,6 +181,31 @@ namespace Argus.Simulation.Unity
             {
                 Debug.LogError(exception.Message, this);
             }
+        }
+
+        private void ApplyCommandLineOverrides()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            string requestedDate = GetCommandLineValue(args, DateCommandLineOption);
+            string requestedLayer = GetCommandLineValue(args, LayerCommandLineOption);
+            if ((requestedDate != null || requestedLayer != null) &&
+                !TrySetImagery(requestedLayer ?? layer, requestedDate ?? observationDateUtc, out string error))
+            {
+                Debug.LogError($"Ignoring NASA GIBS command-line override: {error}", this);
+            }
+        }
+
+        private static string GetCommandLineValue(string[] args, string option)
+        {
+            for (int index = 0; index < args.Length - 1; index++)
+            {
+                if (string.Equals(args[index], option, StringComparison.OrdinalIgnoreCase))
+                {
+                    return args[index + 1];
+                }
+            }
+
+            return null;
         }
 
         private void EnsureOverlays()

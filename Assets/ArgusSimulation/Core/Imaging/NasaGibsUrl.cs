@@ -8,6 +8,16 @@ namespace Argus.Simulation.Core
         public const string DefaultLayer = "VIIRS_SNPP_CorrectedReflectance_TrueColor";
         public const string DefaultBaseLayer = "BlueMarble_NextGeneration";
 
+        public static bool TryParseDate(string value, out DateTimeOffset date)
+        {
+            return DateTimeOffset.TryParseExact(
+                value,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out date);
+        }
+
         public static string BuildBaseTemplate()
         {
             return "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi" +
