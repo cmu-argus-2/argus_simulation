@@ -429,7 +429,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 905790957}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.01987986, y: -9.925284e-19, z: -0.48571512, w: 0.87389106}
+  m_LocalRotation: {x: -0.01987986, y: -3.6752879e-10, z: -0.48571512, w: 0.87389106}
   m_LocalPosition: {x: 20706778, y: 6459468, z: -865460.06}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
@@ -453,24 +453,24 @@ MonoBehaviour:
   _detectTransformChanges: 1
   _localToGlobeFixedMatrix:
     c0:
-      x: 0.6845866640913046
-      y: 0.5027287404166974
-      z: -0.5278303827058273
+      x: 0.6845866719048789
+      y: 0.5027287163217128
+      z: -0.5278303639593841
       w: 0
     c1:
-      x: 0.706436312845015
-      y: -0.6360781131245056
-      z: 0.3104067813336376
+      x: 0.7064362827371633
+      y: -0.6360781161271798
+      z: 0.31040678994273563
       w: 0
     c2:
-      x: 0.17969094368464733
-      y: 0.5853788923107919
-      z: 0.7905964313065871
+      x: 0.17969094341709724
+      y: 0.5853788916841962
+      z: 0.7905964317960469
       w: 0
     c3:
-      x: 17231243.952073637
-      y: -15515081.742729798
-      z: 7520690.372692183
+      x: 17231243.20578227
+      y: -15515081.428466495
+      z: 7520690.275534272
       w: 1
   _localToGlobeFixedMatrixIsValid: 1
 --- !u!1 &1056463585
@@ -499,7 +499,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1056463585}
   serializedVersion: 2
-  m_LocalRotation: {x: -1.3877788e-17, y: 4.8988597e-18, z: -4.072382e-18, w: 1}
+  m_LocalRotation: {x: 0, y: 9.491541e-18, z: -1.4829133e-17, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
@@ -541,10 +541,10 @@ MonoBehaviour:
     c0:
       x: 0.9647534819407176
       y: -0.26315531361395944
-      z: 0
+      z: -0.00000000000000002388933040152164
       w: 0
     c1:
-      x: -0.20236455032458028
+      x: -0.20236455032458026
       y: -0.741888513919219
       z: 0.6392573986170699
       w: 0
@@ -653,6 +653,7 @@ GameObject:
   - component: {fileID: 1574353528}
   - component: {fileID: 1574353527}
   - component: {fileID: 1574353526}
+  - component: {fileID: 1574353529}
   m_Layer: 0
   m_Name: Simulation
   m_TagString: Untagged
@@ -709,6 +710,27 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1574353529
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1574353525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4fef77dd9a484bd2b0ec26eff4aa3d4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.NavigationEpisodeExporter
+  runner: {fileID: 0}
+  cameraRig: {fileID: 0}
+  captureAllCameras: 1
+  selectedCameraIndex: 0
+  episodeName: unity_navigation_episode
+  minimumLoadProgress: 100
+  stableFramesRequired: 10
+  postLoadSettleSeconds: 1
+  loadTimeoutSeconds: 60
 --- !u!1 &1628864759
 GameObject:
   m_ObjectHideFlags: 0
@@ -722,6 +744,9 @@ GameObject:
   - component: {fileID: 1628864763}
   - component: {fileID: 1628864762}
   - component: {fileID: 1628864761}
+  - component: {fileID: 1628864767}
+  - component: {fileID: 1628864766}
+  - component: {fileID: 1628864765}
   m_Layer: 0
   m_Name: Cesium World Terrain + NASA GIBS
   m_TagString: Untagged
@@ -756,10 +781,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cbd8272bf684044419c46b679c0ec97f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.NasaGibsRasterController
-  layer: MODIS_Terra_CorrectedReflectance_TrueColor
+  layer: VIIRS_SNPP_CorrectedReflectance_TrueColor
   observationDateUtc: 2025-01-15
-  tileMatrixSet: 250m
+  nightLayer: VIIRS_Night_Lights
+  nightDateUtc: 2016-01-01
   maximumLevel: 8
+  sunlight: {fileID: 136758097}
 --- !u!114 &1628864762
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -773,12 +800,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: CesiumForUnity::CesiumForUnity.CesiumUrlTemplateRasterOverlay
   _materialKey: 0
-  _showCreditsOnScreen: 1
+  _showCreditsOnScreen: 0
   _maximumScreenSpaceError: 2
   _maximumTextureSize: 2048
   _maximumSimultaneousTileLoads: 20
   _subTileCacheBytes: 16777216
-  _templateUrl: https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/2025-01-15/250m/{z}/{reverseY}/{x}.jpg
+  _templateUrl: https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=BlueMarble_NextGeneration&STYLES=default&FORMAT=image/jpeg&SRS=EPSG:4326&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}&WIDTH={width}&HEIGHT={height}
   _projection: 1
   _specifyTilingScheme: 1
   _rootTilesX: 2
@@ -849,6 +876,102 @@ MonoBehaviour:
   _updateInEditor: 1
   _logSelectionStats: 0
   _createPhysicsMeshes: 0
+--- !u!114 &1628864765
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1628864759}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 19f3030f151b6184fb5d0e96c8c582dc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CesiumForUnity::CesiumForUnity.CesiumUrlTemplateRasterOverlay
+  _materialKey: 3
+  _showCreditsOnScreen: 1
+  _maximumScreenSpaceError: 2
+  _maximumTextureSize: 2048
+  _maximumSimultaneousTileLoads: 20
+  _subTileCacheBytes: 16777216
+  _templateUrl: https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=VIIRS_Night_Lights&STYLES=default&FORMAT=image/png&TRANSPARENT=TRUE&TIME=2016-01-01&SRS=EPSG:4326&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}&WIDTH={width}&HEIGHT={height}
+  _projection: 1
+  _specifyTilingScheme: 1
+  _rootTilesX: 2
+  _rootTilesY: 1
+  _rectangleWest: -180
+  _rectangleSouth: -90
+  _rectangleEast: -145
+  _rectangleNorth: 90
+  _minimumLevel: 0
+  _maximumLevel: 8
+  _tileWidth: 512
+  _tileHeight: 512
+  _requestHeaders: []
+--- !u!114 &1628864766
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1628864759}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 19f3030f151b6184fb5d0e96c8c582dc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CesiumForUnity::CesiumForUnity.CesiumUrlTemplateRasterOverlay
+  _materialKey: 2
+  _showCreditsOnScreen: 1
+  _maximumScreenSpaceError: 2
+  _maximumTextureSize: 2048
+  _maximumSimultaneousTileLoads: 20
+  _subTileCacheBytes: 16777216
+  _templateUrl: https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=VIIRS_Night_Lights&STYLES=default&FORMAT=image/png&TRANSPARENT=TRUE&TIME=2016-01-01&SRS=EPSG:4326&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}&WIDTH={width}&HEIGHT={height}
+  _projection: 1
+  _specifyTilingScheme: 1
+  _rootTilesX: 2
+  _rootTilesY: 1
+  _rectangleWest: 35
+  _rectangleSouth: -90
+  _rectangleEast: 180
+  _rectangleNorth: 90
+  _minimumLevel: 0
+  _maximumLevel: 8
+  _tileWidth: 512
+  _tileHeight: 512
+  _requestHeaders: []
+--- !u!114 &1628864767
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1628864759}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 19f3030f151b6184fb5d0e96c8c582dc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CesiumForUnity::CesiumForUnity.CesiumUrlTemplateRasterOverlay
+  _materialKey: 1
+  _showCreditsOnScreen: 1
+  _maximumScreenSpaceError: 2
+  _maximumTextureSize: 2048
+  _maximumSimultaneousTileLoads: 20
+  _subTileCacheBytes: 16777216
+  _templateUrl: https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=VIIRS_SNPP_CorrectedReflectance_TrueColor&STYLES=default&FORMAT=image/png&TRANSPARENT=TRUE&TIME=2025-01-15&SRS=EPSG:4326&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}&WIDTH={width}&HEIGHT={height}
+  _projection: 1
+  _specifyTilingScheme: 1
+  _rootTilesX: 2
+  _rootTilesY: 1
+  _rectangleWest: -180
+  _rectangleSouth: -90
+  _rectangleEast: 180
+  _rectangleNorth: 60
+  _minimumLevel: 0
+  _maximumLevel: 8
+  _tileWidth: 512
+  _tileHeight: 512
+  _requestHeaders: []
 --- !u!1 &1643489567
 GameObject:
   m_ObjectHideFlags: 0

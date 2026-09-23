@@ -84,6 +84,7 @@ namespace Argus.Simulation.Editor
             AnalyticOrbitStateSource orbitSource = simulation.AddComponent<AnalyticOrbitStateSource>();
             SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
             runner.Configure(orbitSource);
+            simulation.AddComponent<NavigationEpisodeExporter>();
 
             GameObject spacecraft = new GameObject("CubeSat Truth Pose");
             spacecraft.transform.SetParent(geospatialRoot.transform, false);

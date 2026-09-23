@@ -24,6 +24,7 @@ namespace Argus.Simulation.Tests
             AnalyticOrbitStateSource source = simulation.AddComponent<AnalyticOrbitStateSource>();
             SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
+            NavigationEpisodeExporter exporter = simulation.AddComponent<NavigationEpisodeExporter>();
 
             GameObject spacecraft = new GameObject("CubeSat Truth Pose");
             spacecraft.transform.SetParent(geospatialWorld.transform, false);
@@ -41,14 +42,20 @@ namespace Argus.Simulation.Tests
             Assert.That(spacecraft.transform.Find("CubeSat Visual Model"), Is.Not.Null);
             Assert.That(spacecraft.transform.Find("CubeSat Visual Model/1U Chassis"), Is.Not.Null);
             Assert.That(cameraRig, Is.Not.Null);
-            Assert.That(cameraRig.RenderTextures.Count, Is.EqualTo(4));
+            Assert.That(cameraRig.RenderTextures.Count, Is.EqualTo(5));
             Assert.That(cameraRig.Names[0], Is.EqualTo("FORWARD  +X"));
             Assert.That(cameraRig.Names[1], Is.EqualTo("AFT  -X"));
             Assert.That(cameraRig.Names[2], Is.EqualTo("STARBOARD  +Y"));
             Assert.That(cameraRig.Names[3], Is.EqualTo("PORT  -Y"));
+            Assert.That(cameraRig.Names[4], Is.EqualTo("NADIR GT  NORTH-UP"));
+            Assert.That(cameraRig.GroundTruthCamera, Is.Not.Null);
+            Assert.That(cameraRig.GroundTruthCamera.transform.IsChildOf(spacecraft.transform), Is.False);
             Assert.That(sensors, Is.Not.Null);
             Assert.That(sensors.HasSnapshot, Is.True);
             Assert.That(GameObject.Find("Mission Control UI"), Is.Not.Null);
+            Assert.That(GameObject.Find("Capture Button"), Is.Not.Null);
+            Assert.That(exporter.IsCaptureInProgress, Is.False);
+            Assert.That(exporter.EpisodeDirectory, Is.Empty);
             Assert.That(Object.FindAnyObjectByType<OrbitTrailRenderer>(), Is.Not.Null);
 
             Object.Destroy(dashboardObject);

@@ -39,12 +39,14 @@ namespace Argus.Simulation.Unity
         private CesiumSpacecraftPoseDriver _poseDriver;
         private MockSensorSuite _sensorSuite;
         private CubeSatCameraRig _cameraRig;
+        private NavigationEpisodeExporter _episodeExporter;
         private Camera _mainCamera;
         private Font _font;
         private Text _telemetryText;
         private Text _statusText;
         private Text _pauseButtonText;
         private Text _speedButtonText;
+        private Text _captureButtonText;
         private Text _poseStatusText;
         private float _nextTelemetryRefresh;
         private int _speedIndex;
@@ -111,6 +113,13 @@ namespace Argus.Simulation.Unity
                 _sensorSuite = _runner.gameObject.AddComponent<MockSensorSuite>();
             }
             _sensorSuite.Configure(_runner);
+
+            _episodeExporter = _runner.GetComponent<NavigationEpisodeExporter>();
+            if (_episodeExporter == null)
+            {
+                _episodeExporter = _runner.gameObject.AddComponent<NavigationEpisodeExporter>();
+            }
+            _episodeExporter.CaptureStatusChanged += HandleCaptureStatusChanged;
 
             GameObject spacecraft = GameObject.Find("CubeSat Truth Pose");
             if (spacecraft != null)
@@ -189,7 +198,7 @@ namespace Argus.Simulation.Unity
                 TextAnchor.MiddleLeft,
                 AccentColor,
                 new Vector2(0.018f, 0f),
-                new Vector2(0.42f, 1f));
+                new Vector2(0.36f, 1f));
 
             _statusText = CreateText(
                 "Status",
@@ -199,8 +208,18 @@ namespace Argus.Simulation.Unity
                 FontStyle.Bold,
                 TextAnchor.MiddleCenter,
                 new Color(0.98f, 0.72f, 0.22f),
-                new Vector2(0.43f, 0f),
-                new Vector2(0.61f, 1f));
+                new Vector2(0.37f, 0f),
+                new Vector2(0.54f, 1f));
+
+            Button captureButton = CreateButton(
+                "Capture Button",
+                topBar,
+                "CAPTURE",
+                new Vector2(0.55f, 0.18f),
+                new Vector2(0.66f, 0.82f));
+            _captureButtonText = captureButton.GetComponentInChildren<Text>();
+            _captureButtonText.fontSize = 15;
+            captureButton.onClick.AddListener(CaptureImages);
 
             Button pauseButton = CreateButton(
                 "Pause Button",
@@ -338,7 +357,7 @@ namespace Argus.Simulation.Unity
             CreateText(
                 "Camera Header",
                 strip,
-                "1U SIDE CAMERA ARRAY",
+                "1U CAMERA ARRAY  /  NADIR GT",
                 17,
                 FontStyle.Bold,
                 TextAnchor.MiddleLeft,
@@ -350,11 +369,12 @@ namespace Argus.Simulation.Unity
             {
                 return;
             }
-
-            for (int index = 0; index < _cameraRig.RenderTextures.Count; index++)
+            int previewCameraCount = _cameraRig.RenderTextures.Count;
+            for (int index = 0; index < previewCameraCount; index++)
             {
-                float left = index * 0.25f + 0.004f;
-                float right = (index + 1) * 0.25f - 0.004f;
+                float columnWidth = 1f / previewCameraCount;
+                float left = index * columnWidth + 0.004f;
+                float right = (index + 1) * columnWidth - 0.004f;
                 RectTransform feedPanel = CreatePanel(
                     "Feed " + index,
                     strip,
@@ -581,6 +601,7 @@ namespace Argus.Simulation.Unity
                 AddRow(builder, "Aft -X", "ONLINE / 75° FOV");
                 AddRow(builder, "Starboard +Y", "ONLINE / 75° FOV");
                 AddRow(builder, "Port -Y", "ONLINE / 75° FOV");
+                AddRow(builder, "Nadir GT", "NORTH-UP / ATTITUDE-INDEPENDENT / 9° FOV");
                 AddRow(builder, "Frame sync", "LOCKED");
             }
 
@@ -687,6 +708,32 @@ namespace Argus.Simulation.Unity
             _speedIndex = (_speedIndex + 1) % _speedOptions.Length;
             _runner.TimeScale = _speedOptions[_speedIndex];
             _speedButtonText.text = $"TIME {_speedOptions[_speedIndex]:0}×";
+        }
+
+        private void CaptureImages()
+        {
+            if (_episodeExporter == null || !_episodeExporter.RequestCapture())
+            {
+                return;
+            }
+
+            HandleCaptureStatusChanged(_episodeExporter.LastCaptureStatus);
+        }
+
+        private void HandleCaptureStatusChanged(string status)
+        {
+            if (_captureButtonText != null)
+            {
+                _captureButtonText.text = status;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_episodeExporter != null)
+            {
+                _episodeExporter.CaptureStatusChanged -= HandleCaptureStatusChanged;
+            }
         }
 
         private static void AddHeader(StringBuilder builder, string label)
