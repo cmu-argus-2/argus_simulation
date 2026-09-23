@@ -63,7 +63,13 @@ namespace Argus.Simulation.Core
                 _nextSequence,
                 _nextSimulationTimeSeconds,
                 commands);
-            if (!_engine.TryStep(input, out SimulationSnapshot snapshot) || !snapshot.IsValid)
+            if (!_engine.TryStep(input, out SimulationSnapshot snapshot) ||
+                !snapshot.IsValid ||
+                snapshot.RunId != _configuration.RunId ||
+                snapshot.Spacecraft.Sequence != _nextSequence ||
+                Math.Abs(snapshot.Spacecraft.SimulationTimeSeconds - _nextSimulationTimeSeconds) > 1e-9 ||
+                Math.Abs(snapshot.AppliedCommands.ApplyAtSimulationTimeSeconds -
+                    _nextSimulationTimeSeconds) > 1e-9)
             {
                 throw new InvalidOperationException(
                     $"Simulation backend '{_engine.BackendName}' failed to produce a valid snapshot.");
