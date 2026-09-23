@@ -15,9 +15,11 @@
 // Add a gyro bias/noise model after this exporter is working.
 
 using System;
+using System.Collections;
 using System.Globalization;
 using System.IO;
 using Argus.Simulation.Core;
+using CesiumForUnity;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
@@ -30,16 +32,25 @@ namespace Argus.Simulation.Unity
         [SerializeField] private CubeSatCameraRig cameraRig;
 
         [Header("Export settings")]
-        [SerializeField, Min(0.1f)] private double exportIntervalSeconds = 1.0;
         [SerializeField] private bool captureAllCameras = true;
         [SerializeField, Min(0)] private int selectedCameraIndex = 0;
         [SerializeField] private string episodeName = "unity_navigation_episode";
 
+        [Header("Cesium readiness")]
+        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 100f;
+        [SerializeField, Min(1)] private int stableFramesRequired = 10;
+        [SerializeField, Min(0f)] private float postLoadSettleSeconds = 1f;
+        [SerializeField, Min(1f)] private float loadTimeoutSeconds = 60f;
+
         private string _episodeDirectory;
         private string _metadataPath;
-        private double _lastExportSimulationTime = double.NegativeInfinity;
-        private SpacecraftState _pendingState;
-        private bool _hasPendingState;
+        private int _captureNumber;
+
+        public event Action<string> CaptureStatusChanged;
+
+        public bool IsCaptureInProgress { get; private set; }
+        public string LastCaptureStatus { get; private set; } = "CAPTURE";
+        public string EpisodeDirectory => _episodeDirectory ?? string.Empty;
 
         // JsonUtility serializes public fields, not C# properties.
         [Serializable]
@@ -88,22 +99,6 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        private void OnEnable()
-        {
-            if (runner != null)
-            {
-                runner.StateProduced += QueueStateForExport;
-            }
-        }
-
-        private void OnDisable()
-        {
-            if (runner != null)
-            {
-                runner.StateProduced -= QueueStateForExport;
-            }
-        }
-
         private void Start()
         {
             if (runner == null)
@@ -114,74 +109,174 @@ namespace Argus.Simulation.Unity
                 enabled = false;
                 return;
             }
+        }
+
+        public bool RequestCapture()
+        {
+            if (IsCaptureInProgress)
+            {
+                return false;
+            }
+
+            if (runner == null)
+            {
+                SetCaptureStatus("NO RUNNER");
+                return false;
+            }
+
+            if (!runner.HasState && !runner.StepOnce())
+            {
+                SetCaptureStatus("NO STATE");
+                return false;
+            }
+
+            if (cameraRig == null)
+            {
+                cameraRig = FindAnyObjectByType<CubeSatCameraRig>();
+            }
+
+            if (cameraRig == null || cameraRig.Cameras.Count == 0)
+            {
+                SetCaptureStatus("NO CAMERAS");
+                return false;
+            }
+
+            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
+            return true;
+        }
+
+        private IEnumerator CaptureWhenCesiumIsReady(SpacecraftState state)
+        {
+            IsCaptureInProgress = true;
+            bool resumeSimulation = runner.IsRunning;
+            runner.IsRunning = false;
+
+            Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
+                FindObjectsInactive.Exclude);
+            int requiredStableFrames = Math.Max(1, stableFramesRequired);
+            float timeout = Math.Max(1f, loadTimeoutSeconds);
+            float startedAt = Time.realtimeSinceStartup;
+            int stableFrames = 0;
+
+            while (stableFrames < requiredStableFrames)
+            {
+                float progress = MinimumEnabledTilesetProgress(tilesets);
+                if (progress >= minimumLoadProgress)
+                {
+                    stableFrames++;
+                }
+                else
+                {
+                    stableFrames = 0;
+                }
+
+                SetCaptureStatus($"LOADING {progress:0}%");
+                if (Time.realtimeSinceStartup - startedAt >= timeout)
+                {
+                    Debug.LogWarning(
+                        $"Image capture cancelled because Cesium did not reach " +
+                        $"{minimumLoadProgress:0}% load progress within {timeout:0} seconds.",
+                        this);
+                    CompleteCapture(resumeSimulation, "LOAD TIMEOUT");
+                    yield break;
+                }
+
+                yield return null;
+            }
+
+            if (postLoadSettleSeconds > 0f)
+            {
+                SetCaptureStatus("FINALIZING");
+                yield return new WaitForSecondsRealtime(postLoadSettleSeconds);
+            }
+
+            yield return new WaitForEndOfFrame();
+            SetCaptureStatus("CAPTURING");
+            string finalStatus;
+            try
+            {
+                EnsureOutputDirectory();
+                ExportState(state, _captureNumber);
+                _captureNumber++;
+                finalStatus = "SAVED";
+
+                Debug.Log(
+                    "Navigation image capture complete.\nDirectory:\n" + _episodeDirectory,
+                    this);
+            }
+            catch (Exception exception)
+            {
+                finalStatus = "EXPORT ERROR";
+                Debug.LogException(exception, this);
+            }
+
+            CompleteCapture(resumeSimulation, finalStatus);
+        }
+
+        private static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
+        {
+            float progress = 100f;
+            bool foundEnabledTileset = false;
+
+            foreach (Cesium3DTileset tileset in tilesets)
+            {
+                if (tileset == null || !tileset.isActiveAndEnabled)
+                {
+                    continue;
+                }
+
+                foundEnabledTileset = true;
+                progress = Math.Min(progress, tileset.ComputeLoadProgress());
+            }
+
+            return foundEnabledTileset ? progress : 100f;
+        }
+
+        private void CompleteCapture(bool resumeSimulation, string status)
+        {
+            if (runner != null)
+            {
+                runner.IsRunning = resumeSimulation;
+            }
+
+            IsCaptureInProgress = false;
+            SetCaptureStatus(status);
+        }
+
+        private void SetCaptureStatus(string status)
+        {
+            LastCaptureStatus = status;
+            CaptureStatusChanged?.Invoke(status);
+        }
+
+        private void EnsureOutputDirectory()
+        {
+            if (!string.IsNullOrEmpty(_episodeDirectory))
+            {
+                return;
+            }
 
             string safeEpisodeName = MakeSafeFileName(episodeName);
             string runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
-
             _episodeDirectory = Path.Combine(
                 Application.persistentDataPath,
                 "NavigationEpisodes",
                 safeEpisodeName + "_" + runId);
-
             Directory.CreateDirectory(_episodeDirectory);
 
             _metadataPath = Path.Combine(
                 _episodeDirectory,
                 "navigation_metadata.jsonl");
-
             File.WriteAllText(_metadataPath, string.Empty);
-
-            Debug.Log(
-                "Navigation episode export directory:\n" + _episodeDirectory +
-                "\nMetadata file:\n" + _metadataPath,
-                this);
         }
 
-        private void LateUpdate()
-        {
-            // SimulatorDashboard creates the camera rig at runtime.
-            // Wait until that rig exists instead of failing during Start().
-            if (cameraRig == null)
-            {
-                cameraRig = FindFirstObjectByType<CubeSatCameraRig>();
-
-                if (cameraRig == null)
-                {
-                    return;
-                }
-
-                Debug.Log("NavigationEpisodeExporter found CubeSatCameraRig.", this);
-            }
-
-            if (!_hasPendingState)
-            {
-                return;
-            }
-
-            ExportState(_pendingState);
-            _hasPendingState = false;
-        }
-
-        private void QueueStateForExport(SpacecraftState state)
-        {
-            if (state.SimulationTimeSeconds - _lastExportSimulationTime <
-                exportIntervalSeconds)
-            {
-                return;
-            }
-
-            _lastExportSimulationTime = state.SimulationTimeSeconds;
-            _pendingState = state;
-            _hasPendingState = true;
-        }
-
-        private void ExportState(SpacecraftState state)
+        private void ExportState(SpacecraftState state, int captureNumber)
         {
             if (captureAllCameras)
             {
                 for (int index = 0; index < cameraRig.Cameras.Count; index++)
                 {
-                    ExportCamera(state, index);
+                    ExportCamera(state, index, captureNumber);
                 }
 
                 return;
@@ -196,10 +291,13 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            ExportCamera(state, selectedCameraIndex);
+            ExportCamera(state, selectedCameraIndex, captureNumber);
         }
 
-        private void ExportCamera(SpacecraftState state, int cameraIndex)
+        private void ExportCamera(
+            SpacecraftState state,
+            int cameraIndex,
+            int captureNumber)
         {
             Camera camera = cameraRig.Cameras[cameraIndex];
             RenderTexture renderTexture = cameraRig.RenderTextures[cameraIndex];
@@ -215,14 +313,16 @@ namespace Argus.Simulation.Unity
 
             string safeCameraName = MakeSafeFileName(cameraRig.Names[cameraIndex]);
             string imageFileName =
-                $"frame_{state.Sequence:D6}_{safeCameraName}.png";
+                $"capture_{captureNumber:D4}_frame_{state.Sequence:D6}_{safeCameraName}.png";
             string imagePath = Path.Combine(_episodeDirectory, imageFileName);
 
             SaveRenderTextureAsPng(renderTexture, imagePath);
 
             double fy = 0.5 * renderTexture.height /
                 Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
-            double fx = fy * renderTexture.width / renderTexture.height;
+            // Unity's Camera.fieldOfView is vertical. With square pixels, the
+            // horizontal FOV changes with aspect ratio while fx remains equal to fy.
+            double fx = fy;
 
             // Rotation from this camera frame into the CubeSat body frame.
             Quaternion cameraToBody = Quaternion.Inverse(cameraRig.transform.rotation) *

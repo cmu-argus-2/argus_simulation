@@ -23,9 +23,13 @@ namespace Argus.Simulation.Core
             !double.IsNaN(Z) && !double.IsInfinity(Z) &&
             !double.IsNaN(W) && !double.IsInfinity(W);
 
+        public double Magnitude => Math.Sqrt(X * X + Y * Y + Z * Z + W * W);
+
+        public bool IsUnit => IsFinite && Math.Abs(Magnitude - 1.0) <= 1e-6;
+
         public Quaterniond Normalized()
         {
-            double magnitude = Math.Sqrt(X * X + Y * Y + Z * Z + W * W);
+            double magnitude = Magnitude;
             if (magnitude <= 1e-12)
             {
                 throw new InvalidOperationException("Cannot normalize a zero-length quaternion.");

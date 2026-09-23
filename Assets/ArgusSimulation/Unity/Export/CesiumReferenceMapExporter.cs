@@ -39,9 +39,11 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(1)] private int heightPixels = 432;
 
         [Header("Capture")]
-        [Tooltip("Lets Cesium stream/render imagery after each camera move.")]
-        [SerializeField, Min(0.5f)] private float settleSeconds = 3f;
-        [SerializeField] private bool runOnStart = true;
+        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 100f;
+        [SerializeField, Min(1)] private int stableFramesRequired = 10;
+        [SerializeField, Min(0f)] private float postLoadSettleSeconds = 1f;
+        [SerializeField, Min(1f)] private float loadTimeoutSeconds = 60f;
+        [SerializeField] private bool runOnStart;
         [SerializeField] private string mapName = "cesium_reference_map";
 
         private Camera _referenceCamera;
@@ -51,6 +53,7 @@ namespace Argus.Simulation.Unity
         private Texture2D _readbackTexture;
         private string _outputDirectory;
         private string _metadataPath;
+        private bool _lastLoadSucceeded;
 
         private void Start()
         {
@@ -106,8 +109,15 @@ namespace Argus.Simulation.Unity
 
                     MoveReferenceCamera(latitude, longitude);
 
-                    // Cesium needs time to load imagery at this new location.
-                    yield return new WaitForSeconds(settleSeconds);
+                    yield return WaitForCesiumReady();
+                    if (!_lastLoadSucceeded)
+                    {
+                        Debug.LogWarning(
+                            "Reference-map export stopped rather than saving an incomplete tile.",
+                            this);
+                        yield break;
+                    }
+
                     yield return new WaitForEndOfFrame();
 
                     string imageFile = string.Format(
@@ -130,13 +140,8 @@ namespace Argus.Simulation.Unity
                         image_width_px = widthPixels,
                         image_height_px = heightPixels,
                         field_of_view_degrees = fieldOfViewDegrees,
-                        fx_px = FocalLengthPixels(widthPixels, fieldOfViewDegrees),
-                        fy_px = FocalLengthPixels(
-                            heightPixels,
-                            VerticalFieldOfViewDegrees(
-                                widthPixels,
-                                heightPixels,
-                                fieldOfViewDegrees)),
+                        fx_px = FocalLengthPixels(heightPixels, fieldOfViewDegrees),
+                        fy_px = FocalLengthPixels(heightPixels, fieldOfViewDegrees),
                         cx_px = widthPixels * 0.5,
                         cy_px = heightPixels * 0.5
                     };
@@ -254,6 +259,62 @@ namespace Argus.Simulation.Unity
             File.WriteAllBytes(imagePath, _readbackTexture.EncodeToPNG());
         }
 
+        private IEnumerator WaitForCesiumReady()
+        {
+            Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
+                FindObjectsInactive.Exclude);
+            int requiredStableFrames = Math.Max(1, stableFramesRequired);
+            float timeout = Math.Max(1f, loadTimeoutSeconds);
+            float startedAt = Time.realtimeSinceStartup;
+            int stableFrames = 0;
+            _lastLoadSucceeded = false;
+
+            while (stableFrames < requiredStableFrames)
+            {
+                float progress = MinimumEnabledTilesetProgress(tilesets);
+                stableFrames = progress >= minimumLoadProgress
+                    ? stableFrames + 1
+                    : 0;
+
+                if (Time.realtimeSinceStartup - startedAt >= timeout)
+                {
+                    Debug.LogWarning(
+                        $"Cesium did not reach {minimumLoadProgress:0}% load progress " +
+                        $"within {timeout:0} seconds.",
+                        this);
+                    yield break;
+                }
+
+                yield return null;
+            }
+
+            if (postLoadSettleSeconds > 0f)
+            {
+                yield return new WaitForSecondsRealtime(postLoadSettleSeconds);
+            }
+
+            _lastLoadSucceeded = true;
+        }
+
+        private static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
+        {
+            float progress = 100f;
+            bool foundEnabledTileset = false;
+
+            foreach (Cesium3DTileset tileset in tilesets)
+            {
+                if (tileset == null || !tileset.isActiveAndEnabled)
+                {
+                    continue;
+                }
+
+                foundEnabledTileset = true;
+                progress = Math.Min(progress, tileset.ComputeLoadProgress());
+            }
+
+            return foundEnabledTileset ? progress : 100f;
+        }
+
         private void CreateOutputDirectory()
         {
             string timestamp = DateTime.UtcNow.ToString(
@@ -277,25 +338,12 @@ namespace Argus.Simulation.Unity
         }
 
         private static double FocalLengthPixels(
-            int imageWidthPixels,
-            float horizontalFieldOfViewDegrees)
+            int imageHeightPixels,
+            float verticalFieldOfViewDegrees)
         {
-            return 0.5 * imageWidthPixels /
-                Math.Tan(horizontalFieldOfViewDegrees *
+            return 0.5 * imageHeightPixels /
+                Math.Tan(verticalFieldOfViewDegrees *
                     Math.PI / 360.0);
-        }
-
-        private static float VerticalFieldOfViewDegrees(
-            int width,
-            int height,
-            float horizontalFieldOfViewDegrees)
-        {
-            float horizontalRadians =
-                horizontalFieldOfViewDegrees * Mathf.Deg2Rad;
-
-            return 2f * Mathf.Atan(
-                Mathf.Tan(horizontalRadians * 0.5f) *
-                height / (float)width) * Mathf.Rad2Deg;
         }
 
         private void OnDestroy()

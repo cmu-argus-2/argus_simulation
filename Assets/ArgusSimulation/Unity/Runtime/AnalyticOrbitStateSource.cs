@@ -13,7 +13,7 @@ namespace Argus.Simulation.Unity
         [SerializeField, Range(0f, 360f)] private double raanDegrees;
         [SerializeField, Range(0f, 360f)] private double phaseDegrees;
 
-        private CircularOrbitModel _model;
+        private AnalyticSimulationEngine _engine;
 
         public double AltitudeMeters
         {
@@ -21,7 +21,7 @@ namespace Argus.Simulation.Unity
             set
             {
                 altitudeMeters = Math.Max(100_000.0, Math.Min(2_000_000.0, value));
-                _model = null;
+                _engine = null;
             }
         }
 
@@ -31,7 +31,7 @@ namespace Argus.Simulation.Unity
             set
             {
                 phaseDegrees = ((value % 360.0) + 360.0) % 360.0;
-                _model = null;
+                _engine = null;
             }
         }
         public double EstimatedPeriodSeconds
@@ -46,17 +46,28 @@ namespace Argus.Simulation.Unity
 
         public bool TryGetState(long sequence, double simulationTimeSeconds, out SpacecraftState state)
         {
-            if (_model == null && !TryBuildModel())
+            if (_engine == null && !TryBuildEngine())
             {
                 state = default;
                 return false;
             }
 
-            state = _model.Sample(sequence, simulationTimeSeconds);
-            return true;
+            ActuatorCommandSet commands = ActuatorCommandSet.None(sequence, simulationTimeSeconds);
+            SimulationStepInput input = new SimulationStepInput(
+                sequence,
+                simulationTimeSeconds,
+                commands);
+            if (!_engine.TryStep(input, out SimulationSnapshot snapshot))
+            {
+                state = default;
+                return false;
+            }
+
+            state = snapshot.Spacecraft;
+            return state.IsValid;
         }
 
-        private bool TryBuildModel()
+        private bool TryBuildEngine()
         {
             if (!DateTimeOffset.TryParse(
                     epochUtc,
@@ -68,18 +79,21 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            _model = new CircularOrbitModel(
-                parsedEpoch,
+            _engine = new AnalyticSimulationEngine(
                 altitudeMeters,
                 inclinationDegrees,
                 raanDegrees,
                 phaseDegrees);
+            _engine.Initialize(new SimulationConfiguration(
+                "unity-preview",
+                parsedEpoch,
+                0.1));
             return true;
         }
 
         private void OnValidate()
         {
-            _model = null;
+            _engine = null;
         }
     }
 }

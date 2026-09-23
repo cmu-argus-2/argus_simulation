@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using CesiumForUnity;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
@@ -7,26 +8,43 @@ namespace Argus.Simulation.Unity
     [DisallowMultipleComponent]
     public sealed class CubeSatCameraRig : MonoBehaviour
     {
-        // Four side cameras remain for the dashboard.
-        // The fifth, NADIR EARTH -Z, is the navigation camera for EarthLoc.
+        // Four side cameras plus a nadir ground-truth camera are shown in the dashboard.
         private static readonly string[] FeedNames =
         {
             "FORWARD  +X",
             "AFT  -X",
             "STARBOARD  +Y",
             "PORT  -Y",
-            "NADIR EARTH  -Z"
+            "NADIR GT  NORTH-UP"
         };
+
+        [Header("Physical side cameras")]
+        [SerializeField, Range(1f, 120f)]
+        private float sideCameraVerticalFieldOfViewDegrees = 75f;
+
+        [Header("Ground-truth camera")]
+        [SerializeField, Range(1f, 120f)]
+        private float groundTruthVerticalFieldOfViewDegrees = 9f;
+
+        [Header("Shared render settings")]
+        [SerializeField, Min(1)] private int imageWidthPixels = 768;
+        [SerializeField, Min(1)] private int imageHeightPixels = 432;
+        [SerializeField, Min(0.1f)] private float nearClipMeters = 1f;
+        [SerializeField, Min(1000f)] private float farClipMeters = 10_000_000f;
 
         private readonly List<Camera> _cameras = new List<Camera>(5);
         private readonly List<RenderTexture> _renderTextures =
             new List<RenderTexture>(5);
 
         private CesiumCameraManager _cameraManager;
+        private CesiumGlobeAnchor _spacecraftAnchor;
+        private CesiumGlobeAnchor _groundTruthAnchor;
+        private Camera _groundTruthCamera;
 
         public IReadOnlyList<Camera> Cameras => _cameras;
         public IReadOnlyList<RenderTexture> RenderTextures => _renderTextures;
         public IReadOnlyList<string> Names => FeedNames;
+        public Camera GroundTruthCamera => _groundTruthCamera;
 
         private void Awake()
         {
@@ -60,9 +78,10 @@ namespace Argus.Simulation.Unity
             RegisterFaceCamera(sensorRig, "Starboard +Y Camera", Vector3.up);
             RegisterFaceCamera(sensorRig, "Port -Y Camera", Vector3.down);
 
-            // The spacecraft uses NADIR TRACK pointing. In its body frame,
-            // -Z is therefore aimed at Earth. This is the navigation camera.
-            RegisterNadirEarthCamera(sensorRig);
+            // This virtual camera is intentionally not parented to the body. It
+            // follows spacecraft position but ignores body attitude, providing a
+            // stable north-up nadir image for ground-truth validation.
+            RegisterNadirGroundTruthCamera();
 
             _cameraManager = CesiumCameraManager.GetOrCreate(gameObject);
 
@@ -73,6 +92,11 @@ namespace Argus.Simulation.Unity
                     _cameraManager.additionalCameras.Add(camera);
                 }
             }
+        }
+
+        private void LateUpdate()
+        {
+            UpdateGroundTruthPose();
         }
 
         private void RegisterFaceCamera(
@@ -91,36 +115,84 @@ namespace Argus.Simulation.Unity
                 outwardNormal * cameraMountOffsetMeters,
                 localRotation);
 
-            ConfigureNavigationCamera(camera);
+            ConfigureSideCamera(camera);
             RegisterCamera(camera);
         }
 
-        private void RegisterNadirEarthCamera(Transform sensorRig)
+        private void RegisterNadirGroundTruthCamera()
         {
-            const float cameraMountOffsetMeters = 0.06f;
+            _spacecraftAnchor = GetComponent<CesiumGlobeAnchor>();
+            Transform geospatialParent = transform.parent;
+            if (_spacecraftAnchor == null || geospatialParent == null)
+            {
+                Debug.LogError(
+                    "Nadir GT requires the CubeSat and camera to be under a CesiumGeoreference.",
+                    this);
+                return;
+            }
 
-            Camera camera = CreateCamera(
-                "Nadir Earth -Z Navigation Camera",
-                sensorRig,
-                Vector3.back * cameraMountOffsetMeters,
-                Quaternion.LookRotation(Vector3.back, Vector3.up));
+            GameObject cameraObject = new GameObject("Nadir Ground Truth Camera");
+            cameraObject.transform.SetParent(geospatialParent, false);
+            _groundTruthCamera = cameraObject.AddComponent<Camera>();
+            _groundTruthAnchor = cameraObject.AddComponent<CesiumGlobeAnchor>();
+            _groundTruthAnchor.adjustOrientationForGlobeWhenMoving = false;
+            _groundTruthAnchor.detectTransformChanges = false;
 
-            ConfigureNavigationCamera(camera);
-            RegisterCamera(camera);
+            ConfigureNadirCamera(_groundTruthCamera);
+            RegisterCamera(_groundTruthCamera);
+            UpdateGroundTruthPose();
         }
 
-        private static void ConfigureNavigationCamera(Camera camera)
+        private void ConfigureSideCamera(Camera camera)
+        {
+            ConfigureCamera(
+                camera,
+                VisibleWorldLayers(),
+                nearClipMeters,
+                farClipMeters,
+                sideCameraVerticalFieldOfViewDegrees);
+        }
+
+        private void ConfigureNadirCamera(Camera camera)
+        {
+            ConfigureCamera(
+                camera,
+                VisibleWorldLayers(),
+                nearClipMeters,
+                farClipMeters,
+                groundTruthVerticalFieldOfViewDegrees);
+        }
+
+        private void UpdateGroundTruthPose()
+        {
+            if (_spacecraftAnchor == null || _groundTruthAnchor == null)
+            {
+                return;
+            }
+
+            _groundTruthAnchor.positionGlobeFixed =
+                _spacecraftAnchor.positionGlobeFixed;
+
+            // Cesium East-Up-North: look along local -Up with image-up set to
+            // North. This remains independent of CubeSat pitch, yaw, and roll.
+            Quaternion northUpNadir = Quaternion.LookRotation(
+                Vector3.down,
+                Vector3.forward);
+            _groundTruthAnchor.rotationEastUpNorth = new quaternion(
+                northUpNadir.x,
+                northUpNadir.y,
+                northUpNadir.z,
+                northUpNadir.w);
+            _groundTruthAnchor.Sync();
+        }
+
+        private static int VisibleWorldLayers()
         {
             int hiddenLayers =
                 (1 << CubeSatVisualModel.OrbitMarkerLayer) |
                 (1 << CubeSatVisualModel.SpacecraftModelLayer);
 
-            ConfigureCamera(
-                camera,
-                ~hiddenLayers,
-                0.05f,
-                10_000_000f,
-                9f);
+            return ~hiddenLayers;
         }
 
         private void RegisterCamera(Camera camera)
@@ -128,8 +200,8 @@ namespace Argus.Simulation.Unity
             camera.enabled = true;
 
             RenderTexture renderTexture = new RenderTexture(
-                768,
-                432,
+                imageWidthPixels,
+                imageHeightPixels,
                 24,
                 RenderTextureFormat.ARGB32)
             {
@@ -192,6 +264,11 @@ namespace Argus.Simulation.Unity
                     renderTexture.Release();
                     Destroy(renderTexture);
                 }
+            }
+
+            if (_groundTruthCamera != null)
+            {
+                Destroy(_groundTruthCamera.gameObject);
             }
         }
     }
