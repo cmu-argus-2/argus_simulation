@@ -24,7 +24,9 @@ namespace Argus.Simulation.Unity
             Vector3d reactionWheelRpm,
             double radioRssiDbm,
             double downlinkKbps,
-            bool starTrackerValid)
+            bool starTrackerValid,
+            bool hasSunGeometry,
+            double illuminationFraction)
         {
             State = state;
             LongitudeDegrees = longitudeDegrees;
@@ -44,6 +46,8 @@ namespace Argus.Simulation.Unity
             RadioRssiDbm = radioRssiDbm;
             DownlinkKbps = downlinkKbps;
             StarTrackerValid = starTrackerValid;
+            HasSunGeometry = hasSunGeometry;
+            IlluminationFraction = illuminationFraction;
         }
 
         public SpacecraftState State { get; }
@@ -53,6 +57,8 @@ namespace Argus.Simulation.Unity
         public double SpeedMetersPerSecond { get; }
         public Vector3d AccelerationEcef { get; }
         public Vector3d MagneticFieldNanoTesla { get; }
+        // Unit spacecraft-to-Sun direction in the body frame; zero in umbra. From SPICE when
+        // HasSunGeometry, otherwise a mock rotating vector.
         public Vector3d SunVectorBody { get; }
         public int GpsSatellites { get; }
         public double BatteryPercent { get; }
@@ -64,6 +70,14 @@ namespace Argus.Simulation.Unity
         public double RadioRssiDbm { get; }
         public double DownlinkKbps { get; }
         public bool StarTrackerValid { get; }
+
+        // True when Sun direction and illumination come from the SPICE ephemeris and shadow model.
+        public bool HasSunGeometry { get; }
+
+        // Visible fraction of the Sun's disk (1 sunlit, 0 umbra).
+        public double IlluminationFraction { get; }
+
+        public SunlightCondition SunlightCondition => EarthShadowModel.Classify(IlluminationFraction);
     }
 
     public sealed class MockSensorSuite : MonoBehaviour
@@ -134,12 +148,27 @@ namespace Argus.Simulation.Unity
                 22_000.0 * Math.Cos(latitudeRadians),
                 2_500.0 * Math.Sin(time / 900.0),
                 -44_000.0 * Math.Sin(latitudeRadians));
-            Vector3d sunVector = new Vector3d(
-                Math.Cos(time / 86164.0 * Math.PI * 2.0),
-                Math.Sin(time / 86164.0 * Math.PI * 2.0),
-                0.32).Normalized();
+            Vector3d sunVector;
+            double sunlight;
+            SunObservation sun = default;
+            bool hasSunGeometry = runner != null &&
+                runner.StateSource is AnalyticOrbitStateSource source &&
+                source.TryGetSunObservation(state, out sun);
+            if (hasSunGeometry)
+            {
+                sunlight = sun.IlluminationFraction;
+                sunVector = sunlight > 0.0 ? sun.SunDirectionBody : new Vector3d(0.0, 0.0, 0.0);
+            }
+            else
+            {
+                sunVector = new Vector3d(
+                    Math.Cos(time / 86164.0 * Math.PI * 2.0),
+                    Math.Sin(time / 86164.0 * Math.PI * 2.0),
+                    0.32).Normalized();
+                sunlight = Math.Max(0.0, sunVector.X);
+            }
 
-            double sunlight = Math.Max(0.0, sunVector.X);
+            // Power and thermal below remain mock models; only their illumination input is real.
             Latest = new MockSensorSnapshot(
                 state,
                 longitude,
@@ -164,7 +193,9 @@ namespace Argus.Simulation.Unity
                     760.0 * Math.Sin(time / 125.0)),
                 -72.0 + 5.0 * Math.Sin(time / 45.0),
                 256.0 + 96.0 * Math.Max(0.0, Math.Cos(time / 70.0)),
-                Math.Sin(time / 500.0) < 0.94);
+                Math.Sin(time / 500.0) < 0.94,
+                hasSunGeometry,
+                sunlight);
 
             _previousVelocity = state.VelocityEcefMetersPerSecond;
             _previousTime = state.SimulationTimeSeconds;

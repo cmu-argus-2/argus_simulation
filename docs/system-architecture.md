@@ -131,6 +131,48 @@ future contract that adds ECI, LVLH, NED, camera, or sensor frames must name the
 in the field or schema. Adapters perform conversions at boundaries; they must never
 infer a frame from an unlabeled vector.
 
+### SPICE frames and time mapping
+
+- **Inertial frame:** J2000 (EME2000). The analytic orbit's inclination is measured from
+  the J2000 equator and its RAAN from the J2000 +X axis.
+- **Earth-fixed frame:** ITRF93. With an `IEphemerisProvider`, `SpacecraftState`'s
+  ECEF fields are ITRF93, produced by SPICE's 6x6 J2000 -> ITRF93 state transform so
+  velocity includes the rotating-frame term. Without a provider, the analytic engine
+  falls back to a constant spin with zero Earth rotation angle at the epoch; longitudes
+  are then offset by the true angle (about 114.4 deg at 2025-01-15T00:00Z).
+- **Time:** simulation time `t` is uniform SI seconds from the run epoch.
+  - SPICE ephemeris time: `et = et(epoch) + t`, in TDB seconds past J2000.
+  - UTC timestamp: `epoch + t`. This matches SPICE's UTC for `et` to within 1 ms
+    unless a leap second falls inside the run; the generator checks this for every
+    sample.
+- **Epoch and coverage:** the provider's epoch must equal the run epoch, or
+  `Initialize` rejects the provider. Outside the provider's coverage, stepping fails
+  instead of extrapolating, and the Unity runner pauses.
+- **Data:** `Argus.Spice/regenerate.sh` generates the ephemeris file and the exact
+  SPICE spacecraft reference used by the tests.
+
+### Sun geometry and eclipse
+
+- `SolarGeometry.Observe(state, ephemerisSample)` requires both inputs to be at the same
+  simulation time, and throws otherwise.
+  - Sun direction: `sun_itrf93 - spacecraft_itrf93`, both relative to Earth's center at
+    that time, then rotated into body coordinates with `BodyToEcef`.
+  - Result: a `SunObservation` holding the direction, distance, and illumination.
+- `EarthShadowModel` is a conical umbra/penumbra model (Montenbruck & Gill section
+  3.4.2). It returns the visible fraction of the Sun's disk, classified as sunlit,
+  penumbra, or umbra.
+  - Assumptions: a spherical Earth at the equatorial radius, the IAU nominal solar
+    radius, no atmosphere, and a geometric Sun.
+  - Accuracy: against SPICE `gfoclt` with ellipsoidal Earth and Sun (fixture in
+    `Tests/Fixtures/`), shadow entry and exit agree within 2.3 s for the Foundation orbit.
+- Manual attitude offsets live in `AnalyticOrbitStateSource` and are applied to every
+  produced `SpacecraftState`, so the rendered pose, the sun sensor, and exports share one
+  attitude.
+- `SunLightDriver` aims the scene's directional light along the SPICE Earth-to-Sun
+  direction. The night-lights overlay reads that light in Earth-fixed coordinates.
+  Power and thermal telemetry remain mock models that use the real illumination
+  fraction as their input.
+
 ## 8. Sensor architecture
 
 Each sensor consists of four separable responsibilities:

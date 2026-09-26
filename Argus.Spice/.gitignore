@@ -1,0 +1,4 @@
+# Downloaded SPICE kernels (large; fetched and hash-checked by generate_reference.py).
+kernels/
+.venv/
+__pycache__/

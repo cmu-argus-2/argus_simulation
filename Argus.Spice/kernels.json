@@ -1,0 +1,43 @@
+{
+  "comment": "Pinned SPICE kernels. generate_reference.py downloads missing files into kernels/ and refuses any file whose SHA-256 differs. NAIF moves superseded files into a_old_versions/, so each entry lists fallback URLs.",
+  "kernels": [
+    {
+      "file": "naif0012.tls",
+      "type": "LSK",
+      "purpose": "Leap seconds for UTC <-> ephemeris time (TDB).",
+      "urls": [
+        "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls"
+      ],
+      "sha256": "678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b"
+    },
+    {
+      "file": "de440s.bsp",
+      "type": "SPK",
+      "purpose": "JPL DE440 planetary ephemeris (short span, 1849-2150): Sun and Earth positions.",
+      "urls": [
+        "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp",
+        "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/a_old_versions/de440s.bsp"
+      ],
+      "sha256": "c1c7feeab882263fc493a9d5a5b2ddd71b54826cdf65d8d17a76126b260a49f2"
+    },
+    {
+      "file": "earth_000101_261222_260925.bpc",
+      "type": "binary PCK",
+      "purpose": "High-precision Earth orientation (ITRF93): reconstructed 2000-01-01 to 2026-09-25, predicted to 2026-12-22.",
+      "urls": [
+        "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/earth_000101_261222_260925.bpc",
+        "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/a_old_versions/earth_000101_261222_260925.bpc"
+      ],
+      "sha256": "11743732ad25c0d9a257eed273b9eaa72eab492097df766e1f86d33c585e981e"
+    },
+    {
+      "file": "pck00011.tpc",
+      "type": "text PCK",
+      "purpose": "Body constants (Earth and Sun radii, used by the eclipse model).",
+      "urls": [
+        "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc"
+      ],
+      "sha256": "3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1"
+    }
+  ]
+}

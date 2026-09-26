@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Argus.Simulation.Core;
 using CesiumForUnity;
 using Unity.Mathematics;
@@ -49,7 +50,8 @@ namespace Argus.Simulation.Unity
                 ? analytic.EstimatedPeriodSeconds
                 : 5_700.0;
 
-            Vector3[] positions = new Vector3[sampleCount];
+            // Times without a state (e.g. beyond ephemeris coverage) are skipped, not drawn at the origin.
+            List<Vector3> positions = new List<Vector3>(sampleCount);
             for (int index = 0; index < sampleCount; index++)
             {
                 double time = periodSeconds * index / (sampleCount - 1.0);
@@ -61,11 +63,11 @@ namespace Argus.Simulation.Unity
                 Vector3d ecef = state.PositionEcefMeters;
                 double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
                     new double3(ecef.X, ecef.Y, ecef.Z));
-                positions[index] = new Vector3((float)unity.x, (float)unity.y, (float)unity.z);
+                positions.Add(new Vector3((float)unity.x, (float)unity.y, (float)unity.z));
             }
 
-            _lineRenderer.positionCount = positions.Length;
-            _lineRenderer.SetPositions(positions);
+            _lineRenderer.positionCount = positions.Count;
+            _lineRenderer.SetPositions(positions.ToArray());
         }
 
         private void EnsureLineRenderer()

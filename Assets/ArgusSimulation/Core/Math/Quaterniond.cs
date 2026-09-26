@@ -38,6 +38,35 @@ namespace Argus.Simulation.Core
             return new Quaterniond(X / magnitude, Y / magnitude, Z / magnitude, W / magnitude);
         }
 
+        public static Quaterniond Identity => new Quaterniond(0.0, 0.0, 0.0, 1.0);
+
+        // Inverse rotation for a unit quaternion.
+        public Quaterniond Conjugate => new Quaterniond(-X, -Y, -Z, W);
+
+        // Right-handed rotation of angleRadians about axis.
+        public static Quaterniond FromAxisAngle(Vector3d axis, double angleRadians)
+        {
+            Vector3d unit = axis.Normalized();
+            double sine = Math.Sin(0.5 * angleRadians);
+            return new Quaterniond(unit.X * sine, unit.Y * sine, unit.Z * sine, Math.Cos(0.5 * angleRadians));
+        }
+
+        // Hamilton product: (a * b).Rotate(v) == a.Rotate(b.Rotate(v)).
+        public static Quaterniond operator *(Quaterniond a, Quaterniond b) =>
+            new Quaterniond(
+                a.W * b.X + a.X * b.W + a.Y * b.Z - a.Z * b.Y,
+                a.W * b.Y - a.X * b.Z + a.Y * b.W + a.Z * b.X,
+                a.W * b.Z + a.X * b.Y - a.Y * b.X + a.Z * b.W,
+                a.W * b.W - a.X * b.X - a.Y * b.Y - a.Z * b.Z);
+
+        // For a body-to-frame quaternion, maps body-frame vectors into that frame.
+        public Vector3d Rotate(Vector3d value)
+        {
+            Vector3d axis = new Vector3d(X, Y, Z);
+            Vector3d t = Vector3d.Cross(axis, value) * 2.0;
+            return value + t * W + Vector3d.Cross(axis, t);
+        }
+
         // The inputs are the body-frame axes expressed in the target frame.
         public static Quaterniond FromBasis(Vector3d xAxis, Vector3d yAxis, Vector3d zAxis)
         {
