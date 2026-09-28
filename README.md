@@ -47,14 +47,22 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 
 ## SPICE environment (Earth orientation, Sun, eclipse)
 
-Earth orientation, the Sun direction, and eclipse status come from NASA/JPL SPICE data.
-Python generates that data offline, and Unity only reads the resulting JSON file. The
-default scenario covers one orbit starting at `2025-01-15T00:00:00Z`. After 5,680 s of
-simulation time the run pauses with a console warning instead of extrapolating.
+SPICE does **not** propagate the spacecraft orbit. The current development backend uses
+`CircularOrbitModel` to generate a deterministic circular orbit in J2000; a future
+Basilisk backend can replace it through the same simulation interface. SPICE supplies
+Earth orientation (J2000 → ITRF93) and Sun geometry, which are applied to the analytic
+orbit to produce Earth-fixed state, lighting, and eclipse status.
+
+Python generates the SPICE environment data offline, and Unity only reads the resulting
+JSON file. The committed environment coverage starts at `2025-01-15T00:00:00Z` and spans
+`0–5,680 s`. The final sample at `t = 5,680.0 s` is valid. During automatic playback, the
+first step requested beyond that boundary pauses the simulation and logs a warning; the
+ephemeris provider never extrapolates. A direct `StepOnce()` call returns `false` when no
+state is available.
 
 | SPICE-derived | Current limitation |
 |---|---|
-| Earth orientation (J2000 → ITRF93), and therefore the ground track | Analytic circular-orbit dynamics omit drag and perturbations |
+| Earth orientation (J2000 → ITRF93), used to transform the analytic orbit into Earth-fixed coordinates | Spacecraft position and velocity come from `CircularOrbitModel`, which omits drag and perturbations |
 | Sun direction in the body frame, scene light, and night-lights hemisphere | Magnetometer, GNSS, reaction-wheel, and star-tracker models are unavailable |
 | Sunlit / penumbra / umbra status (conical Earth-shadow model) | Power, thermal, and communications models are unavailable |
 
