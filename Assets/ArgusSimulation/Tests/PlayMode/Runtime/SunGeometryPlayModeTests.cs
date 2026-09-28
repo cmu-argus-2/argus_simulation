@@ -14,7 +14,6 @@ namespace Argus.Simulation.Tests
         private GameObject _sunlight;
         private AnalyticOrbitStateSource _source;
         private SimulationRunner _runner;
-        private MockSensorSuite _sensors;
         private CesiumGlobeAnchor _anchor;
         private CesiumGeoreference _georeference;
 
@@ -29,8 +28,6 @@ namespace Argus.Simulation.Tests
             _runner = _simulation.AddComponent<SimulationRunner>();
             _runner.Configure(_source);
             _runner.IsRunning = false;
-            _sensors = _simulation.AddComponent<MockSensorSuite>();
-            _sensors.Configure(_runner);
 
             GameObject spacecraft = new GameObject("CubeSat Truth Pose");
             spacecraft.transform.SetParent(_world.transform, false);
@@ -52,25 +49,26 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
-        public void AttitudeNudge_UpdatesRenderedPoseAndSunSensorConsistently()
+        public void AttitudeNudge_UpdatesRenderedPoseAndSunGeometryConsistently()
         {
             Assert.That(_runner.StepOnce(), Is.True);
-            Vector3d before = _sensors.Latest.SunVectorBody;
-            Assert.That(_sensors.Latest.HasSunGeometry, Is.True);
+            Assert.That(
+                _source.TryGetSunObservation(_runner.LastState, out SunObservation before),
+                Is.True);
 
             // Unity Euler (0, 0, 90) is a +90 deg rotation about body +Z.
             _source.NudgeAttitude(new Vector3(0f, 0f, 90f));
             Assert.That(_runner.StepOnce(), Is.True);
             SpacecraftState state = _runner.LastState;
-            Vector3d after = _sensors.Latest.SunVectorBody;
+            Assert.That(_source.TryGetSunObservation(state, out SunObservation after), Is.True);
 
             // 0.1 s of nadir-tracking motion moves the Sun by ~1e-4 rad in the body frame.
-            Assert.That((after - new Vector3d(before.Y, -before.X, before.Z)).Magnitude, Is.LessThan(1e-3));
-            Quaterniond sensed = _sensors.Latest.State.BodyToEcef;
-            Assert.That(
-                new[] { sensed.X, sensed.Y, sensed.Z, sensed.W },
-                Is.EqualTo(new[] { state.BodyToEcef.X, state.BodyToEcef.Y, state.BodyToEcef.Z, state.BodyToEcef.W }),
-                "sensors use the shared attitude");
+            Vector3d expected = new Vector3d(
+                before.SunDirectionBody.Y,
+                -before.SunDirectionBody.X,
+                before.SunDirectionBody.Z);
+            Assert.That((after.SunDirectionBody - expected).Magnitude, Is.LessThan(1e-3));
+            Assert.That(after.SimulationTimeSeconds, Is.EqualTo(state.SimulationTimeSeconds));
             Assert.That(state.BodyToEcef.Magnitude, Is.EqualTo(1.0).Within(1e-12));
 
             quaternion rendered = _anchor.rotationGlobeFixed;
@@ -82,13 +80,14 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
-        public void Sensors_ReportUmbraDuringEclipseAndSunlightAfter()
+        public void EnvironmentReportsUmbraDuringEclipseAndSunlightAfter()
         {
             _runner.Configure(_source, 100.0);
             _runner.IsRunning = false;
 
             Assert.That(_runner.StepOnce(), Is.True);
-            Assert.That(_sensors.Latest.SunlightCondition, Is.EqualTo(SunlightCondition.Sunlit));
+            Assert.That(_source.TryGetSunObservation(_runner.LastState, out SunObservation sun), Is.True);
+            Assert.That(sun.Condition, Is.EqualTo(SunlightCondition.Sunlit));
 
             while (_runner.SimulationTimeSeconds <= 1_800.0)
             {
@@ -96,16 +95,17 @@ namespace Argus.Simulation.Tests
             }
 
             Assert.That(_runner.LastState.SimulationTimeSeconds, Is.EqualTo(1_800.0).Within(1e-6));
-            Assert.That(_sensors.Latest.SunlightCondition, Is.EqualTo(SunlightCondition.Umbra));
-            Assert.That(_sensors.Latest.SunVectorBody.Magnitude, Is.EqualTo(0.0));
-            Assert.That(_sensors.Latest.SolarPowerWatts, Is.EqualTo(0.0));
+            Assert.That(_source.TryGetSunObservation(_runner.LastState, out sun), Is.True);
+            Assert.That(sun.Condition, Is.EqualTo(SunlightCondition.Umbra));
+            Assert.That(sun.IlluminationFraction, Is.EqualTo(0.0));
 
             while (_runner.SimulationTimeSeconds <= 4_000.0)
             {
                 Assert.That(_runner.StepOnce(), Is.True);
             }
 
-            Assert.That(_sensors.Latest.SunlightCondition, Is.EqualTo(SunlightCondition.Sunlit));
+            Assert.That(_source.TryGetSunObservation(_runner.LastState, out sun), Is.True);
+            Assert.That(sun.Condition, Is.EqualTo(SunlightCondition.Sunlit));
         }
 
         [Test]

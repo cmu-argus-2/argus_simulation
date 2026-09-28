@@ -51,14 +51,15 @@ Assets/ArgusSimulation/
 | Sun geometry and eclipse | `SunObservation`, `SolarGeometry`, `EarthShadowModel` |
 | Core math | `Vector3d`, `Quaterniond`, `Matrix3d` |
 | Headless orchestration | `SimulationGateway` |
-| Sensor contracts | `SensorFrame<TPayload>` |
+| Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
+| Implemented sensor model | `IdealBodyRateSensorModel` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticOrbitStateSource` |
 | Unity camera system | `CubeSatCameraRig` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
 | Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer`, `SunLightDriver` |
-| Temporary sensors | `MockSensorSuite` |
+| Unity sensor bridge | `SimulationSensorRuntime` |
 | GUI | `SimulatorDashboard` |
 | Scene creation | `FoundationSceneBuilder` |
 

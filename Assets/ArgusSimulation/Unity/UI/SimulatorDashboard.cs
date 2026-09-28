@@ -14,14 +14,11 @@ namespace Argus.Simulation.Unity
     {
         private enum SensorGroup
         {
-            OrbitGps,
-            Imu,
-            Adcs,
+            OrbitTruth,
+            BodyRate,
             Environment,
-            Power,
-            Thermal,
-            Communications,
-            Cameras
+            Cameras,
+            SensorAvailability
         }
 
         private static readonly Color PanelColor = new Color(0.025f, 0.043f, 0.067f, 0.96f);
@@ -36,7 +33,7 @@ namespace Argus.Simulation.Unity
 
         private SimulationRunner _runner;
         private AnalyticOrbitStateSource _orbitSource;
-        private MockSensorSuite _sensorSuite;
+        private SimulationSensorRuntime _sensorRuntime;
         private CubeSatCameraRig _cameraRig;
         private NavigationEpisodeExporter _episodeExporter;
         private Camera _mainCamera;
@@ -110,12 +107,12 @@ namespace Argus.Simulation.Unity
                 _initialPhaseDegrees = _orbitSource.PhaseDegrees;
             }
 
-            _sensorSuite = _runner.GetComponent<MockSensorSuite>();
-            if (_sensorSuite == null)
+            _sensorRuntime = _runner.GetComponent<SimulationSensorRuntime>();
+            if (_sensorRuntime == null)
             {
-                _sensorSuite = _runner.gameObject.AddComponent<MockSensorSuite>();
+                _sensorRuntime = _runner.gameObject.AddComponent<SimulationSensorRuntime>();
             }
-            _sensorSuite.Configure(_runner);
+            _sensorRuntime.Configure(_runner);
 
             _episodeExporter = _runner.GetComponent<NavigationEpisodeExporter>();
             if (_episodeExporter == null)
@@ -145,7 +142,7 @@ namespace Argus.Simulation.Unity
             OrbitTrailRenderer trail = FindAnyObjectByType<OrbitTrailRenderer>();
             if (trail == null)
             {
-                GameObject trailObject = new GameObject("Mock Orbit Visualization");
+                GameObject trailObject = new GameObject("Orbit Visualization");
                 trail = trailObject.AddComponent<OrbitTrailRenderer>();
             }
             trail.Configure(_runner);
@@ -169,19 +166,14 @@ namespace Argus.Simulation.Unity
             return light != null && light.type == LightType.Directional ? light : null;
         }
 
-        private static string DescribeSunlight(MockSensorSnapshot snapshot)
+        private static string DescribeSunlight(SunObservation observation)
         {
-            if (!snapshot.HasSunGeometry)
-            {
-                return snapshot.SolarPowerWatts > 1.0 ? "SUNLIGHT (mock)" : "ECLIPSE (mock)";
-            }
-
-            switch (snapshot.SunlightCondition)
+            switch (observation.Condition)
             {
                 case SunlightCondition.Sunlit:
                     return "SUNLIT";
                 case SunlightCondition.Penumbra:
-                    return $"PENUMBRA {snapshot.IlluminationFraction * 100.0:F0}%";
+                    return $"PENUMBRA {observation.IlluminationFraction * 100.0:F0}%";
                 default:
                     return "UMBRA (ECLIPSE)";
             }
@@ -298,7 +290,7 @@ namespace Argus.Simulation.Unity
             CreateText(
                 "Source Badge",
                 topBar,
-                "MOCK ORBIT",
+                "ANALYTIC ORBIT",
                 17,
                 FontStyle.Bold,
                 TextAnchor.MiddleCenter,
@@ -330,7 +322,7 @@ namespace Argus.Simulation.Unity
         private void BuildPoseControlPanel(RectTransform parent)
         {
             RectTransform panel = CreatePanel(
-                "Mock Pose Controls",
+                "Pose Controls",
                 parent,
                 new Vector2(0.012f, 0.805f),
                 new Vector2(0.688f, 0.888f),
@@ -339,7 +331,7 @@ namespace Argus.Simulation.Unity
             _poseStatusText = CreateText(
                 "Pose Status",
                 panel,
-                "MOCK POSE CONTROL",
+                "POSE CONTROL",
                 14,
                 FontStyle.Bold,
                 TextAnchor.MiddleLeft,
@@ -464,7 +456,7 @@ namespace Argus.Simulation.Unity
             CreateText(
                 "Telemetry Title",
                 sidePanel,
-                "TELEMETRY & SENSOR SETTINGS",
+                "TRUTH & SENSOR STATUS",
                 23,
                 FontStyle.Bold,
                 TextAnchor.MiddleLeft,
@@ -485,8 +477,7 @@ namespace Argus.Simulation.Unity
 
             string[] labels =
             {
-                "ORBIT / GPS", "IMU", "ADCS", "ENVIRONMENT",
-                "POWER", "THERMAL", "COMMS", "CAMERAS"
+                "ORBIT TRUTH", "BODY RATE", "ENVIRONMENT", "CAMERAS", "AVAILABILITY"
             };
             SensorGroup[] groups = (SensorGroup[])Enum.GetValues(typeof(SensorGroup));
             for (int index = 0; index < groups.Length; index++)
@@ -510,7 +501,7 @@ namespace Argus.Simulation.Unity
                 "Telemetry Viewport",
                 sidePanel,
                 new Vector2(0.035f, 0.025f),
-                new Vector2(0.97f, 0.685f),
+                new Vector2(0.97f, 0.765f),
                 RaisedPanelColor);
             viewport.gameObject.AddComponent<RectMask2D>();
 
@@ -680,11 +671,11 @@ namespace Argus.Simulation.Unity
         {
             UpdatePoseStatus();
 
-            if (_runner == null || _sensorSuite == null || !_sensorSuite.HasSnapshot)
+            if (_runner == null || !_runner.HasState)
             {
                 _statusText.text = "● WAITING FOR STATE";
                 _statusText.color = new Color(0.98f, 0.72f, 0.22f);
-                _telemetryText.text = "Waiting for the mock orbit state source…";
+                _telemetryText.text = "Waiting for spacecraft state…";
                 return;
             }
 
@@ -694,98 +685,103 @@ namespace Argus.Simulation.Unity
                 : new Color(1f, 0.72f, 0.24f);
             _pauseButtonText.text = _runner.IsRunning ? "PAUSE" : "RESUME";
 
-            MockSensorSnapshot snapshot = _sensorSuite.Latest;
-            SpacecraftState state = snapshot.State;
-            StringBuilder builder = new StringBuilder(2400);
+            SpacecraftState state = _runner.LastState;
+            StringBuilder builder = new StringBuilder(1400);
 
-            if (IsGroupVisible(SensorGroup.OrbitGps))
+            if (IsGroupVisible(SensorGroup.OrbitTruth))
             {
-                AddHeader(builder, "ORBIT / GPS");
+                AddHeader(builder, "SPACECRAFT TRUTH");
                 AddRow(builder, "UTC", state.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss.fff"));
                 AddRow(builder, "Simulation time", $"{state.SimulationTimeSeconds,10:F1} s");
                 AddRow(builder, "Sequence", state.Sequence.ToString());
-                AddRow(builder, "Latitude", $"{snapshot.LatitudeDegrees,10:F4}°");
-                AddRow(builder, "Longitude", $"{snapshot.LongitudeDegrees,10:F4}°");
-                AddRow(builder, "Altitude", $"{snapshot.AltitudeMeters / 1000.0,10:F2} km");
-                AddRow(builder, "Ground speed", $"{snapshot.SpeedMetersPerSecond / 1000.0,10:F3} km/s");
-                AddRow(builder, "GPS fix (mock)", $"3D / {snapshot.GpsSatellites} satellites");
                 AddRow(builder, "Earth orientation", _orbitSource != null && _orbitSource.Ephemeris != null
                     ? "SPICE J2000→ITRF93"
-                    : "SIMPLIFIED SPIN (mock)");
+                    : "ANALYTIC CONSTANT-SPIN FALLBACK");
                 AddVector(builder, "ECEF position km", state.PositionEcefMeters / 1000.0);
                 AddVector(builder, "ECEF velocity m/s", state.VelocityEcefMetersPerSecond);
-            }
-
-            if (IsGroupVisible(SensorGroup.Imu))
-            {
-                AddHeader(builder, "IMU");
-                AddVector(builder, "Accel ECEF m/s²", snapshot.AccelerationEcef);
-                AddVector(builder, "Gyro body rad/s", state.AngularVelocityBodyRadiansPerSecond);
-                AddRow(builder, "Accelerometer", "NOMINAL");
-                AddRow(builder, "Gyroscope", "NOMINAL");
-            }
-
-            if (IsGroupVisible(SensorGroup.Adcs))
-            {
-                AddHeader(builder, "ADCS / ATTITUDE SENSORS");
+                AddRow(builder, "Speed", $"{state.VelocityEcefMetersPerSecond.Magnitude / 1000.0:F3} km/s");
                 Quaterniond q = state.BodyToEcef;
                 AddRow(builder, "Body→ECEF q", $"{q.X:F4}, {q.Y:F4}, {q.Z:F4}, {q.W:F4}");
-                AddVector(builder, "Magnetometer nT (mock)", snapshot.MagneticFieldNanoTesla);
-                AddVector(builder, snapshot.HasSunGeometry ? "Sun sensor" : "Sun sensor (mock)", snapshot.SunVectorBody);
-                AddVector(builder, "Reaction wheels RPM (mock)", snapshot.ReactionWheelRpm);
-                AddRow(builder, "Star tracker (mock)", snapshot.StarTrackerValid ? "LOCKED" : "SUN BLINDED");
-                AddRow(builder, "Pointing mode", "NADIR TRACK");
+            }
+
+            if (IsGroupVisible(SensorGroup.BodyRate))
+            {
+                AddHeader(builder, "BODY-RATE SENSOR");
+                if (_sensorRuntime != null &&
+                    _sensorRuntime.HasOutput &&
+                    _sensorRuntime.Latest.TryGetFrame(
+                        SimulationSensorRuntime.BodyRateSensorId,
+                        out SensorFrame<AngularRateMeasurement> bodyRate))
+                {
+                    AddRow(builder, "Status", bodyRate.Status.ToString().ToUpperInvariant());
+                    AddRow(builder, "Source", bodyRate.Source);
+                    AddRow(builder, "Frame", bodyRate.FrameId);
+                    AddRow(builder, "Sensor sequence", bodyRate.Sequence.ToString());
+                    if (bodyRate.Status == SensorFrameStatus.Valid)
+                    {
+                        AddVector(
+                            builder,
+                            "Angular rate rad/s",
+                            bodyRate.Payload.AngularVelocitySensorRadiansPerSecond);
+                    }
+                }
+                else
+                {
+                    AddRow(builder, "Status", "UNAVAILABLE — no frame produced");
+                }
             }
 
             if (IsGroupVisible(SensorGroup.Environment))
             {
-                AddHeader(builder, "ENVIRONMENT");
-                double horizon = Math.Acos(CircularOrbitModel.EarthEquatorialRadiusMeters /
-                    (CircularOrbitModel.EarthEquatorialRadiusMeters + Math.Max(0.0, snapshot.AltitudeMeters))) *
-                    180.0 / Math.PI;
-                AddRow(builder, "Earth horizon", $"{horizon:F2}°");
-                AddRow(builder, "Solar state", DescribeSunlight(snapshot));
-                AddRow(builder, "Atmosphere", "NRLMSISE-00 PLACEHOLDER");
-                AddRow(builder, "Radiation", "0.18 mGy/day (mock)");
-            }
-
-            if (IsGroupVisible(SensorGroup.Power))
-            {
-                AddHeader(builder, "POWER (MOCK MODEL, REAL ILLUMINATION)");
-                AddRow(builder, "Battery", $"{snapshot.BatteryPercent:F1}%");
-                AddRow(builder, "Bus voltage", $"{snapshot.BusVoltage:F2} V");
-                AddRow(builder, "Bus current", $"{snapshot.BusCurrent:F2} A");
-                AddRow(builder, "Solar generation", $"{snapshot.SolarPowerWatts:F1} W");
-                AddRow(builder, "EPS status", "NOMINAL");
-            }
-
-            if (IsGroupVisible(SensorGroup.Thermal))
-            {
-                AddHeader(builder, "THERMAL (MOCK MODEL, REAL ILLUMINATION)");
-                AddRow(builder, "Battery", $"{snapshot.TemperaturesCelsius.X:F1} °C");
-                AddRow(builder, "Avionics", $"{snapshot.TemperaturesCelsius.Y:F1} °C");
-                AddRow(builder, "Payload", $"{snapshot.TemperaturesCelsius.Z:F1} °C");
-                AddRow(builder, "Heaters", "AUTO / OFF");
-            }
-
-            if (IsGroupVisible(SensorGroup.Communications))
-            {
-                AddHeader(builder, "COMMUNICATIONS (MOCK)");
-                AddRow(builder, "UHF RSSI", $"{snapshot.RadioRssiDbm:F1} dBm");
-                AddRow(builder, "Downlink", $"{snapshot.DownlinkKbps:F0} kbps");
-                AddRow(builder, "Packets", $"TX {state.Sequence * 3} / RX {state.Sequence}");
-                AddRow(builder, "Ground station", "SIMULATED PASS");
+                AddHeader(builder, "SPICE ENVIRONMENT TRUTH");
+                if (_orbitSource != null &&
+                    _orbitSource.TryGetSunObservation(state, out SunObservation sun))
+                {
+                    AddRow(builder, "Solar state", DescribeSunlight(sun));
+                    AddRow(builder, "Illumination", $"{sun.IlluminationFraction * 100.0:F1}%");
+                    AddVector(builder, "Sun direction body", sun.SunDirectionBody);
+                    AddVector(builder, "Sun direction ITRF93", sun.SunDirectionItrf93);
+                }
+                else
+                {
+                    AddRow(builder, "Status", "UNAVAILABLE — no SPICE sample");
+                }
             }
 
             if (IsGroupVisible(SensorGroup.Cameras))
             {
                 AddHeader(builder, "CAMERA / PAYLOAD STATUS");
-                AddRow(builder, "Forward +X", "ONLINE / 75° FOV");
-                AddRow(builder, "Aft -X", "ONLINE / 75° FOV");
-                AddRow(builder, "Starboard +Y", "ONLINE / 75° FOV");
-                AddRow(builder, "Port -Y", "ONLINE / 75° FOV");
-                AddRow(builder, "Nadir GT", "NORTH-UP / ATTITUDE-INDEPENDENT / 9° FOV");
-                AddRow(builder, "Frame sync", "LOCKED");
+                if (_cameraRig == null || _cameraRig.Cameras.Count == 0)
+                {
+                    AddRow(builder, "Status", "UNAVAILABLE — no camera rig");
+                }
+                else
+                {
+                    for (int index = 0; index < _cameraRig.Cameras.Count; index++)
+                    {
+                        Camera camera = _cameraRig.Cameras[index];
+                        string resolution = camera.targetTexture == null
+                            ? "no target"
+                            : $"{camera.targetTexture.width}×{camera.targetTexture.height}";
+                        string status = camera.enabled ? "ACTIVE" : "DISABLED";
+                        AddRow(
+                            builder,
+                            _cameraRig.Names[index],
+                            $"{status} / {camera.fieldOfView:F1}° VFOV / {resolution}");
+                    }
+                }
+            }
+
+            if (IsGroupVisible(SensorGroup.SensorAvailability))
+            {
+                AddHeader(builder, "UNIMPLEMENTED SENSOR MODELS");
+                AddRow(builder, "GNSS", "UNAVAILABLE — no model registered");
+                AddRow(builder, "Accelerometer", "UNAVAILABLE — no model registered");
+                AddRow(builder, "Magnetometer", "UNAVAILABLE — no model registered");
+                AddRow(builder, "Sun sensor", "UNAVAILABLE — no model registered");
+                AddRow(builder, "Star tracker", "UNAVAILABLE — no model registered");
+                AddRow(builder, "Power / thermal", "UNAVAILABLE — no model registered");
+                AddRow(builder, "Radio / radiation", "UNAVAILABLE — no model registered");
             }
 
             _telemetryText.text = builder.ToString();
@@ -853,7 +849,7 @@ namespace Argus.Simulation.Unity
 
             Vector3 attitude = _orbitSource.ManualAttitudeOffsetDegrees;
             _poseStatusText.text =
-                $"MOCK POSE\nPHASE {_orbitSource.PhaseDegrees:0}°  ALT {_orbitSource.AltitudeMeters / 1000.0:0} KM\n" +
+                $"ANALYTIC STATE\nPHASE {_orbitSource.PhaseDegrees:0}°  ALT {_orbitSource.AltitudeMeters / 1000.0:0} KM\n" +
                 $"P {attitude.x:0}°  Y {attitude.y:0}°  R {attitude.z:0}°";
         }
 
