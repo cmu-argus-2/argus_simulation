@@ -18,6 +18,7 @@ namespace Argus.Simulation.Unity
         private long _sequence;
 
         public event Action<SpacecraftState> StateProduced;
+        public event Action SimulationReset;
 
         public bool IsRunning { get; set; }
         public double SimulationTimeSeconds => _simulationTimeSeconds;
@@ -89,6 +90,7 @@ namespace Argus.Simulation.Unity
             _simulationTimeSeconds = 0.0;
             _sequence = 0;
             HasState = false;
+            SimulationReset?.Invoke();
         }
 
         private void ResolveStateSource()
