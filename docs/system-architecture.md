@@ -140,10 +140,13 @@ Each sensor consists of four separable responsibilities:
 3. **Model:** sampling cadence, physics, noise, bias, quantization, and failures.
 4. **Adapter:** simulated output, physical input, replay, transport, or export.
 
-All sources publish the same `SensorFrame<TPayload>` envelope. This allows a run to
-replace a simulated sensor with physical sensor input without changing consumers.
+All sources publish the same `SensorFrame<TPayload>` envelope. `SensorManager` owns
+registration and lifecycle, while `SensorModel<TPayload>` owns deterministic sampling
+cadence. This allows a run to replace a simulated sensor with physical sensor input
+without changing consumers. Missing sensor implementations do not generate values;
+an attached source must publish `Unavailable`, or the sensor is omitted from an output set.
 
-Planned hierarchy:
+Target hierarchy (only the ideal body-rate model is currently implemented):
 
 ```text
 SensorModel<TPayload>
@@ -282,7 +285,7 @@ Argus.Export/                      Dataset and replay writers
 - [x] Deterministic in-process `SimulationGateway`.
 - [x] Standard sensor and image envelopes.
 - [x] Renderer abstraction.
-- [ ] Move mock sensor generation out of Unity.
+- [x] Remove fabricated Unity telemetry and publish sensor data through the core model.
 - [ ] Implement camera base/profile classes and the Arducam IMX708 profile.
 
 ### Runtime separation
@@ -307,10 +310,12 @@ Argus.Export/                      Dataset and replay writers
 ## 16. Current limitations
 
 The analytic backend is only a deterministic integration fixture. It records actuator
-commands but does not yet apply them to orbit or attitude. `MockSensorSuite` remains in
-the Unity assembly and will be migrated behind sensor interfaces. Network transports,
-Protobuf definitions, the Basilisk adapter, and physical hardware adapters are planned
-but are not implemented yet.
+commands but does not yet apply them to orbit or attitude. The only implemented
+non-image sensor is a truth-backed, noise-free body-rate model; GPS, accelerometer,
+magnetometer, power, thermal, radio, radiation, and star-tracker models are unavailable
+until their physics and hardware profiles are implemented. Network transports, Protobuf
+definitions, the Basilisk adapter, and physical hardware adapters are planned but are
+not implemented yet.
 
 ## References
 

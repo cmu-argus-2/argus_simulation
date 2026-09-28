@@ -1,9 +1,11 @@
 using System.Collections;
+using Argus.Simulation.Core;
 using Argus.Simulation.Unity;
 using CesiumForUnity;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 
 namespace Argus.Simulation.Tests
 {
@@ -37,7 +39,7 @@ namespace Argus.Simulation.Tests
             yield return null;
 
             CubeSatCameraRig cameraRig = spacecraft.GetComponent<CubeSatCameraRig>();
-            MockSensorSuite sensors = simulation.GetComponent<MockSensorSuite>();
+            SimulationSensorRuntime sensors = simulation.GetComponent<SimulationSensorRuntime>();
 
             Assert.That(spacecraft.transform.Find("CubeSat Visual Model"), Is.Not.Null);
             Assert.That(spacecraft.transform.Find("CubeSat Visual Model/1U Chassis"), Is.Not.Null);
@@ -51,9 +53,20 @@ namespace Argus.Simulation.Tests
             Assert.That(cameraRig.GroundTruthCamera, Is.Not.Null);
             Assert.That(cameraRig.GroundTruthCamera.transform.IsChildOf(spacecraft.transform), Is.False);
             Assert.That(sensors, Is.Not.Null);
-            Assert.That(sensors.HasSnapshot, Is.True);
+            Assert.That(sensors.HasOutput, Is.True);
+            Assert.That(
+                sensors.Latest.TryGetFrame(
+                    SimulationSensorRuntime.BodyRateSensorId,
+                    out SensorFrame<AngularRateMeasurement> bodyRate),
+                Is.True);
+            Assert.That(bodyRate.Status, Is.EqualTo(SensorFrameStatus.Valid));
             Assert.That(GameObject.Find("Mission Control UI"), Is.Not.Null);
             Assert.That(GameObject.Find("Capture Button"), Is.Not.Null);
+            Text telemetry = GameObject.Find("Telemetry Text").GetComponent<Text>();
+            StringAssert.Contains("BODY-RATE SENSOR", telemetry.text);
+            StringAssert.Contains("UNAVAILABLE — no model registered", telemetry.text);
+            StringAssert.DoesNotContain("GPS fix", telemetry.text);
+            StringAssert.DoesNotContain("mock", telemetry.text.ToLowerInvariant());
             Assert.That(exporter.IsCaptureInProgress, Is.False);
             Assert.That(exporter.EpisodeDirectory, Is.Empty);
             Assert.That(Object.FindAnyObjectByType<OrbitTrailRenderer>(), Is.Not.Null);
