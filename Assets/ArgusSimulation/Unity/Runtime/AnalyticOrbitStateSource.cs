@@ -7,6 +7,7 @@ namespace Argus.Simulation.Unity
 {
     public sealed class AnalyticOrbitStateSource : MonoBehaviour, ISpacecraftStateSource
     {
+        public string SourceName => "ANALYTIC";
         [SerializeField] private string epochUtc = "2025-01-15T00:00:00Z";
         [SerializeField, Min(100_000f)] private double altitudeMeters = 500_000.0;
         [SerializeField, Range(0f, 180f)] private double inclinationDegrees = 51.6;

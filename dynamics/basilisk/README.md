@@ -2,7 +2,9 @@
 
 Haoyuan's standalone capability checks for the dynamics side of Argus simulation.
 These use illustrative parameters, not confirmed Argus hardware specifications.
-They are not yet connected to Unity, the visual exporter, or FSW/OD.
+The synchronized state and gyro scenario can be replayed in Unity through the
+development-only file adapter described below. It is not connected to FSW/OD,
+actuator feedback or a live Basilisk process.
 
 ## Run the sensor experiments
 
@@ -48,6 +50,26 @@ These experiments are independent scenarios, not synchronized observations of on
 
 ## Gyro sample contract
 
+### First synchronized integration dataset
+
+Run `python experiments/synchronized_gyro.py` for a 60-second Earth-orbit
+scenario with attitude truth and ideal/noisy gyros sampled together at 20 Hz.
+It verifies matching timestamps, 0.05-second spacing, finite outputs, ideal gyro
+agreement and circular-orbit radius preservation. Output is written under
+`experiments/results/synchronized_gyro/` as `samples.jsonl`, `metadata.json`
+and `metrics.json`. The 1,200 valid records exclude the initialization reading.
+Use `--duration` and `--epoch` to set duration and the timezone-aware clock epoch.
+
+This is an intermediate dataset, **not an Argus-compatible ECEF stream**:
+position/velocity use the scenario inertial N frame; attitude is `sigma_BN`
+(inertial-to-body MRP). UTC is a clock label, not astronomical frame alignment.
+Hardware values are illustrative. ECEF/frame conversion, the new
+`ISimulationEngine` transport and actuator/FSW integration remain to be implemented.
+The temporary synthetic fixed-frame adapter below exists only for the offline
+Unity smoke test; it is not a production ECI/ECEF conversion.
+
+### Original standalone gyro export
+
 ```text
 timestamp,gyroX,gyroY,gyroZ
 ```
@@ -76,14 +98,70 @@ It exports `orbit/orbit_ground_truth.csv` with
 coordinates, m and m/s. It does not export attitude, IMU or camera metadata,
 and is not an ISS trajectory reconstruction. No historical orbit CSV is included.
 
+## Temporary frame translator (offline only)
+
+From the repository root, using the working Basilisk interpreter:
+
+```bash
+../framework/.venv/bin/python -m unittest discover -s dynamics/basilisk -p 'test_frame_adapter.py' -v
+../framework/.venv/bin/python dynamics/basilisk/frame_adapter.py dynamics/basilisk/experiments/results/synchronized_gyro/samples.jsonl
+```
+
+This creates `synthetic_fixed_samples.jsonl` next to the input; it refuses to
+overwrite existing output (use `--output` with a new filename when rerunning).
+It does not modify the source data or require another simulation run.
+
+Profile `synthetic-earth-fixed-aligned-at-t0-v1` matches the constant Earth
+rotation convention in `CircularOrbitModel`: fixed axes equal scenario N at
+t=0, rotation rate 7.2921150e-5 rad/s. UTC labels do not determine Earth angle.
+This is **not astronomical ECEF/ITRF**, and is unsuitable for real geographic
+accuracy evaluation. Replace this profile with Yi Ni's agreed frame/time model.
+
+Translation includes rotating position, subtracting Earth cross position from
+inertial velocity before rotating it, and converting Basilisk N-to-body MRP to
+active body-to-fixed quaternion **x,y,z,w**. Inertial-relative body gyro values
+are unchanged; noisy measurements remain separate from state truth.
+Output names use `fixed`, not `ecef`, deliberately. The JSON schema is an offline
+intermediate format, not an existing Unity deserialization/transport contract.
+
 ## Next integration boundary
 
 Unity already defines `ISpacecraftStateSource` and `SpacecraftState` under
 `Assets/ArgusSimulation/Core`. It expects elapsed time, UTC time, ECEF position
 and velocity (m, m/s), body-to-ECEF quaternion (x,y,z,w), and body angular rate.
-The next change should create a single synchronized Basilisk scenario, define
-its epoch and frame conventions, and add a file-replay state source for Unity.
-No such adapter is included in this change.
+The synchronized scenario and temporary frame translator now exist. Next add
+a production frame/time profile and transport after the current file-replay
+contract is reviewed. A development-only `BasiliskReplayStateSource` Unity
+reader is included; `ISimulationEngine` transport and actuator feedback are not.
+
+### Unity offline replay check
+
+1. Open the project in Unity. Use a test scene or an unsaved copy of the current
+   scene; do not replace the shared analytic scene configuration yet.
+2. On the GameObject containing `SimulationRunner`, add `BasiliskReplayStateSource`.
+3. Enable **Allow Synthetic Earth Fixed** on that component. The default path
+   points at the translated JSONL above, relative to the Unity project root.
+4. Enter Play mode. On the replay component's context menu choose **Load Replay
+   And Configure Runner**. This switches the runner to replay, resets sequence,
+   sets the 0.05-second step and preserves the original 0.05-second first timestamp.
+5. Check the Console for `Loaded 1200 Basilisk samples`. Confirm no errors and
+   check that the spacecraft marker follows the short replay trail. The trail
+   uses every recorded replay position rather than the analytic 5,700-second
+   orbit preview. At 60 seconds data ends; no extrapolation or looping is
+   performed. Stop Play mode to restore the scene.
+6. In Test Runner, run both EditMode and PlayMode tests. `BasiliskReplayTests`
+   cover parsing, profile opt-in, exact timestamps, gyro/truth separation, EOF
+   and runner reset. `ReplayTrailUsesEveryRecordedSample` checks that all 1,200
+   replay positions reach the Unity `LineRenderer`.
+
+The reader only accepts exact sample times, not interpolation. Noisy gyro is
+available via `TryGetGyroMeasurement` but is **not wired into the FSW sensor
+bus**. Existing sensor simulators must not be mistaken for this recorded gyro.
+The reader maps the synthetic fixed frame into the existing ECEF-named state
+fields only after explicit opt-in. This is an offline visual/interface smoke
+test, not validation of geographic accuracy, nadir pointing, closed-loop
+control or FSW integration. The current Basilisk demo tumbles about body X; it
+is not a nadir-pointing orbit.
 
 Coordinate conversion must include Earth rotation in velocity and transform
 attitude consistently. Keep state truth separate from noisy IMU observations.

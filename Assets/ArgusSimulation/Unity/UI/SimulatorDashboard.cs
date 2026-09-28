@@ -667,6 +667,7 @@ namespace Argus.Simulation.Unity
             if (IsGroupVisible(SensorGroup.OrbitGps))
             {
                 AddHeader(builder, "ORBIT / GPS");
+                AddRow(builder, "State source", _runner.StateSource.SourceName);
                 AddRow(builder, "UTC", state.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss.fff"));
                 AddRow(builder, "Simulation time", $"{state.SimulationTimeSeconds,10:F1} s");
                 AddRow(builder, "Sequence", state.Sequence.ToString());
@@ -683,9 +684,20 @@ namespace Argus.Simulation.Unity
             {
                 AddHeader(builder, "IMU");
                 AddVector(builder, "Accel ECEF m/s²", snapshot.AccelerationEcef);
-                AddVector(builder, "Gyro body rad/s", state.AngularVelocityBodyRadiansPerSecond);
+                AddVector(builder, "Truth ω body rad/s", state.AngularVelocityBodyRadiansPerSecond);
+                SensorFrame<Vector3d> gyro = snapshot.GyroMeasurement;
+                if (gyro.Status == SensorFrameStatus.Valid)
+                {
+                    AddVector(builder, "Measured gyro rad/s", gyro.Payload);
+                    AddRow(builder, "Gyro source", gyro.Source);
+                }
+                else
+                {
+                    AddRow(builder, "Measured gyro", "UNAVAILABLE");
+                    AddRow(builder, "Gyro source", gyro.Source);
+                }
                 AddRow(builder, "Accelerometer", "NOMINAL");
-                AddRow(builder, "Gyroscope", "NOMINAL");
+                AddRow(builder, "Gyroscope", gyro.Status.ToString().ToUpperInvariant());
             }
 
             if (IsGroupVisible(SensorGroup.Adcs))

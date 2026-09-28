@@ -13,6 +13,7 @@ namespace Argus.Simulation.Unity
             double altitudeMeters,
             double speedMetersPerSecond,
             Vector3d accelerationEcef,
+            SensorFrame<Vector3d> gyroMeasurement,
             Vector3d magneticFieldNanoTesla,
             Vector3d sunVectorBody,
             int gpsSatellites,
@@ -32,6 +33,7 @@ namespace Argus.Simulation.Unity
             AltitudeMeters = altitudeMeters;
             SpeedMetersPerSecond = speedMetersPerSecond;
             AccelerationEcef = accelerationEcef;
+            GyroMeasurement = gyroMeasurement;
             MagneticFieldNanoTesla = magneticFieldNanoTesla;
             SunVectorBody = sunVectorBody;
             GpsSatellites = gpsSatellites;
@@ -52,6 +54,7 @@ namespace Argus.Simulation.Unity
         public double AltitudeMeters { get; }
         public double SpeedMetersPerSecond { get; }
         public Vector3d AccelerationEcef { get; }
+        public SensorFrame<Vector3d> GyroMeasurement { get; }
         public Vector3d MagneticFieldNanoTesla { get; }
         public Vector3d SunVectorBody { get; }
         public int GpsSatellites { get; }
@@ -140,6 +143,17 @@ namespace Argus.Simulation.Unity
                 0.32).Normalized();
 
             double sunlight = Math.Max(0.0, sunVector.X);
+            SensorFrame<Vector3d> gyro = UnavailableGyro(state);
+            if (runner.StateSource is IGyroMeasurementSource gyroSource &&
+                gyroSource.TryGetGyroMeasurement(
+                    state.Sequence, state.SimulationTimeSeconds, out SensorFrame<Vector3d> measured) &&
+                measured.HasValidEnvelope && measured.Status == SensorFrameStatus.Valid &&
+                measured.Payload.IsFinite &&
+                Math.Abs(measured.SimulationTimeSeconds - state.SimulationTimeSeconds) <= 1e-8 &&
+                measured.TimestampUtc == state.TimestampUtc)
+            {
+                gyro = measured;
+            }
             Latest = new MockSensorSnapshot(
                 state,
                 longitude,
@@ -147,6 +161,7 @@ namespace Argus.Simulation.Unity
                 altitude,
                 state.VelocityEcefMetersPerSecond.Magnitude,
                 acceleration,
+                gyro,
                 magneticField,
                 sunVector,
                 11 + (int)Math.Round(2.0 * Math.Sin(time / 240.0)),
@@ -171,6 +186,11 @@ namespace Argus.Simulation.Unity
             _hasPreviousState = true;
             HasSnapshot = true;
         }
+
+        private static SensorFrame<Vector3d> UnavailableGyro(SpacecraftState state) =>
+            new SensorFrame<Vector3d>(
+                "imu.gyro", state.Sequence, state.SimulationTimeSeconds, state.TimestampUtc,
+                SensorFrameStatus.Unavailable, "unavailable", default);
 
         private static void EcefToGeodetic(
             Vector3d position,

@@ -11,6 +11,7 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(0.0f)] private double timeScale = 1.0;
         [SerializeField] private bool runOnStart = true;
         [SerializeField, Min(1)] private int maximumStepsPerFrame = 100;
+        [SerializeField, Min(0.0f)] private double startTimeSeconds;
 
         private ISpacecraftStateSource _stateSource;
         private double _accumulatorSeconds;
@@ -33,6 +34,7 @@ namespace Argus.Simulation.Unity
 
         private void Awake()
         {
+            _simulationTimeSeconds = startTimeSeconds;
             ResolveStateSource();
             IsRunning = runOnStart;
         }
@@ -54,9 +56,12 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        public void Configure(MonoBehaviour source, double stepSeconds = 0.1)
+        public void Configure(MonoBehaviour source, double stepSeconds = 0.1, double initialTimeSeconds = 0.0)
         {
+            if (double.IsNaN(initialTimeSeconds) || double.IsInfinity(initialTimeSeconds) || initialTimeSeconds < 0)
+                throw new ArgumentOutOfRangeException(nameof(initialTimeSeconds));
             stateSourceComponent = source;
+            startTimeSeconds = initialTimeSeconds;
             fixedStepSeconds = Math.Max(0.001, stepSeconds);
             ResolveStateSource();
         }
@@ -86,7 +91,7 @@ namespace Argus.Simulation.Unity
         public void ResetSimulation()
         {
             _accumulatorSeconds = 0.0;
-            _simulationTimeSeconds = 0.0;
+            _simulationTimeSeconds = startTimeSeconds;
             _sequence = 0;
             HasState = false;
         }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Argus.Simulation.Core;
 using CesiumForUnity;
 using Unity.Mathematics;
@@ -45,27 +46,46 @@ namespace Argus.Simulation.Unity
 
             _georeference.Initialize();
             EnsureLineRenderer();
-            double periodSeconds = runner.StateSource is AnalyticOrbitStateSource analytic
-                ? analytic.EstimatedPeriodSeconds
-                : 5_700.0;
 
-            Vector3[] positions = new Vector3[sampleCount];
-            for (int index = 0; index < sampleCount; index++)
+            var positions = new List<Vector3>();
+            if (runner.StateSource is BasiliskReplayStateSource replay)
             {
-                double time = periodSeconds * index / (sampleCount - 1.0);
-                if (!runner.StateSource.TryGetState(index, time, out SpacecraftState state))
+                positions.Capacity = replay.Count;
+                for (int index = 0; index < replay.Count; index++)
                 {
-                    continue;
+                    double time = replay.StartTimeSeconds + replay.StepSeconds * index;
+                    TryAppendPosition(positions, index, time);
                 }
+            }
+            else
+            {
+                double periodSeconds = runner.StateSource is AnalyticOrbitStateSource analytic
+                    ? analytic.EstimatedPeriodSeconds
+                    : 5_700.0;
 
-                Vector3d ecef = state.PositionEcefMeters;
-                double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
-                    new double3(ecef.X, ecef.Y, ecef.Z));
-                positions[index] = new Vector3((float)unity.x, (float)unity.y, (float)unity.z);
+                positions.Capacity = sampleCount;
+                for (int index = 0; index < sampleCount; index++)
+                {
+                    double time = periodSeconds * index / (sampleCount - 1.0);
+                    TryAppendPosition(positions, index, time);
+                }
             }
 
-            _lineRenderer.positionCount = positions.Length;
-            _lineRenderer.SetPositions(positions);
+            _lineRenderer.positionCount = positions.Count;
+            _lineRenderer.SetPositions(positions.ToArray());
+        }
+
+        private void TryAppendPosition(List<Vector3> positions, long sequence, double time)
+        {
+            if (!runner.StateSource.TryGetState(sequence, time, out SpacecraftState state))
+            {
+                return;
+            }
+
+            Vector3d ecef = state.PositionEcefMeters;
+            double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
+                new double3(ecef.X, ecef.Y, ecef.Z));
+            positions.Add(new Vector3((float)unity.x, (float)unity.y, (float)unity.z));
         }
 
         private void EnsureLineRenderer()
