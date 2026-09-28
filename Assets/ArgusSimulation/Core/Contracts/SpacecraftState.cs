@@ -30,16 +30,6 @@ namespace Argus.Simulation.Core
         public Quaterniond BodyToEcef { get; }
         public Vector3d AngularVelocityBodyRadiansPerSecond { get; }
 
-        public SpacecraftState WithBodyToEcef(Quaterniond bodyToEcef) =>
-            new SpacecraftState(
-                Sequence,
-                SimulationTimeSeconds,
-                TimestampUtc,
-                PositionEcefMeters,
-                VelocityEcefMetersPerSecond,
-                bodyToEcef,
-                AngularVelocityBodyRadiansPerSecond);
-
         public bool IsValid =>
             Sequence >= 0 &&
             !double.IsNaN(SimulationTimeSeconds) &&

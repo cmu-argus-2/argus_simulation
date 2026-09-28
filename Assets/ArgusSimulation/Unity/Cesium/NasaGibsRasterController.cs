@@ -1,7 +1,6 @@
 using System;
 using Argus.Simulation.Core;
 using CesiumForUnity;
-using Unity.Mathematics;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
@@ -63,17 +62,13 @@ namespace Argus.Simulation.Unity
                 sunlight = FindAnyObjectByType<Light>();
             }
 
-            CesiumGeoreference georeference = GetComponentInParent<CesiumGeoreference>();
-            if (sunlight == null || georeference == null)
+            if (sunlight == null || transform.parent == null)
             {
                 return;
             }
 
-            // Sub-solar longitude from the light's direction expressed in Earth-fixed coordinates.
-            Vector3 toSun = -sunlight.transform.forward;
-            double3 toSunEcef = georeference.TransformUnityDirectionToEarthCenteredEarthFixed(
-                new double3(toSun.x, toSun.y, toSun.z));
-            float sunLongitude = (float)(Math.Atan2(toSunEcef.y, toSunEcef.x) * 180.0 / Math.PI);
+            Vector3 sunDirection = transform.parent.InverseTransformDirection(-sunlight.transform.forward);
+            float sunLongitude = Mathf.Atan2(sunDirection.z, sunDirection.x) * Mathf.Rad2Deg;
             float nightCenterLongitude = NormalizeLongitude(sunLongitude + 180f);
             if (!float.IsNaN(_lastNightCenterLongitude) &&
                 Mathf.Abs(Mathf.DeltaAngle(_lastNightCenterLongitude, nightCenterLongitude)) < 0.5f)

@@ -36,6 +36,7 @@ namespace Argus.Simulation.Unity
 
         private SimulationRunner _runner;
         private AnalyticOrbitStateSource _orbitSource;
+        private CesiumSpacecraftPoseDriver _poseDriver;
         private MockSensorSuite _sensorSuite;
         private CubeSatCameraRig _cameraRig;
         private NavigationEpisodeExporter _episodeExporter;
@@ -127,6 +128,7 @@ namespace Argus.Simulation.Unity
             GameObject spacecraft = GameObject.Find("CubeSat Truth Pose");
             if (spacecraft != null)
             {
+                _poseDriver = spacecraft.GetComponent<CesiumSpacecraftPoseDriver>();
                 CubeSatVisualModel visual = spacecraft.GetComponent<CubeSatVisualModel>();
                 if (visual == null)
                 {
@@ -149,42 +151,6 @@ namespace Argus.Simulation.Unity
                 trail = trailObject.AddComponent<OrbitTrailRenderer>();
             }
             trail.Configure(_runner);
-
-            Light sunlight = FindSunlight();
-            if (sunlight != null)
-            {
-                SunLightDriver sunDriver = sunlight.GetComponent<SunLightDriver>();
-                if (sunDriver == null)
-                {
-                    sunDriver = sunlight.gameObject.AddComponent<SunLightDriver>();
-                }
-                sunDriver.Configure(_runner);
-            }
-        }
-
-        private static Light FindSunlight()
-        {
-            GameObject sunlightObject = GameObject.Find("Sunlight");
-            Light light = sunlightObject != null ? sunlightObject.GetComponent<Light>() : FindAnyObjectByType<Light>();
-            return light != null && light.type == LightType.Directional ? light : null;
-        }
-
-        private static string DescribeSunlight(MockSensorSnapshot snapshot)
-        {
-            if (!snapshot.HasSunGeometry)
-            {
-                return snapshot.SolarPowerWatts > 1.0 ? "SUNLIGHT (mock)" : "ECLIPSE (mock)";
-            }
-
-            switch (snapshot.SunlightCondition)
-            {
-                case SunlightCondition.Sunlit:
-                    return "SUNLIT";
-                case SunlightCondition.Penumbra:
-                    return $"PENUMBRA {snapshot.IlluminationFraction * 100.0:F0}%";
-                default:
-                    return "UMBRA (ECLIPSE)";
-            }
         }
 
         private void ConfigureMainCamera()
@@ -708,10 +674,7 @@ namespace Argus.Simulation.Unity
                 AddRow(builder, "Longitude", $"{snapshot.LongitudeDegrees,10:F4}°");
                 AddRow(builder, "Altitude", $"{snapshot.AltitudeMeters / 1000.0,10:F2} km");
                 AddRow(builder, "Ground speed", $"{snapshot.SpeedMetersPerSecond / 1000.0,10:F3} km/s");
-                AddRow(builder, "GPS fix (mock)", $"3D / {snapshot.GpsSatellites} satellites");
-                AddRow(builder, "Earth orientation", _orbitSource != null && _orbitSource.Ephemeris != null
-                    ? "SPICE J2000→ITRF93"
-                    : "SIMPLIFIED SPIN (mock)");
+                AddRow(builder, "GPS fix", $"3D / {snapshot.GpsSatellites} satellites");
                 AddVector(builder, "ECEF position km", state.PositionEcefMeters / 1000.0);
                 AddVector(builder, "ECEF velocity m/s", state.VelocityEcefMetersPerSecond);
             }
@@ -730,10 +693,10 @@ namespace Argus.Simulation.Unity
                 AddHeader(builder, "ADCS / ATTITUDE SENSORS");
                 Quaterniond q = state.BodyToEcef;
                 AddRow(builder, "Body→ECEF q", $"{q.X:F4}, {q.Y:F4}, {q.Z:F4}, {q.W:F4}");
-                AddVector(builder, "Magnetometer nT (mock)", snapshot.MagneticFieldNanoTesla);
-                AddVector(builder, snapshot.HasSunGeometry ? "Sun sensor" : "Sun sensor (mock)", snapshot.SunVectorBody);
-                AddVector(builder, "Reaction wheels RPM (mock)", snapshot.ReactionWheelRpm);
-                AddRow(builder, "Star tracker (mock)", snapshot.StarTrackerValid ? "LOCKED" : "SUN BLINDED");
+                AddVector(builder, "Magnetometer nT", snapshot.MagneticFieldNanoTesla);
+                AddVector(builder, "Sun sensor", snapshot.SunVectorBody);
+                AddVector(builder, "Reaction wheels RPM", snapshot.ReactionWheelRpm);
+                AddRow(builder, "Star tracker", snapshot.StarTrackerValid ? "LOCKED" : "SUN BLINDED");
                 AddRow(builder, "Pointing mode", "NADIR TRACK");
             }
 
@@ -744,14 +707,14 @@ namespace Argus.Simulation.Unity
                     (CircularOrbitModel.EarthEquatorialRadiusMeters + Math.Max(0.0, snapshot.AltitudeMeters))) *
                     180.0 / Math.PI;
                 AddRow(builder, "Earth horizon", $"{horizon:F2}°");
-                AddRow(builder, "Solar state", DescribeSunlight(snapshot));
+                AddRow(builder, "Solar state", snapshot.SolarPowerWatts > 1.0 ? "SUNLIGHT" : "ECLIPSE");
                 AddRow(builder, "Atmosphere", "NRLMSISE-00 PLACEHOLDER");
                 AddRow(builder, "Radiation", "0.18 mGy/day (mock)");
             }
 
             if (IsGroupVisible(SensorGroup.Power))
             {
-                AddHeader(builder, "POWER (MOCK MODEL, REAL ILLUMINATION)");
+                AddHeader(builder, "POWER");
                 AddRow(builder, "Battery", $"{snapshot.BatteryPercent:F1}%");
                 AddRow(builder, "Bus voltage", $"{snapshot.BusVoltage:F2} V");
                 AddRow(builder, "Bus current", $"{snapshot.BusCurrent:F2} A");
@@ -761,7 +724,7 @@ namespace Argus.Simulation.Unity
 
             if (IsGroupVisible(SensorGroup.Thermal))
             {
-                AddHeader(builder, "THERMAL (MOCK MODEL, REAL ILLUMINATION)");
+                AddHeader(builder, "THERMAL");
                 AddRow(builder, "Battery", $"{snapshot.TemperaturesCelsius.X:F1} °C");
                 AddRow(builder, "Avionics", $"{snapshot.TemperaturesCelsius.Y:F1} °C");
                 AddRow(builder, "Payload", $"{snapshot.TemperaturesCelsius.Z:F1} °C");
@@ -770,7 +733,7 @@ namespace Argus.Simulation.Unity
 
             if (IsGroupVisible(SensorGroup.Communications))
             {
-                AddHeader(builder, "COMMUNICATIONS (MOCK)");
+                AddHeader(builder, "COMMUNICATIONS");
                 AddRow(builder, "UHF RSSI", $"{snapshot.RadioRssiDbm:F1} dBm");
                 AddRow(builder, "Downlink", $"{snapshot.DownlinkKbps:F0} kbps");
                 AddRow(builder, "Packets", $"TX {state.Sequence * 3} / RX {state.Sequence}");
@@ -805,14 +768,13 @@ namespace Argus.Simulation.Unity
 
         private void NudgeAttitude(Vector3 deltaDegrees)
         {
-            if (_orbitSource == null)
+            if (_poseDriver == null)
             {
                 return;
             }
 
-            // The source owns attitude, so the next state updates the pose and sensors together.
-            _orbitSource.NudgeAttitude(deltaDegrees);
-            ProduceManualState();
+            _poseDriver.NudgeAttitude(deltaDegrees);
+            UpdatePoseStatus();
         }
 
         private void ResetPoseControls()
@@ -823,7 +785,7 @@ namespace Argus.Simulation.Unity
                 _orbitSource.AltitudeMeters = _initialAltitudeMeters;
             }
 
-            _orbitSource?.ResetManualAttitude();
+            _poseDriver?.ResetManualAttitude();
             ProduceManualState();
         }
 
@@ -851,7 +813,9 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            Vector3 attitude = _orbitSource.ManualAttitudeOffsetDegrees;
+            Vector3 attitude = _poseDriver != null
+                ? _poseDriver.ManualAttitudeOffsetDegrees
+                : Vector3.zero;
             _poseStatusText.text =
                 $"MOCK POSE\nPHASE {_orbitSource.PhaseDegrees:0}°  ALT {_orbitSource.AltitudeMeters / 1000.0:0} KM\n" +
                 $"P {attitude.x:0}°  Y {attitude.y:0}°  R {attitude.z:0}°";

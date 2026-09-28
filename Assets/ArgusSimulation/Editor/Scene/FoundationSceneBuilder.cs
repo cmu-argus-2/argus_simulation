@@ -129,7 +129,6 @@ namespace Argus.Simulation.Editor
             light.type = LightType.Directional;
             light.intensity = 1.0f;
             sunlight.transform.rotation = Quaternion.Euler(30f, -35f, 0f);
-            sunlight.AddComponent<SunLightDriver>().Configure(runner);
 
             EnsureDirectory(SceneDirectory);
             EditorSceneManager.SaveScene(scene, ScenePath);

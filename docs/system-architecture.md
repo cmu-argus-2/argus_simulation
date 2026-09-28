@@ -147,7 +147,7 @@ infer a frame from an unlabeled vector.
     sample.
 - **Epoch and coverage:** the provider's epoch must equal the run epoch, or
   `Initialize` rejects the provider. Outside the provider's coverage, stepping fails
-  instead of extrapolating, and the Unity runner pauses.
+  instead of extrapolating.
 - **Data:** `Argus.Spice/regenerate.sh` generates the ephemeris file and the exact
   SPICE spacecraft reference used by the tests.
 
@@ -165,13 +165,8 @@ infer a frame from an unlabeled vector.
     radius, no atmosphere, and a geometric Sun.
   - Accuracy: against SPICE `gfoclt` with ellipsoidal Earth and Sun (fixture in
     `Tests/Fixtures/`), shadow entry and exit agree within 2.3 s for the Foundation orbit.
-- Manual attitude offsets live in `AnalyticOrbitStateSource` and are applied to every
-  produced `SpacecraftState`, so the rendered pose, the sun sensor, and exports share one
-  attitude.
-- `SunLightDriver` aims the scene's directional light along the SPICE Earth-to-Sun
-  direction. The night-lights overlay reads that light in Earth-fixed coordinates.
-  Power and thermal telemetry remain mock models that use the real illumination
-  fraction as their input.
+- Power and thermal telemetry remain mock models that may use the SPICE-derived
+  illumination fraction as an input.
 
 ## 8. Sensor architecture
 

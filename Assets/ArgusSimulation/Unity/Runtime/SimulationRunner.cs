@@ -48,17 +48,7 @@ namespace Argus.Simulation.Unity
             int steps = 0;
             while (_accumulatorSeconds >= fixedStepSeconds && steps < maximumStepsPerFrame)
             {
-                if (!StepOnce())
-                {
-                    // E.g. past the end of ephemeris coverage. Pause rather than retry every frame.
-                    IsRunning = false;
-                    _accumulatorSeconds = 0.0;
-                    Debug.LogWarning(
-                        $"No spacecraft state at t = {_simulationTimeSeconds:F1} s; simulation paused.",
-                        this);
-                    return;
-                }
-
+                StepOnce();
                 _accumulatorSeconds -= fixedStepSeconds;
                 steps++;
             }
