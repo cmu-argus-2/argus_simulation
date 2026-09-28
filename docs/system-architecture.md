@@ -142,14 +142,15 @@ infer a frame from an unlabeled vector.
   are then offset by the true angle (about 114.4 deg at 2025-01-15T00:00Z).
 - **Time:** simulation time `t` is uniform SI seconds from the run epoch.
   - SPICE ephemeris time: `et = et(epoch) + t`, in TDB seconds past J2000.
-  - UTC timestamp: `epoch + t`. This matches SPICE's UTC for `et` to within 1 ms
-    unless a leap second falls inside the run; the generator checks this for every
-    sample.
-- **Epoch and coverage:** the provider's epoch must equal the run epoch, or
-  `Initialize` rejects the provider. Outside the provider's coverage, stepping fails
-  instead of extrapolating, and the Unity runner pauses.
-- **Data:** `Argus.Spice/regenerate.sh` generates the ephemeris file and the exact
-  SPICE spacecraft reference used by the tests.
+  - UTC timestamp: `epoch + t`; SPICE converts the epoch to ephemeris time when the
+    runtime starts.
+- **Runtime:** `SpiceRuntimeEphemerisProvider` owns one persistent Python/SPICE worker.
+  It sends the requested simulation time and receives an exact frame transform and Sun
+  position for that instant. It does not load, interpolate, replay, or extrapolate a
+  generated scenario dataset.
+- **Dependencies:** the worker loads pinned, SHA-256-verified NAIF kernels at startup.
+  Kernel coverage is still authoritative; a missing or out-of-coverage result fails the
+  step explicitly instead of fabricating environment truth.
 
 ### Sun geometry and eclipse
 
@@ -163,8 +164,8 @@ infer a frame from an unlabeled vector.
   penumbra, or umbra.
   - Assumptions: a spherical Earth at the equatorial radius, the IAU nominal solar
     radius, no atmosphere, and a geometric Sun.
-  - Accuracy: against SPICE `gfoclt` with ellipsoidal Earth and Sun (fixture in
-    `Tests/Fixtures/`), shadow entry and exit agree within 2.3 s for the Foundation orbit.
+  - The model uses the live SPICE Sun position but computes occultation locally from
+    the documented spherical-Earth approximation.
 - Dashboard attitude controls create an `AttitudeOverrideCommand`. `SimulationRunner`
   validates its target sequence and simulation time, then forwards it to the active
   development backend through `IAttitudeOverrideTarget`. The analytic engine applies
@@ -255,6 +256,11 @@ rates. The GUI interpolates presentation between snapshots. No Unity `MonoBehavi
 It will translate Argus commands into Basilisk messages and translate Basilisk state and
 sensor messages into Argus contracts. Basilisk becomes authoritative for simulation time
 when selected.
+
+The current analytic backend starts `SpiceRuntimeEphemerisProvider` as its live
+environment source. When Basilisk is selected, the Basilisk process should load the same
+pinned SPICE kernels and return dynamics and environment truth for the same step; do not
+start a second independent SPICE clock or worker beside it.
 
 Recommended topology:
 

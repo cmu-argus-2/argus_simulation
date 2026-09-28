@@ -50,7 +50,7 @@ namespace Argus.Simulation.Unity
                 ? analytic.EstimatedPeriodSeconds
                 : 5_700.0;
 
-            // Times without a state (e.g. beyond ephemeris coverage) are skipped, not drawn at the origin.
+            // Times without a state (e.g. a backend/runtime failure) are skipped, not drawn at the origin.
             List<Vector3> positions = new List<Vector3>(sampleCount);
             for (int index = 0; index < sampleCount; index++)
             {
