@@ -3,8 +3,8 @@ using System;
 namespace Argus.Simulation.Core
 {
     // Development backend. Commands are recorded in each snapshot but do not yet perturb the orbit.
-    // With an ephemeris provider, Earth-fixed state uses its J2000 -> ITRF93 transform and stepping
-    // fails outside its coverage; without one, the simplified Earth rotation is used.
+    // With an ephemeris provider, Earth-fixed state uses its live J2000 -> ITRF93 transform;
+    // without one, the simplified Earth rotation is used.
     public sealed class AnalyticSimulationEngine : ISimulationEngine
     {
         private readonly double _altitudeMeters;

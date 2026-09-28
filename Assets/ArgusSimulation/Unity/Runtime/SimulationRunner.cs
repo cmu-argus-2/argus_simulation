@@ -57,7 +57,7 @@ namespace Argus.Simulation.Unity
             {
                 if (!StepOnce())
                 {
-                    // E.g. past the end of ephemeris coverage. Pause rather than retry every frame.
+                    // A backend or environment runtime is unavailable. Pause rather than retry every frame.
                     IsRunning = false;
                     _accumulatorSeconds = 0.0;
                     Debug.LogWarning(

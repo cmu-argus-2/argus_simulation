@@ -16,7 +16,6 @@ Assets/ArgusSimulation/
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
 │   ├── Math/                     # Double-precision vectors and quaternions
 │   ├── Runtime/                  # Headless orchestration and gateway
-│   ├── Serialization/            # Dependency-free data-file parsing (internal)
 │   └── Sensors/                  # Standard sensor envelopes and models
 │
 ├── Unity/                        # Unity-dependent adapters and presentation
@@ -34,7 +33,6 @@ Assets/ArgusSimulation/
 ├── Scenes/                       # Serialized Unity scenes
 └── Tests/
     ├── EditMode/Core/            # Pure/core contract tests
-    ├── Fixtures/                 # Generated reference data shared by test suites
     ├── PlayMode/Runtime/         # Unity runtime adapter tests
     └── PlayMode/UI/              # Unity integration and dashboard tests
 ```
@@ -47,7 +45,7 @@ Assets/ArgusSimulation/
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
-| Environment ephemeris | `EphemerisSample`, `TabulatedEphemerisProvider`, `SpiceReferenceFile` |
+| Environment ephemeris | `EphemerisSample`, `SpiceRuntimeEphemerisProvider` |
 | Sun geometry and eclipse | `SunObservation`, `SolarGeometry`, `EarthShadowModel` |
 | Core math | `Vector3d`, `Quaterniond`, `Matrix3d` |
 | Headless orchestration | `SimulationGateway` |
@@ -86,7 +84,7 @@ Core/Sensors/Camera/
 └── NadirGroundTruthCameraModel.cs
 
 External services/packages:
-├── Argus.Spice/                  # SPICE reference-data generator (Python, offline)
+├── Argus.Spice/                  # Persistent live SPICE worker and pinned kernels
 ├── Argus.Contracts/              # Protobuf schemas
 ├── Argus.Basilisk/               # Python Basilisk backend
 ├── Argus.Agent/                  # Training environment

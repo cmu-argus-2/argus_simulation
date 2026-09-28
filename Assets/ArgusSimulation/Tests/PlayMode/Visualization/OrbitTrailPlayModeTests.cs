@@ -47,16 +47,16 @@ namespace Argus.Simulation.Tests
             trail.BuildTrail();
 
             LineRenderer line = _trailObject.GetComponent<LineRenderer>();
-            Assert.That(line.positionCount, Is.EqualTo(240), "one full orbit fits in ephemeris coverage");
+            Assert.That(line.positionCount, Is.EqualTo(240), "live SPICE resolves the complete orbit");
             Assert.That(runner.SimulationTimeSeconds, Is.EqualTo(liveTime));
             Assert.That(runner.LastState.Sequence, Is.EqualTo(liveState.Sequence));
             Assert.That(runner.LastState.PositionEcefMeters, Is.EqualTo(liveState.PositionEcefMeters));
             Assert.That(published, Is.EqualTo(5), "trail queries must not publish states to sensors or pose");
 
-            // A higher orbit's period exceeds the one-orbit ephemeris: uncovered points are dropped.
+            // A higher orbit is also queried live; it must not inherit the old fixture cutoff.
             source.AltitudeMeters = 700_000.0;
             trail.BuildTrail();
-            Assert.That(line.positionCount, Is.GreaterThan(0).And.LessThan(240));
+            Assert.That(line.positionCount, Is.EqualTo(240));
             Vector3[] points = new Vector3[line.positionCount];
             line.GetPositions(points);
             Assert.That(points, Has.None.EqualTo(Vector3.zero));

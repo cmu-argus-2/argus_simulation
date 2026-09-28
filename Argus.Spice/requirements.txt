@@ -1,2 +1,2 @@
 spiceypy==8.2.0
-numpy==2.5.3
+certifi==2025.8.3

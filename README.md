@@ -10,7 +10,9 @@ See [code organization](docs/code-organization.md) for the class and folder map.
 ## Requirements
 
 - Unity `6000.6.0f1`
+- Python `3.12` for the live SPICE worker
 - Internet access for Cesium ion and NASA GIBS
+- Internet access on the first simulation start to download hash-verified NAIF kernels
 - A Cesium ion access token
 
 ## Configure the Cesium token
@@ -49,16 +51,14 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 
 SPICE does **not** propagate the spacecraft orbit. The current development backend uses
 `CircularOrbitModel` to generate a deterministic circular orbit in J2000; a future
-Basilisk backend can replace it through the same simulation interface. SPICE supplies
-Earth orientation (J2000 → ITRF93) and Sun geometry, which are applied to the analytic
-orbit to produce Earth-fixed state, lighting, and eclipse status.
+Basilisk backend can replace it through the same simulation interface.
 
-Python generates the SPICE environment data offline, and Unity only reads the resulting
-JSON file. The committed environment coverage starts at `2025-01-15T00:00:00Z` and spans
-`0–5,680 s`. The final sample at `t = 5,680.0 s` is valid. During automatic playback, the
-first step requested beyond that boundary pauses the simulation and logs a warning; the
-ephemeris provider never extrapolates. A direct `StepOnce()` call returns `false` when no
-state is available.
+The simulation starts one persistent SPICE worker automatically. At every requested
+simulation time, the worker evaluates Earth orientation (J2000 → ITRF93) and Sun
+geometry directly from pinned NAIF kernels. The result is applied to the current
+dynamics state to produce Earth-fixed position and velocity, lighting, and eclipse
+status. There is no generated scenario JSON, replayed ephemeris, preprocessing command,
+or 5,680-second scenario boundary.
 
 | SPICE-derived | Current limitation |
 |---|---|
@@ -66,16 +66,18 @@ state is available.
 | Sun direction in the body frame, scene light, and night-lights hemisphere | Magnetometer, GNSS, reaction-wheel, and star-tracker models are unavailable |
 | Sunlit / penumbra / umbra status (conical Earth-shadow model) | Power, thermal, and communications models are unavailable |
 
-The committed data file is `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json`.
-You only need Python to change or verify it (requires Homebrew `python3.12`):
+Press **Play** normally. On first use, `Argus.Spice/run_runtime.sh` creates its isolated
+Python environment and downloads the pinned kernels into the gitignored
+`Argus.Spice/kernels/` directory. Every kernel is checked against the SHA-256 value in
+`Argus.Spice/kernels.json` before SPICE loads it. Subsequent starts reuse those files.
 
 ```bash
-Argus.Spice/regenerate.sh          # fetch pinned kernels, regenerate data and test fixture
-Argus.Spice/regenerate.sh --check  # verify the committed files match
+Argus.Spice/run_runtime.sh --epoch 2025-01-15T00:00:00Z
 ```
 
-See [Argus.Spice/README.md](Argus.Spice/README.md) for kernels, scenarios, and
-coverage. For the frames, time mapping, and shadow model, see
+The command above is only useful for diagnosing the worker; the simulator launches and
+stops it automatically. See [Argus.Spice/README.md](Argus.Spice/README.md) for the live
+protocol and kernel dependencies. For the frames, time mapping, and shadow model, see
 [the architecture document](docs/system-architecture.md).
 
 To run the tests headless, close the editor first:
