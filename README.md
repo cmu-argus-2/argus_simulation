@@ -52,8 +52,8 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 - Images are not exported automatically. Press **CAPTURE** in the top toolbar to pause
   the simulation, wait for Cesium to finish the current view, and save one synchronized
   set of camera images. A timed-out load is cancelled instead of exporting incomplete imagery.
-- Use the mock pose panel to change orbit phase or altitude and apply pitch, yaw, or roll offsets while watching the four side-camera feeds.
-- **RESET POSE** restores the initial mock orbit position and removes all attitude offsets.
+- Use the analytic-state panel to change orbit phase or altitude and apply pitch, yaw, or roll offsets while watching the four side-camera feeds.
+- **RESET POSE** restores the initial analytic orbit position and removes all attitude offsets.
 - Toggle telemetry groups from the right-side sensor settings panel.
 - The lower camera strip shows the four body-mounted +X, -X, +Y, and -Y cameras plus a virtual north-up nadir ground-truth feed. The GT camera follows orbital position but ignores CubeSat attitude changes.
 - Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar hemisphere.

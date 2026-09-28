@@ -76,7 +76,7 @@ namespace Argus.Simulation.Unity
             }
 
             _lineRenderer = gameObject.AddComponent<LineRenderer>();
-            _lineRenderer.name = "Mock Orbit Ground Track";
+            _lineRenderer.name = "Orbit Ground Track";
             _lineRenderer.useWorldSpace = true;
             _lineRenderer.loop = false;
             _lineRenderer.widthMultiplier = trailWidthMeters;

@@ -44,14 +44,15 @@ Assets/ArgusSimulation/
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
-| Sensor contracts | `SensorFrame<TPayload>` |
+| Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
+| Implemented sensor model | `IdealBodyRateSensorModel` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticOrbitStateSource` |
 | Unity camera system | `CubeSatCameraRig` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
 | Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer` |
-| Temporary sensors | `MockSensorSuite` |
+| Unity sensor bridge | `SimulationSensorRuntime` |
 | GUI | `SimulatorDashboard` |
 | Scene creation | `FoundationSceneBuilder` |
 
