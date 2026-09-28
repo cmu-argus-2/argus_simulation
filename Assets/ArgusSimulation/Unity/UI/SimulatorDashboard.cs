@@ -801,14 +801,20 @@ namespace Argus.Simulation.Unity
 
         private void NudgeAttitude(Vector3 deltaDegrees)
         {
-            if (_orbitSource == null)
+            if (_runner == null)
             {
                 return;
             }
 
-            // The source owns attitude, so the next state updates the pose and sensors together.
-            _orbitSource.NudgeAttitude(deltaDegrees);
-            ProduceManualState();
+            Quaternion delta = Quaternion.Euler(deltaDegrees);
+            AttitudeOverrideCommand command = AttitudeOverrideCommand.ApplyDelta(
+                _runner.NextSequence,
+                _runner.SimulationTimeSeconds,
+                new Quaterniond(delta.x, delta.y, delta.z, delta.w).Normalized());
+            if (_runner.TryApplyAttitudeOverride(command))
+            {
+                ProduceManualState();
+            }
         }
 
         private void ResetPoseControls()
@@ -819,7 +825,12 @@ namespace Argus.Simulation.Unity
                 _orbitSource.AltitudeMeters = _initialAltitudeMeters;
             }
 
-            _orbitSource?.ResetManualAttitude();
+            if (_runner != null)
+            {
+                _runner.TryApplyAttitudeOverride(AttitudeOverrideCommand.Clear(
+                    _runner.NextSequence,
+                    _runner.SimulationTimeSeconds));
+            }
             ProduceManualState();
         }
 
@@ -841,17 +852,29 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            if (_orbitSource == null)
+            if (_orbitSource == null || _runner == null || !_runner.SupportsAttitudeOverride)
             {
                 _poseStatusText.text = "POSE CONTROL\nUNAVAILABLE";
                 return;
             }
 
-            Vector3 attitude = _orbitSource.ManualAttitudeOffsetDegrees;
+            Quaterniond overrideBody = _runner.AttitudeOverrideBody;
+            Vector3 attitude = new Quaternion(
+                (float)overrideBody.X,
+                (float)overrideBody.Y,
+                (float)overrideBody.Z,
+                (float)overrideBody.W).eulerAngles;
+            attitude = new Vector3(
+                NormalizeSignedDegrees(attitude.x),
+                NormalizeSignedDegrees(attitude.y),
+                NormalizeSignedDegrees(attitude.z));
             _poseStatusText.text =
                 $"ANALYTIC STATE\nPHASE {_orbitSource.PhaseDegrees:0}°  ALT {_orbitSource.AltitudeMeters / 1000.0:0} KM\n" +
                 $"P {attitude.x:0}°  Y {attitude.y:0}°  R {attitude.z:0}°";
         }
+
+        private static float NormalizeSignedDegrees(float value) =>
+            Mathf.Repeat(value + 180f, 360f) - 180f;
 
         private bool IsGroupVisible(SensorGroup group)
         {

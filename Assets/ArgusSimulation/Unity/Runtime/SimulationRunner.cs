@@ -26,6 +26,12 @@ namespace Argus.Simulation.Unity
         public bool HasState { get; private set; }
         public SpacecraftState LastState { get; private set; }
         public ISpacecraftStateSource StateSource => _stateSource;
+        public long NextSequence => _sequence;
+        public bool SupportsAttitudeOverride => _stateSource is IAttitudeOverrideTarget;
+        public Quaterniond AttitudeOverrideBody =>
+            _stateSource is IAttitudeOverrideTarget target
+                ? target.AttitudeOverrideBody
+                : Quaterniond.Identity;
         public double TimeScale
         {
             get => timeScale;
@@ -92,6 +98,19 @@ namespace Argus.Simulation.Unity
             _sequence++;
             _simulationTimeSeconds += fixedStepSeconds;
             return true;
+        }
+
+        public bool TryApplyAttitudeOverride(AttitudeOverrideCommand command)
+        {
+            if (!command.IsValid ||
+                command.Sequence != _sequence ||
+                Math.Abs(command.ApplyAtSimulationTimeSeconds - _simulationTimeSeconds) > 1e-9 ||
+                !(_stateSource is IAttitudeOverrideTarget target))
+            {
+                return false;
+            }
+
+            return target.TryApplyAttitudeOverride(command);
         }
 
         public void ResetSimulation()

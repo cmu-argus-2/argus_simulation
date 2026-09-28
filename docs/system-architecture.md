@@ -165,9 +165,11 @@ infer a frame from an unlabeled vector.
     radius, no atmosphere, and a geometric Sun.
   - Accuracy: against SPICE `gfoclt` with ellipsoidal Earth and Sun (fixture in
     `Tests/Fixtures/`), shadow entry and exit agree within 2.3 s for the Foundation orbit.
-- Manual attitude offsets live in `AnalyticOrbitStateSource` and are applied to every
-  produced `SpacecraftState`, so the rendered pose, environment geometry, and exports share one
-  attitude.
+- Dashboard attitude controls create an `AttitudeOverrideCommand`. `SimulationRunner`
+  validates its target sequence and simulation time, then forwards it to the active
+  development backend through `IAttitudeOverrideTarget`. The analytic engine applies
+  the override before producing `SpacecraftState`, so rendering, sensors, environment
+  geometry, and exports consume the same truth attitude.
 - `SunLightDriver` aims the scene's directional light along the SPICE Earth-to-Sun
   direction. The night-lights overlay reads that light in Earth-fixed coordinates.
 - Power and thermal sensor models are not registered. The SPICE-derived illumination

@@ -6,7 +6,9 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    public sealed class AnalyticOrbitStateSource : MonoBehaviour, ISpacecraftStateSource
+    public sealed class AnalyticOrbitStateSource : MonoBehaviour,
+        ISpacecraftStateSource,
+        IAttitudeOverrideTarget
     {
         [SerializeField] private string epochUtc = "2025-01-15T00:00:00Z";
         [SerializeField, Min(100_000f)] private double altitudeMeters = 500_000.0;
@@ -23,7 +25,7 @@ namespace Argus.Simulation.Unity
         private AnalyticSimulationEngine _engine;
         private IEphemerisProvider _ephemeris;
         private bool _ephemerisLoadFailed;
-        private Vector3 _manualAttitudeOffsetDegrees;
+        private Quaterniond _attitudeOverrideBody = Quaterniond.Identity;
 
         public IEphemerisProvider Ephemeris => _ephemeris;
 
@@ -48,9 +50,7 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        // Body-frame offset applied on top of nadir tracking to every produced state, so the
-        // rendered pose and the sensors share one attitude. Unity Euler order, as the pose UI uses.
-        public Vector3 ManualAttitudeOffsetDegrees => _manualAttitudeOffsetDegrees;
+        public Quaterniond AttitudeOverrideBody => _attitudeOverrideBody;
 
         public double AltitudeMeters
         {
@@ -101,14 +101,6 @@ namespace Argus.Simulation.Unity
             }
 
             state = snapshot.Spacecraft;
-            if (_manualAttitudeOffsetDegrees != Vector3.zero)
-            {
-                Quaternion offset = Quaternion.Euler(_manualAttitudeOffsetDegrees);
-                // Unity's offset is single precision; renormalize so the attitude stays unit at double precision.
-                state = state.WithBodyToEcef(
-                    (state.BodyToEcef * new Quaterniond(offset.x, offset.y, offset.z, offset.w)).Normalized());
-            }
-
             return state.IsValid;
         }
 
@@ -125,18 +117,18 @@ namespace Argus.Simulation.Unity
             return true;
         }
 
-        public void NudgeAttitude(Vector3 deltaDegrees)
+        public bool TryApplyAttitudeOverride(AttitudeOverrideCommand command)
         {
-            Vector3 offset = _manualAttitudeOffsetDegrees + deltaDegrees;
-            _manualAttitudeOffsetDegrees = new Vector3(
-                NormalizeAngle(offset.x),
-                NormalizeAngle(offset.y),
-                NormalizeAngle(offset.z));
-        }
+            if (!command.IsValid)
+            {
+                return false;
+            }
 
-        public void ResetManualAttitude()
-        {
-            _manualAttitudeOffsetDegrees = Vector3.zero;
+            _attitudeOverrideBody = command.Operation == AttitudeOverrideOperation.Clear
+                ? Quaterniond.Identity
+                : (_attitudeOverrideBody * command.BodyFrameDelta).Normalized();
+            _engine = null;
+            return true;
         }
 
         private bool TryBuildEngine()
@@ -161,7 +153,8 @@ namespace Argus.Simulation.Unity
                 inclinationDegrees,
                 raanDegrees,
                 phaseDegrees,
-                useSpiceEphemeris ? _ephemeris : null);
+                useSpiceEphemeris ? _ephemeris : null,
+                _attitudeOverrideBody);
             try
             {
                 engine.Initialize(new SimulationConfiguration(
@@ -200,8 +193,6 @@ namespace Argus.Simulation.Unity
                 return false;
             }
         }
-
-        private static float NormalizeAngle(float angle) => Mathf.Repeat(angle + 180f, 360f) - 180f;
 
         private void OnValidate()
         {

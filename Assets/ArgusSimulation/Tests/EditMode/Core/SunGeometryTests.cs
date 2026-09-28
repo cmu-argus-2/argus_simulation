@@ -133,7 +133,7 @@ namespace Argus.Simulation.Tests
             Quaterniond offset = Quaterniond.FromAxisAngle(new Vector3d(x, y, z), degrees * Math.PI / 180.0);
 
             SunObservation before = SolarGeometry.Observe(state, environment);
-            SunObservation after = SolarGeometry.Observe(state.WithBodyToEcef(state.BodyToEcef * offset), environment);
+            SunObservation after = SolarGeometry.Observe(WithAttitude(state, state.BodyToEcef * offset), environment);
 
             AssertClose(after.SunDirectionItrf93, before.SunDirectionItrf93, 0.0);
             AssertClose(after.SunDirectionBody, offset.Conjugate.Rotate(before.SunDirectionBody), 1e-12);
@@ -148,7 +148,7 @@ namespace Argus.Simulation.Tests
             Quaterniond yaw = Quaterniond.FromAxisAngle(new Vector3d(0.0, 0.0, 1.0), Math.PI / 2.0);
 
             Vector3d before = SolarGeometry.Observe(state, environment).SunDirectionBody;
-            Vector3d after = SolarGeometry.Observe(state.WithBodyToEcef(state.BodyToEcef * yaw), environment).SunDirectionBody;
+            Vector3d after = SolarGeometry.Observe(WithAttitude(state, state.BodyToEcef * yaw), environment).SunDirectionBody;
 
             AssertClose(after, new Vector3d(before.Y, -before.X, before.Z), 1e-12);
         }
@@ -168,6 +168,18 @@ namespace Argus.Simulation.Tests
                 out SimulationSnapshot snapshot);
             return snapshot.Spacecraft;
         }
+
+        private static SpacecraftState WithAttitude(
+            SpacecraftState state,
+            Quaterniond bodyToEcef) =>
+            new SpacecraftState(
+                state.Sequence,
+                state.SimulationTimeSeconds,
+                state.TimestampUtc,
+                state.PositionEcefMeters,
+                state.VelocityEcefMetersPerSecond,
+                bodyToEcef,
+                state.AngularVelocityBodyRadiansPerSecond);
 
         private static SunObservation Observe(double t)
         {

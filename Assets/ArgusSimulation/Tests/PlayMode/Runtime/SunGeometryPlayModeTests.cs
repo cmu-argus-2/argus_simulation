@@ -57,7 +57,20 @@ namespace Argus.Simulation.Tests
                 Is.True);
 
             // Unity Euler (0, 0, 90) is a +90 deg rotation about body +Z.
-            _source.NudgeAttitude(new Vector3(0f, 0f, 90f));
+            Quaternion delta = Quaternion.Euler(0f, 0f, 90f);
+            Assert.That(_runner.TryApplyAttitudeOverride(
+                AttitudeOverrideCommand.ApplyDelta(
+                    _runner.NextSequence + 1,
+                    _runner.SimulationTimeSeconds,
+                    new Quaterniond(delta.x, delta.y, delta.z, delta.w).Normalized())),
+                Is.False,
+                "controller rejects a command for the wrong simulation step");
+            Assert.That(_runner.TryApplyAttitudeOverride(
+                AttitudeOverrideCommand.ApplyDelta(
+                    _runner.NextSequence,
+                    _runner.SimulationTimeSeconds,
+                    new Quaterniond(delta.x, delta.y, delta.z, delta.w).Normalized())),
+                Is.True);
             Assert.That(_runner.StepOnce(), Is.True);
             SpacecraftState state = _runner.LastState;
             Assert.That(_source.TryGetSunObservation(state, out SunObservation after), Is.True);
@@ -75,8 +88,12 @@ namespace Argus.Simulation.Tests
             Quaterniond renderedRotation = new Quaterniond(rendered.value.x, rendered.value.y, rendered.value.z, rendered.value.w);
             Assert.That(SameRotation(renderedRotation, state.BodyToEcef, 1e-5), Is.True, "rendered pose uses the shared attitude");
 
-            _source.ResetManualAttitude();
-            Assert.That(_source.ManualAttitudeOffsetDegrees, Is.EqualTo(Vector3.zero));
+            Assert.That(_runner.TryApplyAttitudeOverride(
+                AttitudeOverrideCommand.Clear(
+                    _runner.NextSequence,
+                    _runner.SimulationTimeSeconds)),
+                Is.True);
+            Assert.That(_source.AttitudeOverrideBody, Is.EqualTo(Quaterniond.Identity));
         }
 
         [Test]

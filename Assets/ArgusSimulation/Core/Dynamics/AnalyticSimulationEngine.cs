@@ -12,6 +12,7 @@ namespace Argus.Simulation.Core
         private readonly double _raanDegrees;
         private readonly double _phaseDegrees;
         private readonly IEphemerisProvider _ephemeris;
+        private readonly Quaterniond _attitudeOverrideBody;
 
         private CircularOrbitModel _orbit;
         private SimulationConfiguration _configuration;
@@ -22,10 +23,34 @@ namespace Argus.Simulation.Core
             double raanDegrees,
             double phaseDegrees,
             IEphemerisProvider ephemeris = null)
+            : this(
+                altitudeMeters,
+                inclinationDegrees,
+                raanDegrees,
+                phaseDegrees,
+                ephemeris,
+                Quaterniond.Identity)
+        {
+        }
+
+        public AnalyticSimulationEngine(
+            double altitudeMeters,
+            double inclinationDegrees,
+            double raanDegrees,
+            double phaseDegrees,
+            IEphemerisProvider ephemeris,
+            Quaterniond attitudeOverrideBody)
         {
             if (altitudeMeters <= 0.0)
             {
                 throw new ArgumentOutOfRangeException(nameof(altitudeMeters));
+            }
+
+            if (!attitudeOverrideBody.IsUnit)
+            {
+                throw new ArgumentException(
+                    "The attitude override must be a unit quaternion.",
+                    nameof(attitudeOverrideBody));
             }
 
             _altitudeMeters = altitudeMeters;
@@ -33,6 +58,7 @@ namespace Argus.Simulation.Core
             _raanDegrees = raanDegrees;
             _phaseDegrees = phaseDegrees;
             _ephemeris = ephemeris;
+            _attitudeOverrideBody = attitudeOverrideBody;
         }
 
         public string BackendName => "analytic-circular-orbit";
@@ -97,6 +123,18 @@ namespace Argus.Simulation.Core
                 return false;
             }
 
+            if (!IsIdentity(_attitudeOverrideBody))
+            {
+                state = new SpacecraftState(
+                    state.Sequence,
+                    state.SimulationTimeSeconds,
+                    state.TimestampUtc,
+                    state.PositionEcefMeters,
+                    state.VelocityEcefMetersPerSecond,
+                    (state.BodyToEcef * _attitudeOverrideBody).Normalized(),
+                    state.AngularVelocityBodyRadiansPerSecond);
+            }
+
             snapshot = new SimulationSnapshot(
                 _configuration.RunId,
                 BackendName,
@@ -104,5 +142,11 @@ namespace Argus.Simulation.Core
                 input.Commands);
             return snapshot.IsValid;
         }
+
+        private static bool IsIdentity(Quaterniond value) =>
+            Math.Abs(value.X) <= 1e-15 &&
+            Math.Abs(value.Y) <= 1e-15 &&
+            Math.Abs(value.Z) <= 1e-15 &&
+            Math.Abs(value.W - 1.0) <= 1e-15;
     }
 }
