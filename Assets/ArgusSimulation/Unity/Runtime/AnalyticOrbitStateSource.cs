@@ -23,6 +23,7 @@ namespace Argus.Simulation.Unity
         private AnalyticSimulationEngine _engine;
         private IEphemerisProvider _ephemeris;
         private bool _ephemerisLoadFailed;
+        private Vector3 _manualAttitudeOffsetDegrees;
 
         public IEphemerisProvider Ephemeris => _ephemeris;
 
@@ -46,6 +47,10 @@ namespace Argus.Simulation.Unity
                 OnValidate();
             }
         }
+
+        // Body-frame offset applied on top of nadir tracking to every produced state, so the
+        // rendered pose and the sensors share one attitude. Unity Euler order, as the pose UI uses.
+        public Vector3 ManualAttitudeOffsetDegrees => _manualAttitudeOffsetDegrees;
 
         public double AltitudeMeters
         {
@@ -96,6 +101,14 @@ namespace Argus.Simulation.Unity
             }
 
             state = snapshot.Spacecraft;
+            if (_manualAttitudeOffsetDegrees != Vector3.zero)
+            {
+                Quaternion offset = Quaternion.Euler(_manualAttitudeOffsetDegrees);
+                // Unity's offset is single precision; renormalize so the attitude stays unit at double precision.
+                state = state.WithBodyToEcef(
+                    (state.BodyToEcef * new Quaterniond(offset.x, offset.y, offset.z, offset.w)).Normalized());
+            }
+
             return state.IsValid;
         }
 
@@ -110,6 +123,20 @@ namespace Argus.Simulation.Unity
 
             observation = SolarGeometry.Observe(state, environment);
             return true;
+        }
+
+        public void NudgeAttitude(Vector3 deltaDegrees)
+        {
+            Vector3 offset = _manualAttitudeOffsetDegrees + deltaDegrees;
+            _manualAttitudeOffsetDegrees = new Vector3(
+                NormalizeAngle(offset.x),
+                NormalizeAngle(offset.y),
+                NormalizeAngle(offset.z));
+        }
+
+        public void ResetManualAttitude()
+        {
+            _manualAttitudeOffsetDegrees = Vector3.zero;
         }
 
         private bool TryBuildEngine()
@@ -173,6 +200,8 @@ namespace Argus.Simulation.Unity
                 return false;
             }
         }
+
+        private static float NormalizeAngle(float angle) => Mathf.Repeat(angle + 180f, 360f) - 180f;
 
         private void OnValidate()
         {

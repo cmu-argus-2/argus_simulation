@@ -57,7 +57,7 @@ Assets/ArgusSimulation/
 | Unity camera system | `CubeSatCameraRig` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
-| Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer` |
+| Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer`, `SunLightDriver` |
 | Temporary sensors | `MockSensorSuite` |
 | GUI | `SimulatorDashboard` |
 | Scene creation | `FoundationSceneBuilder` |

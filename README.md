@@ -49,13 +49,13 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 
 Earth orientation, the Sun direction, and eclipse status come from NASA/JPL SPICE data.
 Python generates that data offline, and Unity only reads the resulting JSON file. The
-default reference covers one orbit starting at `2025-01-15T00:00:00Z`. The ephemeris
-provider returns no sample after 5,680 s instead of extrapolating.
+default scenario covers one orbit starting at `2025-01-15T00:00:00Z`. After 5,680 s of
+simulation time the run pauses with a console warning instead of extrapolating.
 
 | Real (SPICE-derived) | Still mock |
 |---|---|
 | Earth orientation (J2000 → ITRF93), and therefore latitude/longitude and the ground track | Circular orbit dynamics (no drag or perturbations) |
-| Sun direction in the body frame and eclipse geometry | Magnetometer, GPS satellite count, reaction wheels, star tracker |
+| Sun direction in the body frame (sun sensor), scene light, night-lights side | Magnetometer, GPS satellite count, reaction wheels, star tracker |
 | Sunlit / penumbra / umbra status (conical Earth-shadow model) | Power, thermal, and comms models (power and thermal use the real illumination) |
 
 The committed data file is `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json`.
@@ -88,7 +88,7 @@ To compare with the old simplified Earth rotation, clear **Use Spice Ephemeris**
 - Images are not exported automatically. Press **CAPTURE** in the top toolbar to pause
   the simulation, wait for Cesium to finish the current view, and save one synchronized
   set of camera images. A timed-out load is cancelled instead of exporting incomplete imagery.
-- Use the mock pose panel to change orbit phase or altitude and apply pitch, yaw, or roll offsets while watching the four side-camera feeds.
+- Use the mock pose panel to change orbit phase or altitude and apply pitch, yaw, or roll offsets while watching the four side-camera feeds. Attitude offsets apply to the shared spacecraft state, so the sun sensor reading rotates with the model.
 - **RESET POSE** restores the initial mock orbit position and removes all attitude offsets.
 - Toggle telemetry groups from the right-side sensor settings panel.
 - The lower camera strip shows the four body-mounted +X, -X, +Y, and -Y cameras plus a virtual north-up nadir ground-truth feed. The GT camera follows orbital position but ignores CubeSat attitude changes.
