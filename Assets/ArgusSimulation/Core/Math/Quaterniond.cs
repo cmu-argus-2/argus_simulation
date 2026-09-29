@@ -38,6 +38,21 @@ namespace Argus.Simulation.Core
             return new Quaterniond(X / magnitude, Y / magnitude, Z / magnitude, W / magnitude);
         }
 
+        // Hamilton product: (a * b).Rotate(v) == a.Rotate(b.Rotate(v)), so chains read right to left.
+        public static Quaterniond operator *(Quaterniond a, Quaterniond b) => new Quaterniond(
+            a.W * b.X + a.X * b.W + a.Y * b.Z - a.Z * b.Y,
+            a.W * b.Y - a.X * b.Z + a.Y * b.W + a.Z * b.X,
+            a.W * b.Z + a.X * b.Y - a.Y * b.X + a.Z * b.W,
+            a.W * b.W - a.X * b.X - a.Y * b.Y - a.Z * b.Z);
+
+        // Active rotation by a unit quaternion (v' = q v q*).
+        public Vector3d Rotate(Vector3d value)
+        {
+            Vector3d axis = new Vector3d(X, Y, Z);
+            Vector3d twiceCross = Vector3d.Cross(axis, value) * 2.0;
+            return value + twiceCross * W + Vector3d.Cross(axis, twiceCross);
+        }
+
         // The inputs are the body-frame axes expressed in the target frame.
         public static Quaterniond FromBasis(Vector3d xAxis, Vector3d yAxis, Vector3d zAxis)
         {
