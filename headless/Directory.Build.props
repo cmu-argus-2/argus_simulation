@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!-- Match the C# version Unity 6 compiles with, so code that builds here also builds in the editor. -->
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <ArgusAssetsDir>$(MSBuildThisFileDirectory)../Assets/ArgusSimulation/</ArgusAssetsDir>
+  </PropertyGroup>
+</Project>

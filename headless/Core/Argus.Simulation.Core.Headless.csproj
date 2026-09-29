@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Argus.Simulation.Core</AssemblyName>
+    <RootNamespace>Argus.Simulation.Core</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(ArgusAssetsDir)Core/**/*.cs" />
+  </ItemGroup>
+</Project>

@@ -2,5 +2,6 @@
   "name": "Argus.Simulation.Core",
   "rootNamespace": "Argus.Simulation.Core",
   "references": [],
-  "autoReferenced": true
+  "autoReferenced": true,
+  "noEngineReferences": true
 }
