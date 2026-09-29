@@ -102,7 +102,7 @@ flowchart TB
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a snapshot with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
 | Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used only by tests | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (unused; observations planned) |
-| BasiliskEngine | `Core/Basilisk/` | — | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | planned |
+| BasiliskEngine | `Core/Basilisk/`, `headless/Host/` | Internal mapping from Basilisk state, SPICE output and sensor messages to Argus contracts | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | mapping on main (engine planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | — | Versioned Protobuf schemas for every cross-process message | planned |
 | Basilisk service + SPICE | `Argus.Basilisk/` | — | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | planned |
@@ -219,7 +219,7 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the snapshot. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine snapshot's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. |
 | G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated snapshot stream. |
 | G3 | Camera timing in real time | A Cesium render can take longer than a step. Needs a late-frame policy: stamp with capture time, drop, or mark stale. |
-| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion; contracts need frame tags and mapping tests. |
+| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; the engine that calls them does not. |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. |
 
 **Not built yet:** `BasiliskEngine`, the Basilisk service and the Protobuf schemas; camera
@@ -332,6 +332,8 @@ the gateway.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6)
 - Does `SpacecraftState` stay canonical ITRF93 with conversion only at the Basilisk
-  boundary, or also carry inertial fields? (G4)
+  boundary, or also carry inertial fields? (G4) Proposed: canonical Earth-fixed plus the
+  frame tag; inertial quantities are recoverable from `EnvironmentState` (q and ω).
 - Where does the gRPC client for `BasiliskEngine` live: inside Core, or in a separate
-  headless assembly that Core only abstracts? (D1)
+  headless assembly that Core only abstracts? (D1) Proposed: `headless/Host`, over the
+  internal `Core/Basilisk` mapping, so Core never references Protobuf or gRPC.

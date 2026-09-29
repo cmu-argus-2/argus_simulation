@@ -1,26 +1,38 @@
-# Core/Basilisk — BasiliskEngine adapter (planned)
+# Core/Basilisk: Basilisk-to-Argus mapping
 
-**Diagram block:** BasiliskEngine · **Assembly:** `Argus.Simulation.Core` · **Status:** not built
+**Diagram block:** BasiliskEngine · **Assembly:** `Argus.Simulation.Core` · **Status:** mapping built; engine in `headless/Host` (planned)
 
-`BasiliskEngine` will implement `ISimulationEngine` (`Core/Abstractions/ISimulationEngine.cs`)
-and talk to the Basilisk service in [`Argus.Basilisk/`](../../../../Argus.Basilisk/README.md)
-over gRPC, using the schemas in [`Argus.Contracts/`](../../../../Argus.Contracts/README.md).
+This folder holds the transport-free half of `BasiliskEngine`: plain C# mirrors of the
+Basilisk messages Argus reads, and the conversions from them to Argus contracts. The
+gRPC client that fills these mirrors lives in `headless/Host` (target architecture §11),
+so Core never references Protobuf or gRPC.
 
-## Responsibilities
+## Contents
 
-- Build every `SimulationSnapshot` from Basilisk state and Basilisk's SPICE output. That
-  covers spacecraft truth plus the planned `EnvironmentState` (decisions D3 and D4).
-- Follow Basilisk's clock. Basilisk owns simulation time in every Basilisk run, and its
-  pacing in real-time and HIL runs (decision D2), so this adapter never invents time.
-- Map Basilisk sensor messages to Argus `SensorFrame`s for the sensor models.
-- Carry gateway actuator commands to Basilisk's actuator modules (gap G1).
-- Convert frames and units at the boundary: Basilisk inertial frame and MRP attitude to
-  Argus contracts (gap G4).
+| Type | Role |
+|---|---|
+| `BasiliskTime` | Seconds ↔ Basilisk integer nanoseconds; UTC as epoch plus elapsed seconds |
+| `BasiliskSpacecraftState` | `SCStatesMsgPayload` subset: `r_BN_N`, `v_BN_N`, `sigma_BN`, `omega_BN_B` |
+| `BasiliskPlanetState` | `SpicePlanetStateMsgPayload` subset: position, velocity, `J20002Pfix`, `J20002Pfix_dot` |
+| `BasiliskSensorSample` | One sensor output, already an Argus measurement type |
+| `BasiliskStepState` | Everything one step reports; mirrors `StepResponse` field for field |
+| `BasiliskStateMapper` | `MapEnvironment`, `MapSpacecraft`, `MapMeasurements` |
+
+## Mapping
+
+- `EnvironmentState` comes from SPICE only (D3): `q_EN` from `J20002Pfix`, Earth's rate
+  from the antisymmetric part of `J20002Pfix_dot · J20002Pfixᵀ`, and the Sun rotated into
+  ITRF93.
+- `SpacecraftState` is Earth-fixed and tagged `Itrf93`:
+  `r_E = q_EN (r_BN_N − r_Earth)`, `v_E = q_EN (v_BN_N − v_Earth) − ω × r_E`,
+  `BodyToEcef = q_EN * q_NB`. The body rate passes through.
+- Sensor samples become a `SensorMeasurementSet` (D10). Each configured sensor must report
+  exactly on the steps its period divides, at the step time, with its kind's payload type.
+- Every inconsistent input throws; nothing is repaired or approximated.
 
 ## Rules
 
-- No Basilisk-specific types leave this folder (decision D8). Unity, agents and hardware
-  adapters see only Argus contracts.
-- Code arrives here only after the Protobuf v1 schemas exist in `Argus.Contracts/`.
-- Whether the gRPC client itself lives in this assembly or in a separate headless transport
-  assembly behind a Core interface is open (target architecture §11).
+- Every type here is `internal`, so Unity cannot see it (D8). `Core/AssemblyInfo.cs`
+  exposes them only to `Argus.Simulation.Host` and the EditMode tests.
+- No Protobuf types here. `headless/Host` maps Protobuf messages to these mirrors.
+- `BasiliskStateMapperTests` pins the frame math to a literal SPICE sample.

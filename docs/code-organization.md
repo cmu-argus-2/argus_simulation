@@ -11,7 +11,7 @@ work toward is in [target-architecture.md](target-architecture.md).
 Assets/ArgusSimulation/
 ├── Core/                         # Pure C#; no Unity or Cesium dependencies (noEngineReferences)
 │   ├── Abstractions/             # Replaceable backend/service interfaces
-│   ├── Basilisk/                 # Planned: BasiliskEngine adapter (README only)
+│   ├── Basilisk/                 # Internal Basilisk-to-Argus mapping (D8; visible to host and tests)
 │   ├── Contracts/                # State, command, step, and configuration DTOs
 │   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
@@ -53,6 +53,7 @@ Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
+| Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
 | Implemented sensor models | `IdealBodyRateSensorModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
@@ -95,8 +96,8 @@ Core/Sensors/Camera/
 Core/Recording/
 └── RunRecorder.cs                # Snapshots, every SensorFrame, gateway command log
 
-Core/Basilisk/
-└── BasiliskEngine.cs             # ISimulationEngine adapter; gRPC client location open (target §11)
+headless/Host/
+└── BasiliskEngine.cs             # ISimulationEngine gRPC client over Core/Basilisk mapping
 
 Unity/Cameras/
 └── UnityImageRenderer.cs         # IImageRenderer implementation
