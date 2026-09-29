@@ -6,8 +6,11 @@
 [Bb]uilds/
 [Ll]ogs/
 [Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
 *.csproj
 *.sln
+/*.slnx
 *.user
 *.pidb
 *.booproj
@@ -16,13 +19,40 @@
 *.mdb
 *.opendb
 *.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+*.unitypackage
+sysinfo.txt
+crashlytics-build.properties
 
-# Local credentials.
+# Headless dotnet build of the Unity-independent core (see headless/README.md).
+!headless/**/*.csproj
+[Bb]in/
+[Tt]est[Rr]esults/
+
+# Python services (Argus.Basilisk/ and tooling).
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Downloaded SPICE/NAIF kernels: large, never committed (pinned kernel management is planned).
+kernels/
+*.bsp
+*.bpc
+*.bc
+
+# Local credentials. Keep the template tracked.
 .env
+.env.*
+!.env.example
 
 # Local editor settings.
 .vscode/
 .idea/
+.vs/
 
 # OS and tool caches.
 .DS_Store
