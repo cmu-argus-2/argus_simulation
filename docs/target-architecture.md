@@ -184,7 +184,7 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | `SimulationSnapshot` | `Core/Contracts/SimulationSnapshot.cs` | Optional `EnvironmentState`, present exactly when the state is ITRF93 | D4 | done |
 | `EnvironmentState` | `Core/Contracts/EnvironmentState.cs` | Sun position, J2000 → ITRF93 rotation and Earth rate, spacecraft shadow factor | D4 | done |
 | `SpacecraftState` | `Core/Contracts/SpacecraftState.cs` | `EarthFixedFrame` tag (`Core/Contracts/ReferenceFrame.cs`) | G4 | done |
-| `SimulationConfiguration` | `Core/Contracts/SimulationConfiguration.cs` | Seed, orbit, kernel-set ID, sensor profiles | G5 | planned |
+| `SimulationConfiguration` | `Core/Contracts/SimulationConfiguration.cs` | Optional orbit (`ClassicalOrbitElements`), spacecraft (`SpacecraftConfiguration`), seed, kernel-set ID and sensors (`SensorConfiguration`) | G5 | done |
 | `SensorSampleContext` | `Core/Sensors/SensorContexts.cs` | Carry the whole snapshot, not only the spacecraft state | Camera, Sun sensor, magnetometer models | planned |
 | `SensorDefinition` | `Core/Sensors/SensorDefinition.cs` | Mark ground-truth sensors as not controller-visible | D7 | planned |
 | `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Add a snapshot event next to it; keep the old one until its subscribers move | D2, D4 | planned |
@@ -217,7 +217,7 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated snapshot stream. |
 | G3 | Camera timing in real time | A Cesium render can take longer than a step. Needs a late-frame policy: stamp with capture time, drop, or mark stale. |
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion; contracts need frame tags and mapping tests. |
-| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. |
+| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. |
 
 **Not built yet:** `BasiliskEngine`, the Basilisk service and the Protobuf schemas; camera
 models; real sensor models or mapped Basilisk sensors (IMU noise, magnetometer, Sun
@@ -299,7 +299,7 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
 
 **Phase 2: contract seams (one PR each)**
 
-- [ ] Frame tags, MRP ↔ quaternion math, and the shared run configuration (G4, G5).
+- [x] Frame tags, MRP ↔ quaternion math, and the shared run configuration (G4, G5).
 - [ ] `EnvironmentState` in the snapshot, a snapshot event on the runner, and the full
       snapshot in `SensorSampleContext` (D4); the Unity Sun light and night side follow
       `EnvironmentState`. Fix the night-lights key `"3"` separately.

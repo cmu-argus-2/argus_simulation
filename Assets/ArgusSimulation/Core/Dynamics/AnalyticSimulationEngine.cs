@@ -3,7 +3,8 @@ using System;
 namespace Argus.Simulation.Core
 {
     // Development and test fixture (D9). Commands are recorded in each snapshot but do not perturb the
-    // orbit. It reports no EnvironmentState and never approximates SPICE data (D3).
+    // orbit. It reports no EnvironmentState and never approximates SPICE data (D3). It ignores
+    // RandomSeed, KernelSetId and Sensors.
     public sealed class AnalyticSimulationEngine : ISimulationEngine
     {
         private readonly double _altitudeMeters;
@@ -39,6 +40,14 @@ namespace Argus.Simulation.Core
             if (!configuration.IsValid)
             {
                 throw new ArgumentException("A valid simulation configuration is required.", nameof(configuration));
+            }
+
+            if (configuration.InitialOrbit.HasValue || configuration.Spacecraft.HasValue)
+            {
+                throw new ArgumentException(
+                    "AnalyticSimulationEngine takes its circular orbit and attitude from its constructor; " +
+                    "InitialOrbit and Spacecraft are Basilisk inputs.",
+                    nameof(configuration));
             }
 
             _configuration = configuration;

@@ -50,7 +50,7 @@ Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README
 |---|---|
 | Engine interfaces | `ISimulationEngine`, `ISpacecraftStateSource` |
 | Rendering interface | `IImageRenderer` |
-| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState` |
+| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
