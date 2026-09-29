@@ -55,6 +55,7 @@ Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README
 | Headless orchestration | `SimulationGateway` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
 | Implemented sensor model | `IdealBodyRateSensorModel` |
+| P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticOrbitStateSource` |
 | Unity camera system | `CubeSatCameraRig` |
