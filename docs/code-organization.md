@@ -2,27 +2,31 @@
 
 This is the authoritative map for class placement. Class namespaces remain
 `Argus.Simulation.Core` and `Argus.Simulation.Unity`; folders describe ownership and
-dependencies rather than creating deeply nested namespaces.
+dependencies rather than creating deeply nested namespaces. The target design these folders
+work toward is in [target-architecture.md](target-architecture.md).
 
 ## Source tree
 
 ```text
 Assets/ArgusSimulation/
-├── Core/                         # Pure C#; no Unity or Cesium dependencies
+├── Core/                         # Pure C#; no Unity or Cesium dependencies (noEngineReferences)
 │   ├── Abstractions/             # Replaceable backend/service interfaces
+│   ├── Basilisk/                 # Planned: BasiliskEngine adapter (README only)
 │   ├── Contracts/                # State, command, step, and configuration DTOs
-│   ├── Dynamics/                 # Analytic dynamics and future engine implementations
+│   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
 │   ├── Math/                     # Double-precision vectors and quaternions
+│   ├── Recording/                # Planned: run recorder, the single export route (README only)
 │   ├── Runtime/                  # Headless orchestration and gateway
 │   └── Sensors/                  # Standard sensor envelopes and models
+│       └── Camera/               # Planned: camera sensor models (README only)
 │
 ├── Unity/                        # Unity-dependent adapters and presentation
 │   ├── Cameras/                  # Unity camera rigs and render implementation
 │   ├── Cesium/                   # Cesium credentials, imagery, and globe controls
 │   ├── Export/                   # Image, metadata, and reference-map exporters
 │   ├── Runtime/                  # MonoBehaviour adapters to the headless core
-│   ├── Sensors/                  # Temporary Unity sensor implementations
+│   ├── Sensors/                  # Temporary bridge to the Core SensorManager (no sensor behaviour)
 │   ├── UI/                       # Mission-control dashboard
 │   └── Visualization/            # CubeSat model, pose, and orbit rendering
 │
@@ -31,8 +35,13 @@ Assets/ArgusSimulation/
 │
 ├── Scenes/                       # Serialized Unity scenes
 └── Tests/
-    ├── EditMode/Core/            # Pure/core contract tests
+    ├── EditMode/Core/            # Pure/core contract tests (also run by headless/)
+    ├── PlayMode/Sensors/         # Unity sensor-runtime integration tests
     └── PlayMode/UI/              # Unity integration and dashboard tests
+
+headless/                         # dotnet build of Core and the EditMode tests (no Unity)
+Argus.Contracts/                  # Planned: Protobuf schemas (README only)
+Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README only)
 ```
 
 ## Class map
@@ -58,7 +67,8 @@ Assets/ArgusSimulation/
 
 ## Placement rules
 
-- Put a class in `Core` only when it compiles without Unity, Cesium, or editor APIs.
+- Put a class in `Core` only when it compiles without Unity, Cesium, or editor APIs. The
+  Core asmdef sets `noEngineReferences`, and `headless/` must still build.
 - Put cross-process messages and stable DTOs in `Core/Contracts`.
 - Put an interface in `Core/Abstractions` when multiple implementations are expected.
 - Put physical sensor behavior in `Core/Sensors`; Unity may supply only a rendering or
@@ -72,18 +82,33 @@ Assets/ArgusSimulation/
 
 ## Planned additions
 
+Folders marked planned above exist today with only a README that states their owner and
+status. Planned code, including code for those folders:
+
 ```text
+Core/Contracts/
+├── EnvironmentState.cs           # Sun vector, J2000 ↔ ITRF93, eclipse (in SimulationSnapshot)
+└── ReferenceFrame.cs             # Frame tags for state fields
+
 Core/Sensors/Camera/
-├── CameraModelBase.cs
+├── CameraModel.cs
 ├── ArducamImx708CameraModel.cs
 └── NadirGroundTruthCameraModel.cs
 
+Core/Recording/
+└── RunRecorder.cs                # Snapshots, every SensorFrame, gateway command log
+
+Core/Basilisk/
+└── BasiliskEngine.cs             # ISimulationEngine adapter; gRPC client location open (target §11)
+
+Unity/Cameras/
+└── UnityImageRenderer.cs         # IImageRenderer implementation
+
 External services/packages:
 ├── Argus.Contracts/              # Protobuf schemas
-├── Argus.Basilisk/               # Python Basilisk backend
+├── Argus.Basilisk/               # Python Basilisk service, including SPICE
 ├── Argus.Agent/                  # Training environment
-├── Argus.Hardware/               # Flight-computer protocol adapters
-└── Argus.Export/                 # Headless dataset/replay writers
+└── Argus.Hardware/               # Flight-computer protocol adapters
 ```
 
 Unity asset references are preserved during moves by keeping each `.cs.meta` file with

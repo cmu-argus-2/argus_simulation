@@ -5,7 +5,8 @@ Unity visualization for the CubeSat simulation. The current scene displays Cesiu
 The long-term simulator is designed as a Unity-independent headless core with Unity as
 an optional GUI and image renderer. See [the system architecture](docs/system-architecture.md)
 for the agent, flight-hardware, sensor, rendering, and future Basilisk integration design.
-See [code organization](docs/code-organization.md) for the class and folder map.
+See [code organization](docs/code-organization.md) for the class and folder map, and
+[the target architecture](docs/target-architecture.md) for the agreed target design, decisions, and open gaps.
 
 ## Requirements
 
@@ -43,7 +44,7 @@ When Unity opens for the first time:
 
 The generated scene is saved at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 
-NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-01-15`. To change it, select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
+NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-06-21`, a date with daylight imagery up to the north pole. To change it, use the **SETTINGS** panel in the top toolbar, pass `-gt-date YYYY-MM-DD` and `-gt-layer LAYER` on the command line, or select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
 
 ## Simulator controls
 
@@ -56,7 +57,7 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 - **RESET POSE** restores the initial analytic orbit position and removes all attitude offsets.
 - Toggle telemetry groups from the right-side sensor settings panel.
 - The lower camera strip shows the four body-mounted +X, -X, +Y, and -Y cameras plus a virtual north-up nadir ground-truth feed. The GT camera follows orbital position but ignores CubeSat attitude changes.
-- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar hemisphere.
+- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` approximately follows the anti-solar side of the scene's fixed Sun light. The band is currently offset from the true night side and its part past the antimeridian does not draw; see the known issues in [the target architecture](docs/target-architecture.md#7-gaps).
 
 Captured images and `navigation_metadata.jsonl` are written to:
 

@@ -2,6 +2,11 @@
 
 Status: foundational design and implementation baseline
 
+The agreed target design, its decisions, and the open gaps are in
+[target-architecture.md](target-architecture.md). Where the two documents differ (for
+example, Basilisk owns simulation time in Basilisk runs), the target decisions take
+precedence.
+
 ## 1. Purpose
 
 Argus is a CubeSat digital-twin platform for:
@@ -266,14 +271,19 @@ Assets/ArgusSimulation/Unity/              GUI, Cesium, render, and runtime adap
 Assets/ArgusSimulation/Editor/Scene/       Scene/bootstrap tooling
 Assets/ArgusSimulation/Tests/              Mirrored core and Unity tests
 docs/                              Architecture and interface documentation
+headless/                          dotnet build of Core and the EditMode tests
 
 Future external packages/services:
 Argus.Contracts/                   Protobuf schemas and generated clients
-Argus.Basilisk/                    Python Basilisk adapter
+Argus.Basilisk/                    Python Basilisk service (with SPICE)
 Argus.Agent/                       Training environment/SDK
 Argus.Hardware/                    Flight-computer protocol adapters
-Argus.Export/                      Dataset and replay writers
 ```
+
+Dataset and replay writing will live in the core run recorder (`Core/Recording/`,
+planned), not in a separate package. Today `Unity/Export/NavigationEpisodeExporter.cs`
+writes datasets. The authoritative folder and class map, including planned README-only
+folders, is [code-organization.md](code-organization.md).
 
 ## 15. Incremental implementation plan
 
