@@ -151,12 +151,22 @@ cadence. This allows a run to replace a simulated sensor with physical sensor in
 without changing consumers. Missing sensor implementations do not generate values;
 an attached source must publish `Unavailable`, or the sensor is omitted from an output set.
 
-Target hierarchy (only the ideal body-rate model is currently implemented):
+Two base classes share the envelope. `SensorModel<TPayload>` computes its value in Argus
+from the state. `BackendSensorModel<TMeasurement>` publishes a value the dynamics backend
+measured, exactly when the backend sampled it
+([target-architecture.md D10](target-architecture.md#3-decisions)).
+
+Target hierarchy (the ideal body-rate model and the three Basilisk-sourced sensors are
+implemented; the Basilisk service that feeds them is not):
 
 ```text
-SensorModel<TPayload>
-├── ImuModel
-├── MagnetometerModel
+BackendSensorModel<TMeasurement>         (Basilisk-sourced)
+├── ImuSensor                            (imuSensor: rate and specific force)
+├── MagnetometerSensor                   (magnetometer with WMM)
+└── LightSensor                          (coarseSunSensor with eclipse and albedo)
+
+SensorModel<TPayload>                    (Argus-computed)
+├── IdealBodyRateSensorModel
 ├── GpsModel
 ├── SunSensorModel
 ├── StarTrackerModel

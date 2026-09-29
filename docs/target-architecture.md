@@ -100,7 +100,7 @@ flowchart TB
 | Mission dashboard | `Unity/UI/` | Truth + sensor status, orbit and attitude nudges, GT imagery date, capture | Same, reading snapshots; nudges become engine commands | main (snapshot reading planned) |
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | Retired once the recorder covers what its consumers read (D6) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a snapshot with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
-| Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel` | Adds camera models; also consumes the Argus `SensorFrame`s that `BasiliskEngine` maps from Basilisk sensors | main (cameras planned) |
+| Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
 | Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used only by tests | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (unused; observations planned) |
 | BasiliskEngine | `Core/Basilisk/` | — | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | planned |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
@@ -125,6 +125,7 @@ tiles. It is not run data and sits outside D6.
 | D7 | The gateway and the recorder are separate roles. The gateway never exposes truth. | The gateway is on the control loop's critical path; the recorder is a passive archive that must never block the loop. | The gateway forwards only controller-visible sensor frames (no ground-truth sensors) and returns observations, not `SimulationSnapshot`. The recorder receives everything, including the gateway's command log. |
 | D8 | Unity never sees Basilisk-specific types. | Keeps the backend replaceable. | All Basilisk data enters through `BasiliskEngine` as Argus contracts. |
 | D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. |
+| D10 | Sensors that Basilisk models (IMU, magnetometer, light sensor) keep their physics and cadence in Basilisk. | One implementation of each sensor's physics, timed by the clock that owns the run (D2). | `BasiliskEngine` maps each step's Basilisk sensor messages into `SimulationSnapshot.SensorMeasurements`; a `BackendSensorModel<T>` publishes a frame exactly when its sensor was sampled and never computes, holds or repeats a value. |
 
 ## 4. Run modes
 
@@ -181,11 +182,13 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 
 | Contract | File | Change | For | Status |
 |---|---|---|---|---|
-| `SimulationSnapshot` | `Core/Contracts/SimulationSnapshot.cs` | Optional `EnvironmentState`, present exactly when the state is ITRF93 | D4 | done |
+| `SimulationSnapshot` | `Core/Contracts/SimulationSnapshot.cs` | Optional `EnvironmentState`, present exactly when the state is ITRF93; `SensorMeasurements` | D4, D10 | done |
 | `EnvironmentState` | `Core/Contracts/EnvironmentState.cs` | Sun position, J2000 → ITRF93 rotation and Earth rate, spacecraft shadow factor | D4 | done |
 | `SpacecraftState` | `Core/Contracts/SpacecraftState.cs` | `EarthFixedFrame` tag (`Core/Contracts/ReferenceFrame.cs`) | G4 | done |
 | `SimulationConfiguration` | `Core/Contracts/SimulationConfiguration.cs` | Optional orbit (`ClassicalOrbitElements`), spacecraft (`SpacecraftConfiguration`), seed, kernel-set ID and sensors (`SensorConfiguration`) | G5 | done |
-| `SensorSampleContext` | `Core/Sensors/SensorContexts.cs` | Carry the whole snapshot, not only the spacecraft state | Camera, Sun sensor, magnetometer models | planned |
+| `SensorSampleContext` | `Core/Sensors/SensorContexts.cs` | `(runId, snapshot)` exposes `Measurements`; `Environment` is added with its first consumer (cameras, lighting) | D4, D10 | done (environment planned) |
+| `SensorMeasurementSet` | `Core/Sensors/SensorMeasurementSet.cs` | Backend measurements of one step, keyed by sensor ID; keeps "not sampled" apart from "sampled but unavailable" | D10 | done |
+| P0 sensors | `Core/Sensors/ImuSensor.cs`, `MagnetometerSensor.cs`, `LightSensor.cs` | `BackendSensorModel<T>` subclasses built by `SensorFactory` from `SensorConfiguration` | D10 | done |
 | `SensorDefinition` | `Core/Sensors/SensorDefinition.cs` | Mark ground-truth sensors as not controller-visible | D7 | planned |
 | `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Add a snapshot event next to it; keep the old one until its subscribers move | D2, D4 | planned |
 | `ISpacecraftStateSource` | `Core/Abstractions/ISpacecraftStateSource.cs` | Replace with a snapshot source that works as a follower | D2, G2 | planned |
