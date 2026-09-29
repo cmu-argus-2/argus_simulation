@@ -15,7 +15,7 @@ Assets/ArgusSimulation/
 │   ├── Contracts/                # State, command, step, and configuration DTOs
 │   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
-│   ├── Math/                     # Double-precision vectors and quaternions
+│   ├── Math/                     # Double-precision vectors, quaternions, MRPs, 3x3 matrices
 │   ├── Recording/                # Planned: run recorder, the single export route (README only)
 │   ├── Runtime/                  # Headless orchestration and gateway
 │   └── Sensors/                  # Standard sensor envelopes and models
@@ -50,7 +50,7 @@ Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README
 |---|---|
 | Engine interfaces | `ISimulationEngine`, `ISpacecraftStateSource` |
 | Rendering interface | `IImageRenderer` |
-| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState` |
+| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
@@ -86,10 +86,6 @@ Folders marked planned above exist today with only a README that states their ow
 status. Planned code, including code for those folders:
 
 ```text
-Core/Contracts/
-├── EnvironmentState.cs           # Sun vector, J2000 ↔ ITRF93, eclipse (in SimulationSnapshot)
-└── ReferenceFrame.cs             # Frame tags for state fields
-
 Core/Sensors/Camera/
 ├── CameraModel.cs
 ├── ArducamImx708CameraModel.cs

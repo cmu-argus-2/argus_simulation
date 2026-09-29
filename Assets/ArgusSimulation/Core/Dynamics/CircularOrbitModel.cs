@@ -71,7 +71,8 @@ namespace Argus.Simulation.Core
                 positionEcef,
                 velocityEcef,
                 Quaterniond.FromBasis(bodyX, bodyY, bodyZ),
-                new Vector3d(0.0, _meanMotionRadiansPerSecond, 0.0));
+                new Vector3d(0.0, _meanMotionRadiansPerSecond, 0.0),
+                ReferenceFrame.AnalyticEarthFixed);
         }
 
         private static double DegreesToRadians(double value) => value * Math.PI / 180.0;

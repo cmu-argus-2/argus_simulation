@@ -36,7 +36,7 @@ flowchart TB
     end
 
     subgraph CORE["Core — Argus.Simulation.Core (headless C#)"]
-        dyn["Dynamics<br/>ISimulationEngine → SimulationSnapshot<br/>(planned: + EnvironmentState)"]
+        dyn["Dynamics<br/>ISimulationEngine → SimulationSnapshot<br/>+ EnvironmentState (Basilisk runs)"]
         smod["Sensor models<br/>SensorManager, SensorModel&lt;T&gt;<br/>(planned: CameraModel)"]
         gate["Simulation gateway<br/>Reset / Step over ISimulationEngine<br/>(planned: observations, command log)"]
         beng["BasiliskEngine<br/>ISimulationEngine adapter"]
@@ -99,7 +99,7 @@ flowchart TB
 | Sensor runtime | `Unity/Sensors/` | Temporary bridge feeding each state to a Core `SensorManager` | Moves into the headless core (G2); Unity only displays frames | main (temporary) |
 | Mission dashboard | `Unity/UI/` | Truth + sensor status, orbit and attitude nudges, GT imagery date, capture | Same, reading snapshots; nudges become engine commands | main (snapshot reading planned) |
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | Retired once the recorder covers what its consumers read (D6) | main (to retire) |
-| Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel` | `ISimulationEngine` returns a snapshot with `EnvironmentState`; the analytic engine stays as a test fixture | main (EnvironmentState planned) |
+| Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a snapshot with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel` | Adds camera models; also consumes the Argus `SensorFrame`s that `BasiliskEngine` maps from Basilisk sensors | main (cameras planned) |
 | Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used only by tests | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (unused; observations planned) |
 | BasiliskEngine | `Core/Basilisk/` | — | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | planned |
@@ -124,7 +124,7 @@ tiles. It is not run data and sits outside D6.
 | D6 | One export route for run data: the run recorder, fed by snapshots, all `SensorManager` output, and the gateway's command log. | One dataset format with the same run ID, sequence and timestamps for truth and every sensor. | `NavigationEpisodeExporter` is retired once the recorder covers what its consumers (the Python navigation code) read. |
 | D7 | The gateway and the recorder are separate roles. The gateway never exposes truth. | The gateway is on the control loop's critical path; the recorder is a passive archive that must never block the loop. | The gateway forwards only controller-visible sensor frames (no ground-truth sensors) and returns observations, not `SimulationSnapshot`. The recorder receives everything, including the gateway's command log. |
 | D8 | Unity never sees Basilisk-specific types. | Keeps the backend replaceable. | All Basilisk data enters through `BasiliskEngine` as Argus contracts. |
-| D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It must still fill the snapshot contracts, with a documented approximate environment. |
+| D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. |
 
 ## 4. Run modes
 
@@ -179,27 +179,33 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 
 ## 5. Contract changes needed
 
-| Contract | File | Change | For |
-|---|---|---|---|
-| `SimulationSnapshot` | `Core/Contracts/SimulationSnapshot.cs` | Add `EnvironmentState` | D4 |
-| `EnvironmentState` | `Core/Contracts/EnvironmentState.cs` (new) | Sun vector, J2000 → ITRF93 rotation and rate, eclipse state | D4 |
-| `SpacecraftState` | `Core/Contracts/SpacecraftState.cs` | Frame-tagged fields; add a `ReferenceFrame` contract | G4 |
-| `SimulationConfiguration` | `Core/Contracts/SimulationConfiguration.cs` | Seed, orbit, kernel-set ID, sensor profiles | G5 |
-| `SensorSampleContext` | `Core/Sensors/SensorContexts.cs` | Carry the whole snapshot, not only the spacecraft state | Camera, Sun sensor, magnetometer models |
-| `SensorDefinition` | `Core/Sensors/SensorDefinition.cs` | Mark ground-truth sensors as not controller-visible | D7 |
-| `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Add a snapshot event next to it; keep the old one until its subscribers move | D2, D4 |
-| `ISpacecraftStateSource` | `Core/Abstractions/ISpacecraftStateSource.cs` | Replace with a snapshot source that works as a follower | D2, G2 |
-| `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 |
-| `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | Step returns observations (controller-visible frames), not `SimulationSnapshot`; command log; `Reset(seed, scenario)`; authority and heartbeat | D7, G1 |
-| Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | An engine that applies them | G1 |
+| Contract | File | Change | For | Status |
+|---|---|---|---|---|
+| `SimulationSnapshot` | `Core/Contracts/SimulationSnapshot.cs` | Optional `EnvironmentState`, present exactly when the state is ITRF93 | D4 | done |
+| `EnvironmentState` | `Core/Contracts/EnvironmentState.cs` | Sun position, J2000 → ITRF93 rotation and Earth rate, spacecraft shadow factor | D4 | done |
+| `SpacecraftState` | `Core/Contracts/SpacecraftState.cs` | `EarthFixedFrame` tag (`Core/Contracts/ReferenceFrame.cs`) | G4 | done |
+| `SimulationConfiguration` | `Core/Contracts/SimulationConfiguration.cs` | Seed, orbit, kernel-set ID, sensor profiles | G5 | planned |
+| `SensorSampleContext` | `Core/Sensors/SensorContexts.cs` | Carry the whole snapshot, not only the spacecraft state | Camera, Sun sensor, magnetometer models | planned |
+| `SensorDefinition` | `Core/Sensors/SensorDefinition.cs` | Mark ground-truth sensors as not controller-visible | D7 | planned |
+| `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Add a snapshot event next to it; keep the old one until its subscribers move | D2, D4 | planned |
+| `ISpacecraftStateSource` | `Core/Abstractions/ISpacecraftStateSource.cs` | Replace with a snapshot source that works as a follower | D2, G2 | planned |
+| `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 | planned |
+| `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | Step returns observations (controller-visible frames), not `SimulationSnapshot`; command log; `Reset(seed, scenario)`; authority and heartbeat | D7, G1 | planned |
+| Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | An engine that applies them | G1 | planned |
 
 ## 6. Frames, units and time
 
 - Internal units stay SI (see [system-architecture.md §7](system-architecture.md)).
-- `SpacecraftState` stays canonical Earth-fixed (ECEF; ITRF93 once SPICE is in use) with
-  a body-to-ECEF quaternion. This is proposed; frame tags make it explicit (G4).
-- Basilisk works in its inertial frame with MRP attitude. `BasiliskEngine` converts at the
-  boundary using the snapshot's J2000 → ITRF93 rotation.
+- `SpacecraftState` stays canonical Earth-fixed with a body-to-ECEF quaternion.
+  `EarthFixedFrame` names the frame: `Itrf93` in Basilisk runs, `AnalyticEarthFixed` for the
+  analytic fixture (z is the spin axis at a constant 7.2921150e-5 rad/s, x is the fixture's
+  inertial x at the epoch; never converted with SPICE data). A snapshot rejects
+  `Unspecified`, and carries `EnvironmentState` exactly when the frame is `Itrf93`.
+- `AngularVelocityBodyRadiansPerSecond` is the body rate relative to inertial, in body axes
+  (Basilisk `omega_BN_B`).
+- Basilisk works in J2000 with MRP attitude σ_BN. `BasiliskEngine` converts at the boundary
+  with SPICE's J2000 → ITRF93 rotation `q_EN`: `BodyToEcef = q_EN * q_NB`, where `q_NB` is
+  σ_BN as a quaternion.
 - In Basilisk runs, Basilisk's simulation time is authoritative. UTC is derived from the
   run epoch. Every cross-process field names its frame, unit and time scale.
 

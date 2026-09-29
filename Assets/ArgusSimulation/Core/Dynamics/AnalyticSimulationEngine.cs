@@ -2,7 +2,8 @@ using System;
 
 namespace Argus.Simulation.Core
 {
-    // Development backend. Commands are recorded in each snapshot but do not yet perturb the orbit.
+    // Development and test fixture (D9). Commands are recorded in each snapshot but do not perturb the
+    // orbit. It reports no EnvironmentState and never approximates SPICE data (D3).
     public sealed class AnalyticSimulationEngine : ISimulationEngine
     {
         private readonly double _altitudeMeters;
