@@ -40,7 +40,7 @@ Assets/ArgusSimulation/
     └── PlayMode/UI/              # Unity integration and dashboard tests
 
 headless/                         # dotnet build of Core and the EditMode tests (no Unity)
-Argus.Contracts/                  # Planned: Protobuf schemas (README only)
+Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared) and basilisk/v1 (Basilisk link)
 Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README only)
 ```
 
@@ -103,7 +103,7 @@ Unity/Cameras/
 └── UnityImageRenderer.cs         # IImageRenderer implementation
 
 External services/packages:
-├── Argus.Contracts/              # Protobuf schemas
+├── Argus.Contracts/              # Gateway, snapshot-stream and renderer schemas
 ├── Argus.Basilisk/               # Python Basilisk service, including SPICE
 ├── Argus.Agent/                  # Training environment
 └── Argus.Hardware/               # Flight-computer protocol adapters

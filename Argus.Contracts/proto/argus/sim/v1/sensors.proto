@@ -1,0 +1,126 @@
+// Sensor definitions, hardware profiles and measurements. Mirrors Core/Sensors. Profile comments
+// name the Basilisk 2.11.1 attribute each field sets (Argus.Basilisk/README.md has the full
+// mapping); T is the sample period in seconds.
+syntax = "proto3";
+
+package argus.sim.v1;
+
+import "argus/sim/v1/types.proto";
+
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+// Mirrors Core SensorMount.
+message SensorMount {
+  // Lever arm from the centre of mass, body axes: imuSensor sensorPos_B, coarseSunSensor r_B.
+  Vector3 position_body_m = 1;
+  // v_body = q v_sensor q*: Basilisk dcm_PB / dcm_SB = EP2C([w, x, y, z]).
+  Quaternion sensor_to_body = 2;
+}
+
+// The subset of Core SensorDefinition the backend needs; other fields are added with their first
+// consumer.
+message SensorDefinition {
+  // Unique within a run (ordinal).
+  string sensor_id = 1;
+  // Core SamplePeriodSeconds x 1e9, exact; a positive multiple of fixed_step_ns.
+  uint64 sample_period_ns = 2;
+  SensorMount mount = 3;
+}
+
+// imuSensor rate channel. Basilisk 2.11.1 keeps one Gauss-Markov state per axis, so noise density
+// and random walk exclude each other.
+message GyroscopeProfile {
+  // N: PMatrixGyro = N / sqrt(T) I; setAMatrixGyro(0).
+  double noise_density_rad_per_s_per_sqrt_hz = 1;
+  // K: PMatrixGyro = K sqrt(T) I; setAMatrixGyro(I).
+  double bias_random_walk_rad_per_s_per_sqrt_s = 2;
+  // setWalkBoundsGyro([b, b, b]); 0 = unbounded; needs K > 0.
+  double bias_random_walk_bound_rad_per_s = 3;
+  // senRotBias.
+  Vector3 constant_bias_sensor_rad_per_s = 4;
+  // gyroScale; each > 0.
+  Vector3 scale_factor_per_axis = 5;
+  // senRotMax.
+  double range_rad_per_s = 6;
+  // setLSBs(accelerometer LSB, this); 0 = no quantisation.
+  double resolution_rad_per_s = 7;
+}
+
+// imuSensor specific-force channel. Same rules as GyroscopeProfile.
+message AccelerometerProfile {
+  // PMatrixAccel = N / sqrt(T) I; setAMatrixAccel(0).
+  double noise_density_m_per_s2_per_sqrt_hz = 1;
+  // PMatrixAccel = K sqrt(T) I; setAMatrixAccel(I).
+  double bias_random_walk_m_per_s2_per_sqrt_s = 2;
+  // setWalkBoundsAccel.
+  double bias_random_walk_bound_m_per_s2 = 3;
+  // senTransBias.
+  Vector3 constant_bias_sensor_m_per_s2 = 4;
+  // accelScale.
+  Vector3 scale_factor_per_axis = 5;
+  // senTransMax.
+  double range_m_per_s2 = 6;
+  // setLSBs(this, gyroscope LSB).
+  double resolution_m_per_s2 = 7;
+}
+
+message ImuProfile {
+  GyroscopeProfile gyroscope = 1;
+  AccelerometerProfile accelerometer = 2;
+}
+
+// magnetometer (TAM): output = scale (B + noise + bias), clipped to +-range.
+message MagnetometerProfile {
+  // Per sample: senNoiseStd = [s, s, s]; setAMatrix(0); walkBounds = 0. bsk 2.11.1 cannot seed
+  // magnetometer noise, so the service rejects values > 0 with UNIMPLEMENTED for now.
+  double noise_std_tesla = 1;
+  // senBias.
+  Vector3 constant_bias_sensor_tesla = 2;
+  // scaleFactor, > 0.
+  double scale_factor = 3;
+  // maxOutput = +range, minOutput = -range.
+  double range_tesla = 4;
+}
+
+// coarseSunSensor reporting irradiance: Basilisk scaleFactor = scale_factor x 1361 W/m2.
+message LightSensorProfile {
+  // fov, and albedo addInstrumentConfig fov; (0, pi].
+  double field_of_view_half_angle_rad = 1;
+  // > 0.
+  double scale_factor = 2;
+  // senNoiseStd = this / Basilisk scaleFactor; setAMatrix([0]).
+  double noise_std_w_per_m2 = 3;
+  // senBias = this / Basilisk scaleFactor.
+  double bias_w_per_m2 = 4;
+  // maxOutput; minOutput = 0 and kellyFactor = 0 are service constants.
+  double saturation_w_per_m2 = 5;
+}
+
+// Mirrors Core SensorConfiguration; the oneof case is Core SensorKind. Unset: INVALID_ARGUMENT.
+message SensorConfiguration {
+  SensorDefinition definition = 1;
+  oneof profile {
+    ImuProfile imu = 10;
+    MagnetometerProfile magnetometer = 11;
+    LightSensorProfile light_sensor = 12;
+  }
+}
+
+// Mirrors Core ImuMeasurement (IMUSensorMsgPayload; sensor frame = platform frame P).
+message ImuMeasurement {
+  // AngVelPlatform: body relative to inertial, sensor axes.
+  Vector3 angular_velocity_sensor_rad_per_s = 1;
+  // AccelPlatform: non-gravitational acceleration at the mount, including the lever-arm terms
+  // dw/dt x r + w x (w x r).
+  Vector3 specific_force_sensor_m_per_s2 = 2;
+}
+
+// Mirrors Core MagnetometerMeasurement (TAMSensorMsgPayload.tam_S).
+message MagnetometerMeasurement {
+  Vector3 magnetic_field_sensor_tesla = 1;
+}
+
+// Mirrors Core LightSensorMeasurement (CSSRawDataMsgPayload.OutputData).
+message LightSensorMeasurement {
+  double irradiance_w_per_m2 = 1;
+}

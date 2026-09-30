@@ -283,8 +283,9 @@ Assets/ArgusSimulation/Tests/              Mirrored core and Unity tests
 docs/                              Architecture and interface documentation
 headless/                          dotnet build of Core and the EditMode tests
 
+Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
+
 Future external packages/services:
-Argus.Contracts/                   Protobuf schemas and generated clients
 Argus.Basilisk/                    Python Basilisk service (with SPICE)
 Argus.Agent/                       Training environment/SDK
 Argus.Hardware/                    Flight-computer protocol adapters

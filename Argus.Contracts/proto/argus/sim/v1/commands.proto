@@ -1,0 +1,16 @@
+// Actuator command values. Spacecraft body frame B, SI units.
+syntax = "proto3";
+
+package argus.sim.v1;
+
+import "argus/sim/v1/types.proto";
+
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+// The values of Core ActuatorCommandSet; its sequence and time travel in the enclosing request.
+// All three are required; zero means no output.
+message ActuatorCommand {
+  Vector3 reaction_wheel_torque_body_n_m = 1;
+  Vector3 magnetorquer_dipole_body_a_m2 = 2;
+  Vector3 thruster_force_body_n = 3;
+}

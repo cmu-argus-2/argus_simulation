@@ -1,0 +1,55 @@
+// The shared run configuration (G5). Mirrors Core SimulationConfiguration and its members.
+syntax = "proto3";
+
+package argus.sim.v1;
+
+import "google/protobuf/timestamp.proto";
+import "argus/sim/v1/sensors.proto";
+import "argus/sim/v1/types.proto";
+
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+message RunConfiguration {
+  string run_id = 1;
+  // UTC at simulation time 0. Format it for spiceInterface.UTCCalInit from seconds + nanos
+  // (yyyy-MM-ddTHH:mm:ss.fffffffffZ), never through a microsecond datetime.
+  google.protobuf.Timestamp epoch_utc = 2;
+  // Core FixedStepSeconds x 1e9, exact.
+  uint64 fixed_step_ns = 3;
+  // Required by Basilisk.
+  ClassicalOrbitElements initial_orbit = 4;
+  // Module seeds derive from it (Argus.Basilisk/README.md "Seeds").
+  uint32 random_seed = 5;
+  // Names Argus.Basilisk/kernel_sets/<id>.json; [a-z0-9][a-z0-9._-]{0,63}; required.
+  string kernel_set_id = 6;
+  // Required: Basilisk hub defaults (1 kg, identity inertia) are silently wrong.
+  SpacecraftConfiguration spacecraft = 7;
+  repeated SensorConfiguration sensors = 8;
+}
+
+// Osculating, Earth-centred, at epoch_utc, J2000 axes. Basilisk: elem2rv(mu_earth, oe), angles
+// in radians.
+message ClassicalOrbitElements {
+  // a (1 - e) > 6378137 m.
+  double semi_major_axis_m = 1;
+  // [0, 1).
+  double eccentricity = 2;
+  // [0, 180].
+  double inclination_deg = 3;
+  // From J2000 x, not Greenwich.
+  double raan_deg = 4;
+  double argument_of_periapsis_deg = 5;
+  double true_anomaly_deg = 6;
+}
+
+// Body origin = centre of mass (hub.r_BcB_B = 0).
+message SpacecraftConfiguration {
+  // hub.mHub.
+  double mass_kg = 1;
+  // hub.IHubPntBc_B, about the centre of mass, body axes.
+  Matrix3 inertia_body_kg_m2 = 2;
+  // hub.sigma_BNInit = EP2MRP([w, x, y, z]).
+  Quaternion initial_body_to_j2000 = 3;
+  // hub.omega_BN_BInit: body relative to J2000, body axes.
+  Vector3 initial_angular_velocity_body_rad_per_s = 4;
+}

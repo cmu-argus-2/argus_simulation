@@ -1,0 +1,137 @@
+// BasiliskEngine (C#, headless/Host) <-> Basilisk service (Python, Argus.Basilisk). Messages in
+// this package are Basilisk-native (N = J2000 with referenceBase "j2000" and zeroBase "Earth";
+// MRPs; SPICE matrices) and never leave BasiliskEngine (D8). Time is Basilisk simulation
+// nanoseconds since the run epoch (CurrentSimNanos, D2); UTC is the epoch plus elapsed
+// ephemeris-time seconds, since Basilisk's SPICE time is ETInit + t.
+syntax = "proto3";
+
+package argus.basilisk.v1;
+
+import "argus/sim/v1/commands.proto";
+import "argus/sim/v1/run_configuration.proto";
+import "argus/sim/v1/sensors.proto";
+import "argus/sim/v1/types.proto";
+
+option csharp_namespace = "Argus.Contracts.Basilisk.V1";
+
+// One run per process and one client; calls are strictly sequential.
+// ConfigureRun -> Step(0), Step(1), ...; Reset -> Step(0), ... Every call after ConfigureRun
+// carries its run_id.
+service BasiliskSimulationService {
+  // ISimulationEngine.Initialize. Validates, builds and initializes the simulation; runs no step.
+  // Replaces any run.
+  rpc ConfigureRun(ConfigureRunRequest) returns (ConfigureRunResponse);
+  // ISimulationEngine.Reset. Rebuilds everything from the stored request; the next Step is
+  // sequence 0, and frames repeat bit for bit.
+  rpc Reset(ResetRequest) returns (ResetResponse);
+  // ISimulationEngine.TryStep. Advances to t_n = sequence x fixed_step_ns (Step(0) runs the t = 0
+  // pass) and returns the state there; the request command applies over [t_n, t_n+1). With
+  // real_time_factor > 0, clockSynch paces it.
+  rpc Step(StepRequest) returns (StepResponse);
+}
+
+message ConfigureRunRequest {
+  argus.sim.v1.RunConfiguration configuration = 1;
+  // clockSynch.accelFactor; 0 = no clockSynch (unpaced). Finite, >= 0. Pacing only.
+  double real_time_factor = 2;
+}
+
+message ConfigureRunResponse {
+  // Echo.
+  string run_id = 1;
+  // Echo.
+  string kernel_set_id = 2;
+  // Echo.
+  uint64 fixed_step_ns = 3;
+  // Every requested sensor, in request order.
+  repeated string configured_sensor_ids = 4;
+  // Basilisk.__version__.
+  string basilisk_version = 5;
+  // Read back from spiceInterface.planetFrames; must be "ITRF93".
+  string spice_earth_frame = 6;
+}
+
+message ResetRequest {
+  string run_id = 1;
+}
+
+message ResetResponse {
+  string run_id = 1;
+}
+
+message StepRequest {
+  string run_id = 1;
+  // n; must equal the next sequence.
+  uint64 sequence = 2;
+  // n x fixed_step_ns.
+  uint64 sim_time_ns = 3;
+  // Applies over [t_n, t_n+1); non-zero is UNIMPLEMENTED until G1.
+  argus.sim.v1.ActuatorCommand command = 4;
+}
+
+message StepResponse {
+  string run_id = 1;
+  uint64 sequence = 2;
+  // CurrentSimNanos; every message below was written at this time.
+  uint64 sim_time_ns = 3;
+  // spacecraft.scStateOutMsg.
+  BasiliskSpacecraftState spacecraft = 4;
+  // spiceInterface.planetStateOutMsgs[earth].
+  BasiliskPlanetState earth = 5;
+  // spiceInterface.planetStateOutMsgs[sun].
+  BasiliskPlanetState sun = 6;
+  // eclipse.eclipseOutMsgs[0].shadowFactor: 1 sunlit, 0 umbra. Required; optional only so that
+  // an unset value is detectable instead of reading as umbra.
+  optional double spacecraft_shadow_factor = 7;
+  // One per sensor whose period divides sim_time_ns.
+  repeated BasiliskSensorSample sensor_samples = 8;
+  // clockSynch.clockOutMsg.overrunCounter since ConfigureRun or Reset; 0 when unpaced.
+  uint64 pacing_overrun_count = 9;
+}
+
+// Mirrors Core Mrp; shadow sets (|sigma| > 1) are valid.
+message Mrp {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// SCStatesMsgPayload subset.
+message BasiliskSpacecraftState {
+  // r_BN_N.
+  argus.sim.v1.Vector3 position_bn_inertial_m = 1;
+  // v_BN_N.
+  argus.sim.v1.Vector3 velocity_bn_inertial_m_per_s = 2;
+  // sigma_BN as written.
+  Mrp sigma_bn = 3;
+  // omega_BN_B.
+  argus.sim.v1.Vector3 omega_bn_body_rad_per_s = 4;
+}
+
+// SpicePlanetStateMsgPayload subset.
+message BasiliskPlanetState {
+  // PlanetName.
+  string planet_name = 1;
+  // PositionVector, J2000, from zeroBase.
+  argus.sim.v1.Vector3 position_inertial_m = 2;
+  // VelocityVector.
+  argus.sim.v1.Vector3 velocity_inertial_m_per_s = 3;
+  // J20002Pfix (upper-left block of sxform).
+  argus.sim.v1.Matrix3 j2000_to_planet_fixed = 4;
+  // J20002Pfix_dot (lower-left block of sxform).
+  argus.sim.v1.Matrix3 j2000_to_planet_fixed_rate_per_s = 5;
+  // computeOrient != 0.
+  bool orientation_computed = 6;
+}
+
+// An unset measurement means the sensor ran without data (imuSensor's first update): Unavailable.
+message BasiliskSensorSample {
+  string sensor_id = 1;
+  // timeWritten() of a reader subscribed to the sensor's outMsg; equals sim_time_ns.
+  uint64 sample_time_ns = 2;
+  oneof measurement {
+    argus.sim.v1.ImuMeasurement imu = 10;
+    argus.sim.v1.MagnetometerMeasurement magnetometer = 11;
+    argus.sim.v1.LightSensorMeasurement light_sensor = 12;
+  }
+}

@@ -1,0 +1,30 @@
+// Value types shared by every Argus schema. They carry no frame or unit; the field that holds one
+// names both.
+syntax = "proto3";
+
+package argus.sim.v1;
+
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+// Mirrors Core Vector3d.
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// Mirrors Core Quaterniond: Hamilton, scalar last, active. A field a_to_b maps components
+// v_b = q v_a q*. Receivers require unit length within 1e-6.
+message Quaternion {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+// Mirrors Core Matrix3d. Element (i, j) is component j of row i.
+message Matrix3 {
+  Vector3 row0 = 1;
+  Vector3 row1 = 2;
+  Vector3 row2 = 3;
+}

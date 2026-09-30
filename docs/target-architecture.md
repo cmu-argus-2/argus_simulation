@@ -104,7 +104,7 @@ flowchart TB
 | Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used only by tests | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (unused; observations planned) |
 | BasiliskEngine | `Core/Basilisk/`, `headless/Host/` | Internal mapping from Basilisk state, SPICE output and sensor messages to Argus contracts | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | mapping on main (engine planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
-| Argus contracts | `Argus.Contracts/` | — | Versioned Protobuf schemas for every cross-process message | planned |
+| Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
 | Basilisk service + SPICE | `Argus.Basilisk/` | — | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | planned |
 | Agents + flight computer | `Argus.Agent/`, `Argus.Hardware/` | — | Agent SDK and HIL hardware adapters talking to the gateway | planned |
 | Headless build | `headless/` | Builds Core and runs the EditMode tests with `dotnet` (Phase 1) | Also hosts the headless core process (G2) | main (host planned) |
@@ -272,11 +272,11 @@ The authoritative map is [code-organization.md](code-organization.md). In short:
 Assets/ArgusSimulation/
 ├── Core/                  Headless C# (noEngineReferences)
 │   ├── Abstractions/      Engine, state-source and renderer interfaces        main
-│   ├── Basilisk/          BasiliskEngine adapter                              planned (README)
+│   ├── Basilisk/          Internal Basilisk-to-Argus mapping                  main
 │   ├── Contracts/         Snapshot, state, commands, configuration            main
 │   ├── Dynamics/          Analytic engine (test fixture)                      main
 │   ├── Imaging/           Camera and render contracts, GIBS URLs              main
-│   ├── Math/              Double-precision vectors and quaternions            main
+│   ├── Math/              Vectors, quaternions, MRPs, 3x3 matrices            main
 │   ├── Recording/         Run recorder                                        planned (README)
 │   ├── Runtime/           Simulation gateway                                  main
 │   └── Sensors/           Sensor models; Camera/ planned (README)             main
@@ -284,7 +284,7 @@ Assets/ArgusSimulation/
 ├── Editor/Scene/          Scene builder                                       main
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
 headless/                  dotnet build of Core + EditMode tests               main (Phase 1)
-Argus.Contracts/           Protobuf schemas                                    planned (README)
+Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
 Argus.Basilisk/            Basilisk service with SPICE                         planned (README)
 Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        planned
 ```
@@ -303,8 +303,12 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
 **Phase 2: contract seams (one PR each)**
 
 - [x] Frame tags, MRP ↔ quaternion math, and the shared run configuration (G4, G5).
-- [ ] `EnvironmentState` in the snapshot, a snapshot event on the runner, and the full
-      snapshot in `SensorSampleContext` (D4); the Unity Sun light and night side follow
+- [x] `EnvironmentState` in the snapshot and the full snapshot in `SensorSampleContext`
+      (D4).
+- [x] P0 sensor contracts (IMU, magnetometer, light sensor) and backend-sourced sensor
+      models fed by `SimulationSnapshot.SensorMeasurements` (D10).
+- [x] Internal Basilisk-to-Argus mapping with frame tests (G4).
+- [ ] A snapshot event on the runner; the Unity Sun light and night side follow
       `EnvironmentState`. Fix the night-lights key `"3"` separately.
 - [ ] Camera models with a late-frame policy, and a Unity `IImageRenderer` (D5, G3).
 - [ ] Run recorder v0, the gateway command log, and controller-visible observations
@@ -316,9 +320,9 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
       the scene, the scene builder and the tests in one change.
 - [ ] Follower runner: replace `ISpacecraftStateSource` with a snapshot source; build the
       orbit trail from state history.
-- [ ] Protobuf v1 in `Argus.Contracts/`, `BasiliskEngine`, the headless core process, and the
-      `Argus.Basilisk/` service with SPICE (G1, G2). Port teammate Basilisk and SPICE work
-      into this layout per §8.
+- [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
+- [ ] `BasiliskEngine`, the headless core process, and the `Argus.Basilisk/` service with
+      SPICE (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
 - [ ] Orbit and attitude nudges become engine commands, so rendered images match the
       recorded state.
 
