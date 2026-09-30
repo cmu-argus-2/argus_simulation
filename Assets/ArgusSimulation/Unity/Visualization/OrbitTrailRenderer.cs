@@ -5,8 +5,9 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(G2): build the trail from received state history instead of sampling the analytic
-    // state source for one orbit period, so it works in Basilisk runs.
+    // Draws one predicted orbit from the analytic fixture in development runs.
+    // TODO(G2): Basilisk runs cannot be sampled ahead; build the trail from received state history,
+    // or from a predicted track the host sends.
     [DisallowMultipleComponent]
     public sealed class OrbitTrailRenderer : MonoBehaviour
     {
@@ -40,27 +41,26 @@ namespace Argus.Simulation.Unity
                 _georeference = FindAnyObjectByType<CesiumGeoreference>();
             }
 
-            if (runner == null || runner.StateSource == null || _georeference == null)
+            if (runner == null || _georeference == null ||
+                !(runner.StateSource is AnalyticStateSource analytic))
             {
                 return;
             }
 
             _georeference.Initialize();
             EnsureLineRenderer();
-            double periodSeconds = runner.StateSource is AnalyticOrbitStateSource analytic
-                ? analytic.EstimatedPeriodSeconds
-                : 5_700.0;
+            double periodSeconds = analytic.EstimatedPeriodSeconds;
 
             Vector3[] positions = new Vector3[sampleCount];
             for (int index = 0; index < sampleCount; index++)
             {
                 double time = periodSeconds * index / (sampleCount - 1.0);
-                if (!runner.StateSource.TryGetState(index, time, out SpacecraftState state))
+                if (!analytic.TryPredictState(index, time, out SimulationState state))
                 {
                     continue;
                 }
 
-                Vector3d ecef = state.PositionEcefMeters;
+                Vector3d ecef = state.Spacecraft.PositionEcefMeters;
                 double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
                     new double3(ecef.X, ecef.Y, ecef.Z));
                 positions[index] = new Vector3((float)unity.x, (float)unity.y, (float)unity.z);

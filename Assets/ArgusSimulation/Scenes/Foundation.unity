@@ -689,7 +689,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 785acaa590f714f9a81967667ba3891d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.AnalyticOrbitStateSource
+  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.AnalyticStateSource
   epochUtc: 2025-01-15T00:00:00Z
   altitudeMeters: 500000
   inclinationDegrees: 51.6

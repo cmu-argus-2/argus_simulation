@@ -1,11 +1,13 @@
+using System;
+
 namespace Argus.Simulation.Core
 {
-    // PLACEHOLDER: not implemented, not referenced.
-    // TODO(G2): replaces ISpacecraftStateSource so consumers receive whole SimulationStates
-    // (spacecraft, environment, sensor measurements, applied commands) instead of only
-    // SpacecraftState. Implementations: the Unity state-stream client (follower of the headless
-    // host) and an analytic source wrapping AnalyticSimulationEngine for development.
-    internal interface ISimulationStateSource
+    // Delivers whole SimulationStates in increasing sequence order within a run; a follower of the
+    // decimated host stream (G2) may skip steps. In Basilisk runs Basilisk owns simulation time (D2)
+    // and the source only follows it. An IStepDrivenStateSource (the analytic fixture, D9) is
+    // stepped by its caller, which then owns the clock.
+    public interface ISimulationStateSource
     {
+        event Action<SimulationState> StateProduced;
     }
 }

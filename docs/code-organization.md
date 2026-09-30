@@ -50,7 +50,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 
 | Responsibility | Main classes |
 |---|---|
-| Engine interfaces | `ISimulationEngine`, `ISpacecraftStateSource` |
+| Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `IStepDrivenStateSource` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
@@ -61,7 +61,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | Implemented sensor models | `IdealBodyRateSensorModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
-| Unity runtime bridge | `SimulationRunner`, `AnalyticOrbitStateSource` |
+| Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
 | Unity camera system | `CubeSatCameraRig` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
@@ -108,7 +108,6 @@ Core/Sensors/
     Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
     Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
 Core/Recording/RunRecorder.cs                            # TODO(D6)
-Core/Abstractions/ISimulationStateSource.cs              # TODO(G2)
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)

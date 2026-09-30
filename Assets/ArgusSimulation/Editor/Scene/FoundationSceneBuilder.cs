@@ -81,9 +81,9 @@ namespace Argus.Simulation.Editor
             earth.AddComponent<NasaGibsRasterController>();
 
             GameObject simulation = new GameObject("Simulation");
-            AnalyticOrbitStateSource orbitSource = simulation.AddComponent<AnalyticOrbitStateSource>();
+            AnalyticStateSource stateSource = simulation.AddComponent<AnalyticStateSource>();
             SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
-            runner.Configure(orbitSource);
+            runner.Configure(stateSource);
             SimulationSensorRuntime sensorRuntime =
                 simulation.AddComponent<SimulationSensorRuntime>();
             sensorRuntime.Configure(runner);

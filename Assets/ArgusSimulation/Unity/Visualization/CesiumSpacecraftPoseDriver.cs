@@ -78,8 +78,9 @@ namespace Argus.Simulation.Unity
             ReapplyLatestState();
         }
 
-        private void ApplyState(SpacecraftState state)
+        private void ApplyState(SimulationState simulationState)
         {
+            SpacecraftState state = simulationState.Spacecraft;
             Vector3d position = state.PositionEcefMeters;
             globeAnchor.positionGlobeFixed = new double3(position.X, position.Y, position.Z);
 

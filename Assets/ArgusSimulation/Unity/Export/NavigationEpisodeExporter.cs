@@ -144,7 +144,7 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
+            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState.Spacecraft));
             return true;
         }
 

@@ -1,6 +1,7 @@
 namespace Argus.Simulation.Core
 {
-    // Replaceable dynamics boundary. A future Basilisk adapter implements this interface.
+    // Replaceable dynamics boundary, implemented by AnalyticSimulationEngine (dev and test fixture,
+    // D9) and BasiliskEngine (headless/Host).
     public interface ISimulationEngine
     {
         string BackendName { get; }

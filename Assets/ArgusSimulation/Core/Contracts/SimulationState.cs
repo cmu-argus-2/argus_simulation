@@ -2,7 +2,8 @@ namespace Argus.Simulation.Core
 {
     // Everything true at one step t_k: spacecraft state, environment, backend sensor measurements
     // and the applied commands, always delivered together so every part describes the same instant.
-    // Transport-neutral and published to Unity, agents, hardware adapters and recorders. Deeply
+    // Transport-neutral; published to Unity and the run recorder. Controllers, including HIL flight
+    // computers, never receive it: they get observations through the gateway (D7). Deeply
     // immutable, so it is safe to hand between threads.
     public readonly struct SimulationState
     {

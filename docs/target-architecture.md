@@ -29,7 +29,7 @@ flowchart TB
         globe["Globe view + visualization<br/>Cesium, GIBS layers, CubeSat pose, orbit trail"]
         camr["Camera rig — CubeSatCameraRig<br/>(planned: IImageRenderer)"]
         runner["SimulationRunner<br/>clock (planned: follower)"]
-        src["State source<br/>AnalyticOrbitStateSource"]
+        src["State source<br/>AnalyticStateSource"]
         sens["Sensor runtime<br/>SimulationSensorRuntime"]
         dash["Mission dashboard<br/>SimulatorDashboard"]
         exporter["NavigationEpisodeExporter<br/>(retired once the recorder replaces it)"]
@@ -55,10 +55,10 @@ flowchart TB
 
     globe --> ion
     globe --> gibs
-    runner -->|StateProduced| globe
-    runner -->|StateProduced| sens
-    runner -->|TryGetState| src
-    globe -->|TryGetState, one orbit| src
+    runner -->|StateProduced: SimulationState| globe
+    runner -->|StateProduced: SimulationState| sens
+    runner -->|TryStep| src
+    globe -->|TryPredictState, one orbit| src
     dash -->|reads, pause, reset| runner
     dash -->|orbit nudges| src
     dash -->|attitude offset| globe
@@ -94,14 +94,14 @@ flowchart TB
 |---|---|---|---|---|
 | Globe view + visualization | `Unity/Cesium/`, `Unity/Visualization/` | Cesium tileset, GIBS layers, globe camera, CubeSat pose, orbit trail; fixed Sun light | Sun light and night side follow the state's environment; orbit trail from state history | main (environment lighting planned) |
 | Camera rig / renderer | `Unity/Cameras/` | `CubeSatCameraRig` renders 4 body cameras and a north-up nadir ground-truth camera every frame | Implements `IImageRenderer`: renders each `CameraModel` `RenderRequest` and returns an `ImageFrame` | main (renderer role planned) |
-| SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | The clock: fixed 0.1 s steps from Unity frame time × time scale | Follower: broadcasts states received from the headless core | main (follower planned) |
-| State source | `Unity/Runtime/AnalyticOrbitStateSource.cs` | Wraps the analytic engine in the Unity process | Replaced by a state-stream client; `BasiliskEngine` runs in the headless core (G2). The analytic source stays for development | main (stream client planned) |
+| SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | Publishes whole `SimulationState`s from its `ISimulationStateSource`; clock for the step-driven analytic source (fixed 0.1 s steps from Unity frame time × time scale) | Follower: broadcasts states received from the headless core | main (follower planned) |
+| State source | `Unity/Runtime/AnalyticStateSource.cs` (`IStepDrivenStateSource`) | Wraps the analytic engine in the Unity process and publishes whole states | `StateStreamClient` (`ISimulationStateSource`) for Basilisk runs; `BasiliskEngine` runs in the headless core (G2). The analytic source stays for development | main (stream client planned) |
 | Sensor runtime | `Unity/Sensors/` | Temporary bridge feeding each state to a Core `SensorManager` | Moves into the headless core (G2); Unity only displays frames | main (temporary) |
-| Mission dashboard | `Unity/UI/` | Truth + sensor status, orbit and attitude nudges, GT imagery date, capture | Same, reading states; nudges become engine commands | main (state reading planned) |
+| Mission dashboard | `Unity/UI/` | Truth + sensor status from `SimulationState`, orbit and attitude nudges, GT imagery date, capture | Same, listing sensors from received frames; nudges become engine commands | main (received sensor list (G2) and nudges as commands (G1) planned) |
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | Retired once the recorder covers what its consumers read (D6) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a `SimulationState` with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
-| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth states; used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; observations planned) |
+| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth states; used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for HIL flight computers and other external controllers: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; observations planned) |
 | BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; unverified against a real service, which is a skeleton | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (client; service planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: states, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
@@ -171,13 +171,15 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 ### Analytic development run (what `main` does today)
 
 1. `SimulationRunner` accumulates Unity frame time and steps every 0.1 s.
-2. `AnalyticOrbitStateSource.TryGetState` calls `AnalyticSimulationEngine.TryStep`, which
-   samples `CircularOrbitModel`. It always sends `ActuatorCommandSet.None`.
-3. The runner raises `StateProduced`. `CesiumSpacecraftPoseDriver` moves the CubeSat and
-   `SimulationSensorRuntime` samples the Core sensors.
-4. `OrbitTrailRenderer` samples the state source directly for one orbit period.
+2. `AnalyticStateSource.TryStep` calls `AnalyticSimulationEngine.TryStep`, which samples
+   `CircularOrbitModel`, and publishes the whole `SimulationState` (no environment, no
+   backend measurements). It always sends `ActuatorCommandSet.None`.
+3. The runner raises `StateProduced` with that state. `CesiumSpacecraftPoseDriver` moves the
+   CubeSat from `state.Spacecraft`, and `SimulationSensorRuntime` samples the Core sensors
+   under the state's run ID.
+4. `OrbitTrailRenderer` asks the analytic source to predict one orbit period.
    `SimulatorDashboard` polls the runner and the sensor runtime, and writes orbit and
-   attitude nudges straight into the state source and pose driver.
+   attitude nudges straight into the analytic source and pose driver.
 
 ## 5. Contract changes needed
 
@@ -191,8 +193,8 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | `SensorMeasurementSet` | `Core/Sensors/SensorMeasurementSet.cs` | Backend measurements of one step, keyed by sensor ID; keeps "not sampled" apart from "sampled but unavailable" | D10 | done |
 | P0 sensors | `Core/Sensors/ImuSensor.cs`, `MagnetometerSensor.cs`, `LightSensor.cs` | `BackendSensorModel<T>` subclasses built by `SensorFactory` from `SensorConfiguration` | D10 | done |
 | `SensorDefinition` | `Core/Sensors/SensorDefinition.cs` | Mark ground-truth sensors as not controller-visible | D7 | planned |
-| `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Publish the whole `SimulationState` | D2, D4 | planned |
-| `ISpacecraftStateSource` | `Core/Abstractions/ISpacecraftStateSource.cs` | Replace with `ISimulationStateSource`, which carries the whole state | D2, G2 | planned |
+| `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Publishes the whole `SimulationState` | D2, D4 | done |
+| `ISpacecraftStateSource` | `Core/Abstractions/ISimulationStateSource.cs`, `IStepDrivenStateSource.cs` | Replaced by `ISimulationStateSource`, which carries the whole state; the analytic source is also `IStepDrivenStateSource` | D2, G2 | done (stream client planned) |
 | `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 | planned |
 | `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | Step returns observations (controller-visible frames), not `SimulationState`; command log; `Reset(seed, scenario)`; authority and heartbeat | D7, G1 | planned |
 | Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | An engine that applies them | G1 | planned |
@@ -311,8 +313,10 @@ Argus.Hardware/            HIL adapters                                        p
 - [x] P0 sensor contracts (IMU, magnetometer, light sensor) and backend-sourced sensor
       models fed by `SimulationState.SensorMeasurements` (D10).
 - [x] Internal Basilisk-to-Argus mapping with frame tests (G4).
-- [ ] The runner publishes whole states; the Unity Sun light and night side follow
-      `EnvironmentState`. Fix the night-lights key `"3"` separately.
+- [x] The runner publishes whole states through `ISimulationStateSource`
+      (`ISpacecraftStateSource` removed; `AnalyticStateSource`).
+- [ ] The Unity Sun light and night side follow `EnvironmentState`. Fix the night-lights key
+      `"3"` separately.
 - [ ] Camera models with a late-frame policy, and a Unity `IImageRenderer` (D5, G3).
 - [ ] Run recorder v0, the gateway command log, and controller-visible observations
       (D6, D7).
@@ -321,8 +325,8 @@ Argus.Hardware/            HIL adapters                                        p
 
 - [ ] Retire `NavigationEpisodeExporter`: point Capture at the recorder, then remove it from
       the scene, the scene builder and the tests in one change.
-- [ ] Follower runner: replace `ISpacecraftStateSource` with `ISimulationStateSource`; build the
-      orbit trail from state history.
+- [ ] Follower runner: `StateStreamClient` implements `ISimulationStateSource`; build the
+      orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
 - [ ] `Argus.Basilisk/` service with SPICE (skeleton, kernel manifest and implementation
       brief on main; the Basilisk/SPICE team implements it).

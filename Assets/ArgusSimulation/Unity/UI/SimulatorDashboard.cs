@@ -31,7 +31,7 @@ namespace Argus.Simulation.Unity
         private readonly double[] _speedOptions = { 1.0, 10.0, 60.0 };
 
         private SimulationRunner _runner;
-        private AnalyticOrbitStateSource _orbitSource;
+        private AnalyticStateSource _orbitSource;
         private CesiumSpacecraftPoseDriver _poseDriver;
         private SimulationSensorRuntime _sensorRuntime;
         private CubeSatCameraRig _cameraRig;
@@ -100,7 +100,7 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            _orbitSource = _runner.StateSource as AnalyticOrbitStateSource;
+            _orbitSource = _runner.StateSource as AnalyticStateSource;
             if (_orbitSource != null)
             {
                 _initialAltitudeMeters = _orbitSource.AltitudeMeters;
@@ -655,7 +655,7 @@ namespace Argus.Simulation.Unity
                 : new Color(1f, 0.72f, 0.24f);
             _pauseButtonText.text = _runner.IsRunning ? "PAUSE" : "RESUME";
 
-            SpacecraftState state = _runner.LastState;
+            SpacecraftState state = _runner.LastState.Spacecraft;
             StringBuilder builder = new StringBuilder(1400);
 
             if (IsGroupVisible(SensorGroup.OrbitTruth))

@@ -23,7 +23,7 @@ namespace Argus.Simulation.Tests
             mainCameraObject.AddComponent<Camera>();
 
             GameObject simulation = new GameObject("Simulation");
-            AnalyticOrbitStateSource source = simulation.AddComponent<AnalyticOrbitStateSource>();
+            AnalyticStateSource source = simulation.AddComponent<AnalyticStateSource>();
             SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
             NavigationEpisodeExporter exporter = simulation.AddComponent<NavigationEpisodeExporter>();

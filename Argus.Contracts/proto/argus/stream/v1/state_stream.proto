@@ -1,6 +1,7 @@
 // PLACEHOLDER: no messages yet.
 // TODO(G2): server-streaming RPC from headless/Host to Unity carrying decimated SimulationStates
-// (spacecraft state, EnvironmentState, sensor frames), reusing argus.sim.v1 types. Define it with
+// (spacecraft state, EnvironmentState, backend measurements) plus the host's SensorOutputSets,
+// reusing argus.sim.v1 types. Define it with
 // StateStreamServer and the Unity StateStreamClient.
 syntax = "proto3";
 

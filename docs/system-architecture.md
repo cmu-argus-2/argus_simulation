@@ -320,7 +320,6 @@ folders, is [code-organization.md](code-organization.md).
 
 ### Closed-loop integration
 
-- [ ] Add the Python agent SDK with deterministic `Reset`/`Step`.
 - [ ] Add command validation, authority, heartbeat, and failsafe policies.
 - [ ] Add physical sensor/flight-computer adapters.
 

@@ -2,7 +2,7 @@ using System;
 
 namespace Argus.Simulation.Core
 {
-    // Deterministic closed-loop session used by in-process agents and future transport adapters.
+    // Deterministic closed-loop session, used by the tests and headless/Host.
     // TODO(D7, G1): Step returns controller-visible observations instead of truth states; add
     // Reset(seed, scenario), a command log for the recorder (D6), actuator-limit validation,
     // authority and heartbeat. Serving it to HIL and external controllers is headless/Host

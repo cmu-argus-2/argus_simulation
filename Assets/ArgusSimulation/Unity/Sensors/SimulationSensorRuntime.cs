@@ -16,7 +16,6 @@ namespace Argus.Simulation.Unity
         [SerializeField] private int randomSeed;
 
         private SensorManager _manager;
-        private bool _resetPending;
 
         public event Action<SensorOutputSet> OutputProduced;
 
@@ -37,7 +36,7 @@ namespace Argus.Simulation.Unity
                 Subscribe(runner);
             }
 
-            MarkResetPending();
+            ClearOutput();
         }
 
         private void Awake()
@@ -47,7 +46,7 @@ namespace Argus.Simulation.Unity
                 BodyRateSensorId,
                 BodyFrameId,
                 Math.Max(0.001, bodyRateSamplePeriodSeconds)));
-            MarkResetPending();
+            ClearOutput();
         }
 
         private void OnEnable()
@@ -87,22 +86,22 @@ namespace Argus.Simulation.Unity
 
         private void HandleSimulationReset()
         {
-            MarkResetPending();
+            ClearOutput();
         }
 
-        private void MarkResetPending()
+        private void ClearOutput()
         {
             Latest = null;
-            RunId = "unity-" + Guid.NewGuid().ToString("N");
-            _resetPending = true;
         }
 
-        private void HandleState(SpacecraftState state)
+        // The run ID comes from the state source. The sensors restart only when a new run begins, so
+        // a (run, sensor, sequence) key is never reused (D6).
+        private void HandleState(SimulationState state)
         {
-            if (_resetPending)
+            if (state.RunId != RunId)
             {
-                _manager.Reset(new SensorResetContext(RunId, state.TimestampUtc, randomSeed));
-                _resetPending = false;
+                RunId = state.RunId;
+                _manager.Reset(new SensorResetContext(RunId, state.Spacecraft.TimestampUtc, randomSeed));
             }
 
             SensorOutputSet output = _manager.Sample(new SensorSampleContext(RunId, state));
