@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-basilisk"
+version = "0.1.0"
+description = "Argus Basilisk simulation service (gRPC server for BasiliskEngine)"
+requires-python = ">=3.10,<3.15"
+# grpcio-tools 1.82.0 is yanked, and 1.83+ need protobuf>=7.35.1 while bsk 2.11.1 allows <=7.35.0.
+dependencies = [
+    "grpcio==1.81.0",
+    "grpcio-tools==1.81.0",
+    "protobuf>=6.33.5,<7",
+]
+
+[project.optional-dependencies]
+basilisk = ["bsk==2.11.1"]
+
+[tool.setuptools]
+packages = ["argus_basilisk"]

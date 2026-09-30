@@ -105,7 +105,7 @@ flowchart TB
 | BasiliskEngine | `Core/Basilisk/`, `headless/Host/` | Internal mapping from Basilisk state, SPICE output and sensor messages to Argus contracts | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | mapping on main (engine planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
-| Basilisk service + SPICE | `Argus.Basilisk/` | — | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | planned |
+| Basilisk service + SPICE | `Argus.Basilisk/` | Basilisk-free gRPC skeleton (every RPC UNIMPLEMENTED), pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | skeleton on main; Basilisk/SPICE team implements |
 | Agents + flight computer | `Argus.Agent/`, `Argus.Hardware/` | — | Agent SDK and HIL hardware adapters talking to the gateway | planned |
 | Headless build | `headless/` | Builds Core and runs the EditMode tests with `dotnet` (Phase 1) | Also hosts the headless core process (G2) | main (host planned) |
 
@@ -222,11 +222,11 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; the engine that calls them does not. |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. |
 
-**Not built yet:** `BasiliskEngine`, the Basilisk service and the Protobuf schemas; camera
-models; real sensor models or mapped Basilisk sensors (IMU noise, magnetometer, Sun
-sensors, GNSS, star tracker); the run recorder, dataset format and replay of recorded
-runs; gateway safety (authority, hardware-limit validation, heartbeat, failsafe); pinned NAIF kernel
-management.
+**Not built yet:** `BasiliskEngine` and the Basilisk service behind the v1 schemas (the
+service is a skeleton); camera models; Argus-computed sensor models (GNSS, star tracker);
+the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
+hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are in
+`Argus.Basilisk/kernel_sets/`).
 
 **Known issues on `main`:**
 
@@ -285,7 +285,7 @@ Assets/ArgusSimulation/
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
 headless/                  dotnet build of Core + EditMode tests               main (Phase 1)
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
-Argus.Basilisk/            Basilisk service with SPICE                         planned (README)
+Argus.Basilisk/            Basilisk service with SPICE                         skeleton + brief
 Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        planned
 ```
 
@@ -321,8 +321,9 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
 - [ ] Follower runner: replace `ISpacecraftStateSource` with a snapshot source; build the
       orbit trail from state history.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
-- [ ] `BasiliskEngine`, the headless core process, and the `Argus.Basilisk/` service with
-      SPICE (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
+- [ ] `Argus.Basilisk/` service with SPICE (skeleton, kernel manifest and implementation
+      brief on main; the Basilisk/SPICE team implements it).
+- [ ] `BasiliskEngine`, the headless core process (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
 - [ ] Orbit and attitude nudges become engine commands, so rendered images match the
       recorded state.
 

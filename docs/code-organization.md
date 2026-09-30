@@ -41,7 +41,7 @@ Assets/ArgusSimulation/
 
 headless/                         # dotnet build of Core and the EditMode tests (no Unity)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared) and basilisk/v1 (Basilisk link)
-Argus.Basilisk/                   # Planned: Basilisk service with SPICE (README only)
+Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_basilisk/, kernel_sets/, scripts/)
 ```
 
 ## Class map

@@ -37,8 +37,10 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
+Argus.Basilisk/generated/
 
-# Downloaded SPICE/NAIF kernels: large, never committed (pinned kernel management is planned).
+# Downloaded SPICE/NAIF kernels: large, never committed (manifests are tracked in Argus.Basilisk/kernel_sets/).
 kernels/
 *.bsp
 *.bpc

@@ -284,9 +284,9 @@ docs/                              Architecture and interface documentation
 headless/                          dotnet build of Core and the EditMode tests
 
 Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
+Argus.Basilisk/                    Python Basilisk service with SPICE (skeleton + brief)
 
 Future external packages/services:
-Argus.Basilisk/                    Python Basilisk service (with SPICE)
 Argus.Agent/                       Training environment/SDK
 Argus.Hardware/                    Flight-computer protocol adapters
 ```
