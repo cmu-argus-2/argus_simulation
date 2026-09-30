@@ -1,6 +1,6 @@
 # Core/Recording — run recorder (planned)
 
-**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** not built
+**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** placeholder `RunRecorder.cs` only (`TODO(D6)`)
 
 The run recorder will be the single export route (decision D6 in
 [target-architecture.md](../../../../docs/target-architecture.md)). It is a passive,

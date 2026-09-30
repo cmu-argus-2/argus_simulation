@@ -48,6 +48,9 @@ namespace Argus.Simulation.Core
         public string Source { get; }
         public SensorMount Mount { get; }
 
+        // TODO(D7): mark ground-truth sensors (for example the nadir camera) as not
+        // controller-visible, so the gateway never forwards them.
+
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(SensorId) &&
             !string.IsNullOrWhiteSpace(ModelName) &&

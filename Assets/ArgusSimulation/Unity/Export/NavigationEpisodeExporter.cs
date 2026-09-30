@@ -24,6 +24,9 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
+    // TODO(D6): retire once Core RunRecorder covers what the Python navigation code reads. Move the
+    // tile-wait and readback code into UnityImageRenderer first, then remove this component from
+    // the scene, FoundationSceneBuilder and the tests in one change.
     [DisallowMultipleComponent]
     public sealed class NavigationEpisodeExporter : MonoBehaviour
     {

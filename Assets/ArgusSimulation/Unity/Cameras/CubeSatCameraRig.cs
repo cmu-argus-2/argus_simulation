@@ -5,6 +5,8 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
+    // TODO(D5): render on request through UnityImageRenderer (IImageRenderer) for the Core camera
+    // models, instead of rendering every camera every frame.
     [DisallowMultipleComponent]
     public sealed class CubeSatCameraRig : MonoBehaviour
     {

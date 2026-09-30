@@ -127,6 +127,7 @@ namespace Argus.Simulation.Editor
             mainCamera.clearFlags = CameraClearFlags.SolidColor;
             mainCamera.backgroundColor = Color.black;
 
+            // TODO(D4): fixed Sun; SunLightDriver should point it along the EnvironmentState Sun.
             GameObject sunlight = new GameObject("Sunlight");
             Light light = sunlight.AddComponent<Light>();
             light.type = LightType.Directional;

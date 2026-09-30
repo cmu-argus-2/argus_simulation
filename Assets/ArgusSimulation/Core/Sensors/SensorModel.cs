@@ -72,6 +72,9 @@ namespace Argus.Simulation.Core
                 payload);
 
             _nextSequence++;
+            // TODO(sensors): accumulating the period drifts against the integer-nanosecond clock
+            // (first missed 10 Hz frame near 5094 s); derive the next sample time from a sample
+            // count instead.
             do
             {
                 _nextSampleTimeSeconds += Definition.SamplePeriodSeconds;

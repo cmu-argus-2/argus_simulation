@@ -4,6 +4,8 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
+    // TODO(G2): temporary bridge. Once the headless host streams snapshots, SensorManager runs
+    // there and Unity only displays the frames it receives.
     public sealed class SimulationSensorRuntime : MonoBehaviour
     {
         public const string BodyRateSensorId = "imu.body_rate";

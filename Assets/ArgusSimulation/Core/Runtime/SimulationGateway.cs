@@ -3,6 +3,10 @@ using System;
 namespace Argus.Simulation.Core
 {
     // Deterministic closed-loop session used by in-process agents and future transport adapters.
+    // TODO(D7, G1): Step returns controller-visible observations instead of truth snapshots; add
+    // Reset(seed, scenario), a command log for the recorder (D6), actuator-limit validation,
+    // authority and heartbeat. Serving it to agents and HIL is headless/Host GatewayServer.
+    // Also open: letting command k be computed from observation k (target-architecture §11).
     public sealed class SimulationGateway
     {
         private readonly ISimulationEngine _engine;

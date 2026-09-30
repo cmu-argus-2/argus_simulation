@@ -1,0 +1,9 @@
+// PLACEHOLDER: no messages yet.
+// TODO(D5, G3): RenderRequest from the headless core's camera models to the Unity IImageRenderer,
+// and the ImageFrame back. Large pixel buffers may use shared memory plus a metadata message
+// (system-architecture §12).
+syntax = "proto3";
+
+package argus.render.v1;
+
+option csharp_namespace = "Argus.Contracts.Render.V1";

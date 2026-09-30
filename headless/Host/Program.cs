@@ -4,9 +4,11 @@ using Argus.Simulation.Core;
 
 namespace Argus.Simulation.Host
 {
-    // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine. The recorder
-    // (D6), the gateway server for agents and HIL (D7, G1) and the Unity snapshot stream (G2) attach
-    // here later.
+    // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine.
+    // TODO(D6): feed every snapshot and SensorOutputSet to Core RunRecorder.
+    // TODO(D7, G1): serve the gateway to agents and HIL through Gateway/GatewayServer.
+    // TODO(G2): stream decimated snapshots to Unity through Streaming/SnapshotStreamServer.
+    // TODO(G5): read the run configuration from a file instead of HostScenario.
     public static class Program
     {
         public static int Main(string[] args)

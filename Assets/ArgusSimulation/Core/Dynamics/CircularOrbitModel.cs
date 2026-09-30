@@ -71,6 +71,10 @@ namespace Argus.Simulation.Core
                 positionEcef,
                 velocityEcef,
                 Quaterniond.FromBasis(bodyX, bodyY, bodyZ),
+                // TODO(fixture): not omega_BN_B (see SpacecraftState). With x along the ECEF
+                // velocity the body rate is about (0, -n, yaw rate), exactly (0, -n, 0) only for
+                // equatorial orbits. Derive it from the frame derivative, or align x with the
+                // inertial velocity to get (0, -n, 0).
                 new Vector3d(0.0, _meanMotionRadiansPerSecond, 0.0),
                 ReferenceFrame.AnalyticEarthFixed);
         }

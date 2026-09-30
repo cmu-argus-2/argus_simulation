@@ -724,6 +724,9 @@ namespace Argus.Simulation.Unity
 
             if (IsGroupVisible(SensorGroup.SensorAvailability))
             {
+                // TODO(G2): list sensors from the received SensorOutputSet instead of this fixed
+                // text. The accelerometer (IMU) and magnetometer now exist as Basilisk-sourced
+                // models (Core/Sensors) but publish nothing until the Basilisk service runs.
                 AddHeader(builder, "UNIMPLEMENTED SENSOR MODELS");
                 AddRow(builder, "GNSS", "UNAVAILABLE — no model registered");
                 AddRow(builder, "Accelerometer", "UNAVAILABLE — no model registered");
@@ -737,6 +740,8 @@ namespace Argus.Simulation.Unity
             _telemetryText.text = builder.ToString();
         }
 
+        // TODO(G1): orbit and attitude nudges become engine commands, so rendered images match the
+        // recorded state.
         private void NudgeOrbit(double phaseDeltaDegrees, double altitudeDeltaMeters)
         {
             if (_orbitSource == null)

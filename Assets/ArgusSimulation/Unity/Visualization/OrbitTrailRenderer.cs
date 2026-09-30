@@ -5,6 +5,8 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
+    // TODO(G2): build the trail from received state history instead of sampling the analytic
+    // state source for one orbit period, so it works in Basilisk runs.
     [DisallowMultipleComponent]
     public sealed class OrbitTrailRenderer : MonoBehaviour
     {

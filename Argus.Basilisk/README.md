@@ -23,6 +23,11 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
   only after reconciling it with D2, D3 and D8: SPICE only through `spiceInterface`, no
   standalone SPICE worker or offline tables, and live runs rather than recording replay.
 
+Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call placeholder modules
+that the team fills in: `validation.py` (§3), `scenario.py` (§4 to §8), `sensors.py` (§9),
+`kernels.py` (§8) and `seeds.py` (§10). `scripts/fetch_kernels.py` is the SPICE team's
+fetch/verify tool (§8). Each carries a `TODO(basilisk-team)` or `TODO(spice-team)`.
+
 ## 2. Install and run
 
 ```bash

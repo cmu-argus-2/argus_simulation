@@ -16,10 +16,10 @@ Assets/ArgusSimulation/
 │   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
 │   ├── Math/                     # Double-precision vectors, quaternions, MRPs, 3x3 matrices
-│   ├── Recording/                # Planned: run recorder, the single export route (README only)
+│   ├── Recording/                # Run recorder, the single export route (placeholder)
 │   ├── Runtime/                  # Headless orchestration and gateway
 │   └── Sensors/                  # Standard sensor envelopes and models
-│       └── Camera/               # Planned: camera sensor models (README only)
+│       └── Camera/               # Camera sensor models (placeholders)
 │
 ├── Unity/                        # Unity-dependent adapters and presentation
 │   ├── Cameras/                  # Unity camera rigs and render implementation
@@ -41,8 +41,10 @@ Assets/ArgusSimulation/
 
 headless/                         # dotnet build of Core and the EditMode tests (no Unity)
 └── Host/                         # Headless host: BasiliskEngine gRPC client, P0 scenario
-Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared) and basilisk/v1 (Basilisk link)
+Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_basilisk/, kernel_sets/, scripts/)
+Argus.Agent/                      # Training environment and agent SDK (README placeholder)
+Argus.Hardware/                   # Flight-computer adapters (README placeholder)
 ```
 
 ## Class map
@@ -86,29 +88,41 @@ Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_bas
   describe the adjacent contract.
 - Tests mirror the responsibility of the production code they verify.
 
-## Planned additions
+## Placeholders and TODOs
 
-Folders marked planned above exist today with only a README that states their owner and
-status. Planned code, including code for those folders:
+Planned work is marked in the code with `TODO(<ids>)`, where each id is a decision or gap in
+[target-architecture.md](target-architecture.md) (for example `TODO(G2)` or `TODO(D7, G1)`) or
+an area: `sensors`, `hardware`, `fixture` (the analytic engine), `cesium`, `basilisk-team` or
+`spice-team`. List them all with `git grep -n "TODO("`.
+
+Where the planned file does not exist yet, a placeholder holds its place. C# placeholders are
+empty `internal` types that nothing references, so they add no API and no behaviour; Python
+placeholders are docstring-only modules; proto placeholders declare only their package. Each
+says what to build, and its tag says why.
 
 ```text
-Core/Sensors/Camera/
-├── CameraModel.cs
-├── ArducamImx708CameraModel.cs
-└── NadirGroundTruthCameraModel.cs
-
-Core/Recording/
-└── RunRecorder.cs                # Snapshots, every SensorFrame, gateway command log
-
-Unity/Cameras/
-└── UnityImageRenderer.cs         # IImageRenderer implementation
-
-External services/packages:
-├── Argus.Contracts/              # Gateway, snapshot-stream and renderer schemas
-├── Argus.Basilisk/               # Python Basilisk service, including SPICE
-├── Argus.Agent/                  # Training environment
-└── Argus.Hardware/               # Flight-computer protocol adapters
+Core/Sensors/
+├── GnssSensor.cs, SunSensor.cs, StarTrackerSensor.cs     # Upcoming sensors (TODO(sensors))
+├── PowerTelemetrySensor.cs, ThermalSensor.cs
+├── RadioLinkSensor.cs, RadiationSensor.cs
+└── Camera/CameraModel.cs                                # TODO(D5, G3)
+    Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
+    Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
+Core/Recording/RunRecorder.cs                            # TODO(D6)
+Core/Abstractions/ISimulationSnapshotSource.cs           # TODO(G2)
+Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
+Unity/Runtime/SnapshotStreamClient.cs                    # TODO(G2)
+Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
+headless/Host/Streaming/SnapshotStreamServer.cs          # TODO(G2)
+headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
+Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
+Argus.Basilisk/argus_basilisk/{validation,scenario,sensors,kernels,seeds}.py  # TODO(basilisk-team)
+Argus.Basilisk/scripts/fetch_kernels.py                  # TODO(spice-team)
+Argus.Agent/README.md, Argus.Hardware/README.md          # TODO(D7, G1)
 ```
+
+When a placeholder is implemented, make it public if it is API, register it where it is used,
+and remove its TODO.
 
 Unity asset references are preserved during moves by keeping each `.cs.meta` file with
 its source file. Do not delete or regenerate those metadata files during refactoring.

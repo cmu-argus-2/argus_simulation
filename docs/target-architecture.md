@@ -106,7 +106,7 @@ flowchart TB
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
 | Basilisk service + SPICE | `Argus.Basilisk/` | Basilisk-free gRPC skeleton (every RPC UNIMPLEMENTED), pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | skeleton on main; Basilisk/SPICE team implements |
-| Agents + flight computer | `Argus.Agent/`, `Argus.Hardware/` | — | Agent SDK and HIL hardware adapters talking to the gateway | planned |
+| Agents + flight computer | `Argus.Agent/`, `Argus.Hardware/` | README placeholders | Agent SDK and HIL hardware adapters talking to the gateway | planned |
 | Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` with a placeholder P0 scenario | Hosts the headless core process (G2): recorder, gateway server, Unity snapshot stream | main (host skeleton) |
 
 `Unity/Export/CesiumReferenceMapExporter.cs` is an offline tool that renders reference-map
@@ -224,7 +224,8 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. |
 
 **Not built yet:** the Basilisk service behind the v1 schemas (it is a skeleton, so
-`BasiliskEngine` is unverified against real Basilisk); camera models; Argus-computed sensor models (GNSS, star tracker);
+`BasiliskEngine` is unverified against real Basilisk); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
+thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are in
 `Argus.Basilisk/kernel_sets/`).
@@ -232,12 +233,12 @@ hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are i
 **Known issues on `main`:**
 
 - The east night-lights overlay uses material key `"3"`
-  (`Unity/Cesium/NasaGibsRasterController.cs:176`), but the default Cesium tileset
+  (the east night overlay in `Unity/Cesium/NasaGibsRasterController.cs`), but the default Cesium tileset
   material only has overlay slots `0`, `1` and `2`, so that overlay is never drawn. The part
   of the night side past the antimeridian (about 180° to 145°W with the fixed Sun) shows no
   city lights.
 - The night-side longitude is computed from the Sun direction in the georeference's local
-  East-Up-North frame (`NasaGibsRasterController.cs:70-72`) instead of Earth-fixed
+  East-Up-North frame (`NasaGibsRasterController.cs`, night-side longitude) instead of Earth-fixed
   coordinates. With the scene's origin near Denver, the night-lights band sits about 20°
   away from the true night side.
 - The scene's Sun light is fixed.
@@ -278,16 +279,16 @@ Assets/ArgusSimulation/
 │   ├── Dynamics/          Analytic engine (test fixture)                      main
 │   ├── Imaging/           Camera and render contracts, GIBS URLs              main
 │   ├── Math/              Vectors, quaternions, MRPs, 3x3 matrices            main
-│   ├── Recording/         Run recorder                                        planned (README)
+│   ├── Recording/         Run recorder                                        placeholder
 │   ├── Runtime/           Simulation gateway                                  main
-│   └── Sensors/           Sensor models; Camera/ planned (README)             main
+│   └── Sensors/           Sensor models; Camera/ and upcoming sensors placeholders   main
 ├── Unity/                 Cameras, Cesium, Export, Runtime, Sensors, UI, Visualization   main
 ├── Editor/Scene/          Scene builder                                       main
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
 headless/                  dotnet build of Core + EditMode tests; Host/        main
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
 Argus.Basilisk/            Basilisk service with SPICE                         skeleton + brief
-Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        planned
+Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        planned (README)
 ```
 
 ## 10. Roadmap

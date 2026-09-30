@@ -5,6 +5,8 @@ namespace Argus.Simulation.Host
 {
     // PLACEHOLDER run configuration until the hardware team confirms parts and G5 defines a run
     // configuration file. Every value here is user input, not physics.
+    // TODO(hardware): replace with confirmed data: IMU, magnetometer and light-sensor parts,
+    // mounts and rates; spacecraft mass, inertia and initial attitude; orbit and epoch.
     public static class HostScenario
     {
         private const double SamplePeriodSeconds = 0.1;

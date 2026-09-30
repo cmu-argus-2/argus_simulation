@@ -67,6 +67,9 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
+            // TODO(D4): this longitude is taken in the georeference's local East-Up-North frame, not
+            // Earth-fixed, so the night band sits about 20 degrees off; use Earth-fixed coordinates
+            // and the EnvironmentState Sun once SunLightDriver exists.
             Vector3 sunDirection = transform.parent.InverseTransformDirection(-sunlight.transform.forward);
             float sunLongitude = Mathf.Atan2(sunDirection.z, sunDirection.x) * Mathf.Rad2Deg;
             float nightCenterLongitude = NormalizeLongitude(sunLongitude + 180f);
@@ -173,6 +176,8 @@ namespace Argus.Simulation.Unity
                 ConfigureOverlay(
                     _nightOverlayEast,
                     NasaGibsUrl.BuildTemplate(nightLayer, nightDate),
+                    // TODO(cesium): the default tileset material has overlay slots 0-2 only, so
+                    // key "3" is never drawn and night lights past the antimeridian are missing.
                     "3",
                     true,
                     90.0);

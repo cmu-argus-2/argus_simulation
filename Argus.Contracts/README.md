@@ -14,9 +14,15 @@ proto/argus/
 │   ├── commands.proto          # ActuatorCommand
 │   ├── sensors.proto           # Sensor definitions, P0 profiles and measurements
 │   └── run_configuration.proto # RunConfiguration (G5)
-└── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
-    └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
+├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
+│   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
+├── stream/v1/snapshot_stream.proto   # Placeholder: host → Unity snapshot stream (G2)
+├── gateway/v1/gateway.proto          # Placeholder: agents and HIL link (D7, G1)
+└── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
+
+The placeholders declare only their package; their messages are added with the PR that
+first needs them.
 
 `argus.sim.v1` mirrors Core contracts and may be reused by any future link.
 `argus.basilisk.v1` carries Basilisk-native data (J2000, MRPs, SPICE matrices) and only

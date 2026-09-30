@@ -145,6 +145,7 @@ namespace Argus.Simulation.Host
                 RunId = _configuration.RunId,
                 Sequence = (ulong)input.Sequence,
                 SimTimeNs = (ulong)simulationTimeNanoseconds,
+                // TODO(G1): the service rejects non-zero commands until Basilisk actuators exist.
                 Command = BasiliskProtoMapper.ToProto(input.Commands)
             };
             PbBasilisk.StepResponse response = Call("Step", options => _client.Step(request, options), StepDeadline());

@@ -169,13 +169,13 @@ BackendSensorModel<TMeasurement>         (Basilisk-sourced)
 
 SensorModel<TPayload>                    (Argus-computed)
 ├── IdealBodyRateSensorModel
-├── GpsModel
-├── SunSensorModel
-├── StarTrackerModel
-├── PowerTelemetryModel
-└── CameraModel
-    ├── ArducamImx708CameraModel
-    └── NadirGroundTruthCameraModel
+└── CameraModel                          (placeholder)
+    ├── ArducamImx708CameraModel         (placeholder)
+    └── NadirGroundTruthCameraModel      (placeholder)
+
+Upcoming, source open (Basilisk module per D10, or Argus-computed); placeholders in Core/Sensors:
+GnssSensor, SunSensor, StarTrackerSensor, PowerTelemetrySensor, ThermalSensor,
+RadioLinkSensor, RadiationSensor
 ```
 
 The four physical cameras use one Arducam profile with different `+X`, `-X`, `+Y`, and
@@ -289,13 +289,13 @@ Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
 Argus.Basilisk/                    Python Basilisk service with SPICE (skeleton + brief)
 
 Future external packages/services:
-Argus.Agent/                       Training environment/SDK
-Argus.Hardware/                    Flight-computer protocol adapters
+Argus.Agent/                       Training environment/SDK (README placeholder)
+Argus.Hardware/                    Flight-computer protocol adapters (README placeholder)
 ```
 
 Dataset and replay writing will live in the core run recorder (`Core/Recording/`,
 planned), not in a separate package. Today `Unity/Export/NavigationEpisodeExporter.cs`
-writes datasets. The authoritative folder and class map, including planned README-only
+writes datasets. The authoritative folder and class map, including planned README-only and placeholder
 folders, is [code-organization.md](code-organization.md).
 
 ## 15. Incremental implementation plan

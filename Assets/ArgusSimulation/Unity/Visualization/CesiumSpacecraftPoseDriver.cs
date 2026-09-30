@@ -5,6 +5,8 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
+    // TODO(G1): attitude nudges become engine commands. Today they change what the cameras render
+    // but not the recorded BodyToEcef, so exported images can disagree with exported attitude.
     [RequireComponent(typeof(CesiumGlobeAnchor))]
     public sealed class CesiumSpacecraftPoseDriver : MonoBehaviour
     {

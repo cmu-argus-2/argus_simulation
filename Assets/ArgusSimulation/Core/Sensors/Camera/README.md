@@ -1,6 +1,6 @@
 # Core/Sensors/Camera — camera sensor models (planned)
 
-**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** not built
+**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** placeholder classes only (`TODO(D5, G3)`)
 
 Cameras are Core sensor models; Unity only renders (decision D5 in
 [target-architecture.md](../../../../../docs/target-architecture.md)).

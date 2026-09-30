@@ -1,0 +1,9 @@
+// PLACEHOLDER: no messages yet.
+// TODO(D7, G1): the controller link for agents and HIL: Reset(seed, scenario), Step(commands)
+// returning controller-visible observations (never truth), authority and heartbeat. Define it with
+// headless/Host GatewayServer and the SimulationGateway observation change.
+syntax = "proto3";
+
+package argus.gateway.v1;
+
+option csharp_namespace = "Argus.Contracts.Gateway.V1";
