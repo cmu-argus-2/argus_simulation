@@ -7,8 +7,9 @@ using PbSim = Argus.Contracts.Sim.V1;
 
 namespace Argus.Simulation.Host
 {
-    // The only code that touches the generated Protobuf types. Outgoing messages mirror Core
-    // contracts; incoming ones become the internal Core/Basilisk mirrors, and any unset field throws.
+    // Converts between generated Protobuf payloads and Core types; BasiliskEngine owns the client and
+    // the request and response envelopes. Outgoing messages mirror Core contracts; incoming ones
+    // become the internal Core/Basilisk mirrors, and any unset field throws.
     internal static class BasiliskProtoMapper
     {
         public static PbSim.RunConfiguration ToProto(SimulationConfiguration configuration, long fixedStepNanoseconds)

@@ -53,7 +53,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    - `kernel_set_id` matches `[a-z0-9][a-z0-9._-]{0,63}`; `fixed_step_ns > 0`;
      `real_time_factor` finite and ≥ 0; unique sensor IDs; each `sample_period_ns` a
      positive multiple of `fixed_step_ns`; every oneof and message field set;
-   - sensor profiles as in `sensors.proto`, plus Basilisk 2.11.1 limits: an IMU channel
+   - sensor profiles as in `sensors.proto` (a light-sensor half-angle is at most π/2, since
+     `coarseSunSensor` and `albedo` do not clamp negative cosines), plus Basilisk 2.11.1
+     limits: an IMU channel
      cannot have both noise density and random walk > 0 (one Gauss-Markov state per axis),
      and a walk bound > 0 needs random walk > 0 (the same bound would clip white noise);
    - `noise_std_tesla > 0` is UNIMPLEMENTED: bsk 2.11.1 seeds the magnetometer's private

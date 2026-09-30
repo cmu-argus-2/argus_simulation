@@ -14,7 +14,7 @@ namespace Argus.Simulation.Host
         {
             // Same elements as the Unity analytic defaults but not the same orbit: Basilisk measures
             // RAAN from J2000 x, while AnalyticEarthFixed measures it from Greenwich at the epoch
-            // (GMST is about 114.4 degrees at this epoch).
+            // (Greenwich is about 114.4 degrees east of J2000 x at this epoch).
             ClassicalOrbitElements orbit = new ClassicalOrbitElements(6_878_137.0, 0.0, 51.6, 0.0, 0.0, 0.0);
 
             // 1U CubeSat.

@@ -38,7 +38,8 @@ namespace Argus.Simulation.Core
             nanoseconds / NanosecondsPerSecond + (nanoseconds % NanosecondsPerSecond) * 1e-9;
 
         // Epoch plus elapsed ephemeris-time seconds, as Basilisk's SPICE time is ETInit + t: no leap
-        // seconds, and up to about 1.7 ms of periodic TDB-UTC error. Truncates to 100 ns ticks.
+        // seconds, and a periodic TDB-TT error of up to about 3.3 ms (twice the 1.657 ms amplitude;
+        // under 30 us per day of run). Truncates to 100 ns ticks.
         public static DateTimeOffset ToUtc(DateTimeOffset epochUtc, long nanoseconds) =>
             epochUtc.AddTicks(nanoseconds / 100);
     }

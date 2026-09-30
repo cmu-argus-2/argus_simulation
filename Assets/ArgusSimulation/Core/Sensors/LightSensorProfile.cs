@@ -21,7 +21,9 @@ namespace Argus.Simulation.Core
             SaturationWattsPerSquareMeter = saturationWattsPerSquareMeter;
         }
 
-        // fov, also passed to albedo's instrument configuration.
+        // fov, also passed to albedo's instrument configuration. At most pi/2: Basilisk gates on
+        // cos(angle) >= cos(fov) without clamping, so a wider field adds negative irradiance from
+        // the Sun or Earth behind the aperture. pi/2 already covers the whole hemisphere.
         public double FieldOfViewHalfAngleRadians { get; }
 
         // Dimensionless gain g; Basilisk scaleFactor = g x 1361 W/m^2.
@@ -39,7 +41,7 @@ namespace Argus.Simulation.Core
         public bool IsValid =>
             IsFinite(FieldOfViewHalfAngleRadians) &&
             FieldOfViewHalfAngleRadians > 0.0 &&
-            FieldOfViewHalfAngleRadians <= Math.PI &&
+            FieldOfViewHalfAngleRadians <= Math.PI / 2.0 &&
             IsFinite(ScaleFactor) &&
             ScaleFactor > 0.0 &&
             IsFinite(NoiseStdWattsPerSquareMeter) &&

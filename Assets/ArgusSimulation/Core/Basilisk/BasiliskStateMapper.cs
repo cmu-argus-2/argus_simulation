@@ -66,6 +66,15 @@ namespace Argus.Simulation.Core
                     nameof(step));
             }
 
+            // ITRF93 +z is the spin axis to about 1e-6 rad; a transposed R and dR/dt pass every other
+            // check but spin Earth about -z.
+            if (Math.Abs(earthRate.Z - NominalEarthRotationRadiansPerSecond) > EarthRotationToleranceRadiansPerSecond)
+            {
+                throw new ArgumentException(
+                    $"Earth rotation axis {earthRate} is not ITRF93 +z; are J20002Pfix and its rate transposed?",
+                    nameof(step));
+            }
+
             Vector3d sunFromEarthJ2000 = step.Sun.PositionInertialMeters - step.Earth.PositionInertialMeters;
             double sunDistance = sunFromEarthJ2000.Magnitude;
             if (sunDistance < MinimumSunDistanceMeters || sunDistance > MaximumSunDistanceMeters)

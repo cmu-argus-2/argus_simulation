@@ -77,6 +77,10 @@ namespace Argus.Simulation.Tests
 
             Assert.That(BasiliskTime.ToNanoseconds(0.1), Is.EqualTo(100_000_000));
             Assert.Throws<ArgumentException>(() => BasiliskTime.ToNanoseconds(0.1000000001));
+
+            // Past 2^23 s one ulp exceeds 1 ns: step 83,886,082 at 0.1 s is still the same instant.
+            Assert.That(SimulationTime.AreSame(83_886_082 * 0.1, BasiliskTime.ToSeconds(8_388_608_200_000_000)), Is.True);
+            Assert.That(SimulationTime.AreSame(0.1, 0.1 + 1e-6), Is.False);
         }
 
         private static BasiliskStepState Step(long nanoseconds, Mrp sigmaBN, Vector3d omegaBNBody)

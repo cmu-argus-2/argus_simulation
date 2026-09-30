@@ -81,17 +81,44 @@ namespace Argus.Simulation.Host
                 endpoint = DefaultEndpoint;
             }
 
-            if (!Uri.TryCreate("http://" + endpoint, UriKind.Absolute, out Uri address) ||
-                address.IsDefaultPort ||
+            if (!HasExplicitPort(endpoint) ||
+                !Uri.TryCreate("http://" + endpoint, UriKind.Absolute, out Uri address) ||
+                address.Port < 1 ||
                 address.AbsolutePath != "/" ||
                 !string.IsNullOrEmpty(address.Query))
             {
-                error = $"The Basilisk endpoint must be host:port, got '{endpoint}'.";
+                error = $"The Basilisk endpoint must be host:port with port 1-65535, got '{endpoint}'.";
                 return false;
             }
 
             options = new HostOptions(durationSeconds, realTimeFactor, address);
             error = null;
+            return true;
+        }
+
+        // host:port or [ipv6]:port, matching the service's parse_endpoint. Uri alone cannot tell an
+        // explicit :80 from a missing port.
+        private static bool HasExplicitPort(string endpoint)
+        {
+            int separator = endpoint.LastIndexOf(':');
+            if (separator <= 0 || separator == endpoint.Length - 1)
+            {
+                return false;
+            }
+
+            if (endpoint[0] == '[' && endpoint[separator - 1] != ']')
+            {
+                return false;
+            }
+
+            for (int i = separator + 1; i < endpoint.Length; i++)
+            {
+                if (endpoint[i] < '0' || endpoint[i] > '9')
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 

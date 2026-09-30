@@ -3,7 +3,8 @@ using System.Collections.Generic;
 
 namespace Argus.Simulation.Core
 {
-    // Everything one Basilisk step reports at t_n. Mirrors the StepResponse message field for field.
+    // The state one Basilisk step reports at t_n: the StepResponse state fields. BasiliskEngine checks
+    // run_id and sequence itself and reads pacing_overrun_count.
     internal readonly struct BasiliskStepState
     {
         private readonly BasiliskSensorSample[] _sensorSamples;
@@ -33,7 +34,7 @@ namespace Argus.Simulation.Core
         public BasiliskPlanetState Earth { get; }
         public BasiliskPlanetState Sun { get; }
 
-        // EclipseMsg.shadowFactor: 1 is fully sunlit, 0 is umbra.
+        // EclipseMsg illuminationFactor (formerly shadowFactor): 1 is fully sunlit, 0 is umbra.
         public double SpacecraftShadowFactor { get; }
 
         public IReadOnlyList<BasiliskSensorSample> SensorSamples =>

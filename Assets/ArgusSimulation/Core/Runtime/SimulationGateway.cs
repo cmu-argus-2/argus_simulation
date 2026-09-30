@@ -52,7 +52,7 @@ namespace Argus.Simulation.Core
             EnsureInitialized();
             if (!commands.IsValid ||
                 commands.Sequence != _nextSequence ||
-                Math.Abs(commands.ApplyAtSimulationTimeSeconds - _nextSimulationTimeSeconds) > 1e-9)
+                !SimulationTime.AreSame(commands.ApplyAtSimulationTimeSeconds, _nextSimulationTimeSeconds))
             {
                 throw new ArgumentException(
                     "Commands must target the gateway's next sequence and simulation time.",
@@ -67,9 +67,8 @@ namespace Argus.Simulation.Core
                 !snapshot.IsValid ||
                 snapshot.RunId != _configuration.RunId ||
                 snapshot.Spacecraft.Sequence != _nextSequence ||
-                Math.Abs(snapshot.Spacecraft.SimulationTimeSeconds - _nextSimulationTimeSeconds) > 1e-9 ||
-                Math.Abs(snapshot.AppliedCommands.ApplyAtSimulationTimeSeconds -
-                    _nextSimulationTimeSeconds) > 1e-9)
+                !SimulationTime.AreSame(snapshot.Spacecraft.SimulationTimeSeconds, _nextSimulationTimeSeconds) ||
+                !SimulationTime.AreSame(snapshot.AppliedCommands.ApplyAtSimulationTimeSeconds, _nextSimulationTimeSeconds))
             {
                 throw new InvalidOperationException(
                     $"Simulation backend '{_engine.BackendName}' failed to produce a valid snapshot.");

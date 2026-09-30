@@ -1,5 +1,3 @@
-using System;
-
 namespace Argus.Simulation.Core
 {
     public readonly struct SimulationStepInput
@@ -25,6 +23,6 @@ namespace Argus.Simulation.Core
             !double.IsInfinity(SimulationTimeSeconds) &&
             Commands.IsValid &&
             Commands.Sequence == Sequence &&
-            Math.Abs(Commands.ApplyAtSimulationTimeSeconds - SimulationTimeSeconds) <= 1e-9;
+            SimulationTime.AreSame(Commands.ApplyAtSimulationTimeSeconds, SimulationTimeSeconds);
     }
 }

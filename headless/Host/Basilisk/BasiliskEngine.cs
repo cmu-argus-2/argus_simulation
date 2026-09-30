@@ -16,7 +16,7 @@ namespace Argus.Simulation.Host
         private static readonly TimeSpan ConfigureRunDeadline = TimeSpan.FromSeconds(120);
         private static readonly TimeSpan ResetDeadline = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan StepDeadlineMargin = TimeSpan.FromSeconds(30);
-        private const double TimeToleranceSeconds = 1e-9;
+        private const double MaximumPacedStepSeconds = 3600.0;
 
         private readonly GrpcChannel _channel;
         private readonly PbBasilisk.BasiliskSimulationService.BasiliskSimulationServiceClient _client;
@@ -69,6 +69,13 @@ namespace Argus.Simulation.Host
             if (fixedStepNanoseconds <= 0)
             {
                 throw new ArgumentException("The fixed step must be at least 1 ns.", nameof(configuration));
+            }
+
+            if (_realTimeFactor > 0.0 && configuration.FixedStepSeconds / _realTimeFactor > MaximumPacedStepSeconds)
+            {
+                throw new ArgumentException(
+                    $"Real-time factor {_realTimeFactor:R} would pace each step to over {MaximumPacedStepSeconds} s.",
+                    nameof(configuration));
             }
 
             foreach (SensorConfiguration sensor in configuration.Sensors)
@@ -127,7 +134,7 @@ namespace Argus.Simulation.Host
             }
 
             long simulationTimeNanoseconds = checked(input.Sequence * _fixedStepNanoseconds);
-            if (Math.Abs(BasiliskTime.ToSeconds(simulationTimeNanoseconds) - input.SimulationTimeSeconds) > TimeToleranceSeconds)
+            if (!SimulationTime.AreSame(BasiliskTime.ToSeconds(simulationTimeNanoseconds), input.SimulationTimeSeconds))
             {
                 throw new InvalidOperationException(
                     $"Step {input.Sequence} at {input.SimulationTimeSeconds:R} s is off the {_fixedStepNanoseconds} ns grid.");

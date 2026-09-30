@@ -25,7 +25,7 @@ namespace Argus.Simulation.Core
         // ITRF93 relative to J2000, in ITRF93 axes; v_itrf93 = R v_j2000 - omega x r_itrf93.
         public Vector3d EarthAngularVelocityItrf93RadiansPerSecond { get; }
 
-        // Basilisk EclipseMsg.shadowFactor: 1 is fully sunlit, 0 is umbra.
+        // Basilisk EclipseMsg illuminationFactor (formerly shadowFactor): 1 is fully sunlit, 0 is umbra.
         public double SpacecraftShadowFactor { get; }
 
         public bool IsValid =>

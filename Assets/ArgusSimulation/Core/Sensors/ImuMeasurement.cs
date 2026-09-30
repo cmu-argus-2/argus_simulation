@@ -16,7 +16,8 @@ namespace Argus.Simulation.Core
         public Vector3d AngularVelocitySensorRadiansPerSecond { get; }
 
         // Non-gravitational acceleration at the mount, including the lever-arm terms
-        // dw/dt x r + w x (w x r); zero in free fall only at the centre of mass with no rotation.
+        // dw/dt x r + w x (w x r). In free fall it is zero at the centre of mass, or anywhere on a
+        // non-rotating body; elsewhere it equals the lever-arm terms.
         public Vector3d SpecificForceSensorMetersPerSecondSquared { get; }
 
         public bool IsValid =>

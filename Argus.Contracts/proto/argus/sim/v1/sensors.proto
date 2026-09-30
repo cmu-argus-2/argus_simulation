@@ -84,7 +84,8 @@ message MagnetometerProfile {
 
 // coarseSunSensor reporting irradiance: Basilisk scaleFactor = scale_factor x 1361 W/m2.
 message LightSensorProfile {
-  // fov, and albedo addInstrumentConfig fov; (0, pi].
+  // fov, and albedo addInstrumentConfig fov; (0, pi/2]. bsk 2.11.1 gates on cos(angle) >= cos(fov)
+  // without clamping, so a wider field adds negative irradiance from behind the aperture.
   double field_of_view_half_angle_rad = 1;
   // > 0.
   double scale_factor = 2;
