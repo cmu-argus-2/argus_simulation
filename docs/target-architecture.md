@@ -48,7 +48,7 @@ flowchart TB
             bsk["Basilisk service<br/>dynamics, sensors, actuators"]
             spice["SPICE<br/>spiceInterface module"]
         end
-        agents["Flight computer (HIL)<br/>Argus.Hardware adapters"]
+        hil["Flight computer (HIL)<br/>Argus.Hardware adapters"]
     end
 
     naif[("NAIF kernels<br/>one pinned set")]
@@ -81,11 +81,11 @@ flowchart TB
     smod -.->|controller-visible frames| gate
     gate -.->|command log| rec
     gate -.->|actuator commands| beng
-    agents <-.->|observations / commands, gRPC or HIL| gate
+    hil <-.->|observations / commands, gRPC or HIL| gate
     rec -.-> data
 
     classDef planned stroke-dasharray: 5 5
-    class rec,bsk,spice,agents,naif planned
+    class rec,bsk,spice,hil,naif planned
 ```
 
 ## 2. Blocks
@@ -116,8 +116,8 @@ tiles. It is not run data and sits outside D6.
 
 | # | Decision | Why | Consequence |
 |---|---|---|---|
-| D1 | The core is headless: `Argus.Simulation.Core` never references Unity. Unity is a client and a renderer. | Runs, training and HIL must work without the GUI. | The Core asmdef sets `noEngineReferences`, and `headless/` builds Core with plain `dotnet`. |
-| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` becomes a follower. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Whether lockstep training also uses Basilisk is open (§11). |
+| D1 | The core is headless: `Argus.Simulation.Core` never references Unity. Unity is a client and a renderer. | Runs, SIL and HIL must work without the GUI. | The Core asmdef sets `noEngineReferences`, and `headless/` builds Core with plain `dotnet`. |
+| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` becomes a follower. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Whether lockstep SIL runs also use Basilisk is open (§11). |
 | D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. |
 | D4 | Environment data travels inside `SimulationState` as `EnvironmentState` (Sun vector, J2000 ↔ ITRF93 orientation, eclipse). There is no separate environment service. | It is per-step data produced together with the dynamics. | Lighting, camera models and the recorder read it through the state broadcast. |
 | D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. |
@@ -158,7 +158,7 @@ sequenceDiagram
     end
 ```
 
-### Lockstep run (agent training, target)
+### Lockstep run (SIL and tests, target)
 
 The controller calls `Reset(seed, scenario)` and then `Step(commands)` on the gateway, which
 advances the engine by a fixed interval and returns observations. On `main`,
@@ -341,9 +341,9 @@ the gateway.
 
 ## 11. Open questions
 
-- Does lockstep agent training run Basilisk faster than real time, or only the analytic
-  fixture? (D2) The service supports `real_time_factor` 0 (unpaced); whether training uses
-  it stays open.
+- Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
+  (D2) The service supports `real_time_factor` 0 (unpaced); whether lockstep runs use it
+  stays open.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6)
 - Does `SpacecraftState` stay canonical ITRF93 with conversion only at the Basilisk

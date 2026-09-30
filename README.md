@@ -4,7 +4,7 @@ Unity visualization for the CubeSat simulation. The current scene displays Cesiu
 
 The long-term simulator is designed as a Unity-independent headless core with Unity as
 an optional GUI and image renderer. See [the system architecture](docs/system-architecture.md)
-for the agent, flight-hardware, sensor, rendering, and future Basilisk integration design.
+for the flight-hardware, sensor, rendering, and Basilisk integration design.
 See [code organization](docs/code-organization.md) for the class and folder map, and
 [the target architecture](docs/target-architecture.md) for the agreed target design, decisions, and open gaps.
 

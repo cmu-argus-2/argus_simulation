@@ -11,7 +11,6 @@ precedence.
 
 Argus is a CubeSat digital-twin platform for:
 
-- deterministic agent training;
 - software-in-the-loop (SIL) testing;
 - hardware-in-the-loop (HIL) testing with a CubeSat flight computer;
 - synthetic sensor and camera generation;
@@ -19,7 +18,7 @@ Argus is a CubeSat digital-twin platform for:
 
 The simulator must run without Unity. Unity is an optional GUI and image-rendering
 adapter. A future dynamics backend such as Basilisk must be replaceable without
-changing the GUI, agents, flight-hardware adapters, sensor contracts, or exporters.
+changing the GUI, flight-hardware adapters, sensor contracts, or exporters.
 
 ## 2. Architectural principles
 
@@ -30,18 +29,18 @@ changing the GUI, agents, flight-hardware adapters, sensor contracts, or exporte
    validity, sequence numbers, and source identifiers are mandatory.
 4. **Backends are replaceable.** Analytic development dynamics, Basilisk, recorded
    trajectories, and future engines implement the same interface.
-5. **Controllers do not talk directly to Unity.** Agents and flight hardware exchange
+5. **Controllers do not talk directly to Unity.** Flight software (SIL) and flight hardware (HIL) exchange
    observations and commands through the simulation gateway.
 6. **Pixels are renderer output, not dynamics truth.** The core specifies camera pose,
    timing, and calibration; Unity or another renderer produces image bytes.
-7. **Training is deterministic by default.** Agent training uses lockstep `Reset` and
+7. **SIL runs are deterministic by default.** SIL and test runs use lockstep `Reset` and
    `Step`; wall-clock HIL is a separate runtime mode.
 
 ## 3. Logical architecture
 
 ```mermaid
 flowchart LR
-    Controller[Agent / Flight Computer] <-->|observations and commands| Gateway[Simulation Gateway]
+    Controller[Flight Software / Flight Computer] <-->|observations and commands| Gateway[Simulation Gateway]
     Gateway <--> Core[Headless Simulation Core]
     Core <--> Dynamics[ISimulationEngine]
     Dynamics --> Analytic[Analytic Backend]
@@ -76,7 +75,7 @@ flowchart LR
 
 ## 5. Closed-loop execution
 
-### 5.1 Deterministic agent/SIL mode
+### 5.1 Deterministic SIL mode
 
 1. The controller calls `Reset(seed, scenario)`.
 2. The gateway returns the initial observation.
@@ -86,7 +85,7 @@ flowchart LR
 6. The gateway returns the next observation and termination/status information.
 7. Unity receives decimated states independently and cannot block the loop.
 
-This mode can run faster or slower than real time and is the default for training.
+This mode can run faster or slower than real time and is the default for SIL and tests.
 
 ### 5.2 Hardware-in-the-loop mode
 
@@ -198,9 +197,9 @@ Dynamics state
   -> ImageFrame
 ```
 
-For GUI-only use, Unity may display its render texture locally. When an agent or flight
-computer requires pixels, the renderer returns an `ImageFrame` for that exact simulation
-sequence. A graphics-free run must explicitly select an alternate image provider or mark
+For GUI-only use, Unity may display its render texture locally. When flight software or a
+flight computer requires pixels, the renderer returns an `ImageFrame` for that exact
+simulation sequence. A graphics-free run must explicitly select an alternate image provider or mark
 the camera `Unavailable`; it must not silently return a black image.
 
 NASA GIBS imagery is an Earth texture/reference source, not ground truth by itself.
@@ -239,7 +238,7 @@ Basilisk Python service
 ```
 
 Keep Argus extensions outside the Basilisk source tree. Do not expose Basilisk-specific
-message classes to Unity, agents, or flight-hardware adapters. Mapping tests must cover
+message classes to Unity or flight-hardware adapters. Mapping tests must cover
 units, ECI/ECEF conversion, attitude convention, timestamp conversion, resets, and
 command application.
 
@@ -247,7 +246,7 @@ command application.
 
 | Need | Preferred mechanism |
 |---|---|
-| Same-process agent training | direct `SimulationGateway` calls |
+| Same-process SIL and tests | direct `SimulationGateway` calls |
 | Separate process / Basilisk | unary gRPC `Reset` and `Step` |
 | Unity live state | decimated gRPC server stream or local IPC |
 | HIL command/sensor traffic | bounded bidirectional gRPC or hardware protocol adapter |
