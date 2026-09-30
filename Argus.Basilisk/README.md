@@ -73,7 +73,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 
 ### Reset
 
-- Requires the stored `run_id`; allowed from FAILED.
+- Requires the stored `run_id`; allowed from FAILED. The response echoes `run_id`.
 - MUST construct a new `SimBaseClass` and new modules from the stored request, then re-arm
   pacing. Reusing modules is wrong in bsk 2.11.1: `ImuSensor::Reset` keeps `NominalReady`,
   `PreviousTime` and the previous state (the next t = 0 sample underflows a uint64 time
@@ -96,7 +96,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 7. Read every returned message through the reader subscribed at build time (§6) and assert
    `isWritten()` and `timeWritten() == t_n`, and that all values are finite. A failure is
    INTERNAL and the run becomes FAILED.
-8. Return the `StepResponse`; the next sequence is n + 1.
+8. Return the `StepResponse`, echoing `run_id`, `sequence` and `sim_time_ns` (the client
+   rejects any other value); the next sequence is n + 1.
 
 ## 4. Run configuration to Basilisk
 
@@ -104,19 +105,22 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 |---|---|
 | `epoch_utc` | `spiceInterface.UTCCalInit`, formatted from seconds + nanos as `yyyy-MM-ddTHH:mm:ss.fffffffffZ` (NAIF `str2et` accepts the `Z`). The same epoch feeds the WMM `epochInMsg`, never the module default. |
 | `initial_orbit` | Degrees to radians, `orbitalMotion.elem2rv(earth.mu, oe)`, then `hub.r_CN_NInit` / `v_CN_NInit`. Earth is `isCentralBody`. RAAN is from J2000 x. |
-| `spacecraft` | `hub.mHub`; `hub.IHubPntBc_B` (row-major); `hub.sigma_BNInit = EP2MRP([w, x, y, z])`; `hub.omega_BN_BInit`; `hub.r_BcB_B = 0`. |
+| `spacecraft` | `hub.mHub`; `hub.IHubPntBc_B` (row-major); `hub.sigma_BNInit = rbk.EP2MRP(np.array([w, x, y, z]))`; `hub.omega_BN_BInit`; `hub.r_BcB_B = 0`. |
 | `random_seed` | Module seeds (§10). |
 | `kernel_set_id` | SPICE setup (§8). |
 | `real_time_factor` | Pacing (§5). |
 
 Quaternion rule: the Argus Hamilton active quaternion `a_to_b` (x, y, z, w) equals the
 Basilisk Euler-parameter set `[w, x, y, z]` of a relative to b, and `EP2C` of it gives [ab].
-Acceptance: `EP2C([√½, 0, 0, √½]) == [[0, 1, 0], [−1, 0, 0], [0, 0, 1]]` and
-`EP2C([.5, .5, .5, .5])[2] == [1, 0, 0]`.
+Pass NumPy arrays: `RigidBodyKinematics.EP2MRP` negates its argument when w < 0, which
+raises `TypeError` on a Python list, and Core accepts either sign of w.
+Acceptance: `EP2C([√½, 0, 0, √½]) == [[0, 1, 0], [−1, 0, 0], [0, 0, 1]]`,
+`EP2C([.5, .5, .5, .5])[2] == [1, 0, 0]` and
+`EP2MRP(np.array([−.5, .5, .5, .5])) == [−⅓, −⅓, −⅓]`.
 
 Time: `sim_time_ns` is `CurrentSimNanos`. Basilisk's SPICE time is ETInit + t, so Argus
-stamps UTC as the epoch plus elapsed ephemeris-time seconds (no leap seconds; up to about
-1.7 ms of periodic TDB error).
+stamps UTC as the epoch plus elapsed ephemeris-time seconds (no leap seconds; a periodic
+TDB-TT error of up to about 3.3 ms, under 30 µs per day of run).
 
 ## 5. Pacing
 
@@ -152,9 +156,12 @@ when it is linked, so an unread CSS would report a zero payload that still passe
 |---|---|
 | `spacecraft` | `spacecraft.scStateOutMsg`: `r_BN_N`, `v_BN_N`, `sigma_BN` as written, `omega_BN_B` |
 | `earth`, `sun` | `spiceInterface.planetStateOutMsgs`: `PlanetName`, `PositionVector`, `VelocityVector`, `J20002Pfix`, `J20002Pfix_dot`, `computeOrient` |
-| `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0].shadowFactor` (1 sunlit, 0 umbra); always set |
+| `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0]` read through its reader, field `illuminationFactor` (1 sunlit, 0 umbra; `shadowFactor` is its deprecated alias and warns on every read); always set |
 | `sensor_samples` | One per sensor whose period divides `sim_time_ns`, with `sample_time_ns` from the subscribed reader's `timeWritten()`; measurement unset when the sensor ran without data |
 | `pacing_overrun_count` | `clockSynch.clockOutMsg.overrunCounter`; 0 when unpaced |
+
+`Matrix3` is row-major: `row0` is the first row of the Basilisk matrix. Argus rejects a
+transposed `J20002Pfix` / `J20002Pfix_dot` pair, whose Earth rate points along ITRF93 −z.
 
 ## 8. SPICE and kernels
 
@@ -173,6 +180,10 @@ when it is linked, so an unread CSS would report a zero payload that still passe
   (the default `IAU_EARTH` is silently wrong, and a non-empty frame forces
   `computeOrient`); `referenceBase = "j2000"`; `zeroBase = "Earth"`. Echo the Earth frame in
   `spice_earth_frame`.
+- The empty Sun entry still auto-detects `IAU_SUN`, so `sun.computeOrient` is 1 and every
+  step calls `sxform("j2000", "IAU_sun")`. That needs the `BODY10_*` constants from
+  `pck00011.tpc`; without it CSPICE aborts the process. (The eclipse radii are hard-coded
+  in Basilisk and never read from the PCK.)
 - Eclipse: `sunInMsg` from the SPICE Sun, `addPlanetToModel(earth)`,
   `addSpacecraftToModel(scStateOutMsg)`.
 
@@ -180,8 +191,17 @@ when it is linked, so an unread CSS would report a zero payload that still passe
 
 Common: `C_SB = EP2C([w, x, y, z])` of `mount.sensor_to_body`; `mount.position_body_m` goes
 to IMU `sensorPos_B`, CSS `r_B` and albedo `r_IB_B`. **Always set the A matrix
-explicitly**: the Basilisk defaults are random walks. Outputs are scale × (true + noise +
-bias), then quantised (IMU only), then clipped.
+explicitly**: the defaults differ per module (IMU gyroscope, magnetometer and CSS default
+to a random walk; the IMU accelerometer to white noise). Pass matrices and vectors as NumPy
+arrays or nested lists, never scalars: the SWIG Eigen typemaps reject a scalar. The `0`, `I`
+and `[b, b, b]` in `sensors.proto` comments are shorthand for `np.zeros((3, 3))`,
+`np.eye(3)` and a 3-vector. Outputs are scale × (true + noise + bias), then quantised (IMU
+only), then clipped.
+
+Every module's required input messages must be linked, or `InitializeSimulation` raises
+`BasiliskError`: IMU (both modules) and CSS `scStateInMsg` / `stateInMsg` from
+`scStateOutMsg`; albedo `spacecraftStateInMsg` from `scStateOutMsg` and `sunPositionInMsg`
+from the SPICE Sun planet state; plus the per-sensor links below.
 
 **IMU** (`imuSensor.ImuSensor`):
 - bsk 2.11.1 seeds the gyroscope and accelerometer from one `RNGSeed`, so build two modules
@@ -193,16 +213,20 @@ bias), then quantised (IMU only), then clipped.
   `setErrorBounds*`: it is the same Gauss-Markov bound.
 - The first firing writes an empty message (`NominalReady` is false); send it with the
   measurement unset, which Argus reports as Unavailable.
-- `AccelPlatform` includes the lever-arm terms dω/dt × r + ω × (ω × r), so it is zero in
-  free fall only at the centre of mass without rotation.
+- `AccelPlatform` includes the lever-arm terms dω/dt × r + ω × (ω × r): in free fall it is
+  zero at the centre of mass, or anywhere on a non-rotating body.
 
 **Magnetometer** (`magnetometer.Magnetometer`):
-- `dcm_SB`, `senNoiseStd = [σ] * 3`, `setAMatrix(0)`, `walkBounds = 0`, `senBias`,
-  `scaleFactor`, `maxOutput = +R`, `minOutput = −R`.
+- `dcm_SB`, `senNoiseStd = [σ] * 3`, `setAMatrix(np.zeros((3, 3)))`,
+  `walkBounds = [0.0, 0.0, 0.0]`, `senBias`, `scaleFactor`, `maxOutput = +R`,
+  `minOutput = −R`.
 - `stateInMsg` from `scStateOutMsg`; `magInMsg` from `MagneticFieldWMM.envOutMsgs[k]`, set up
-  with `configureWMMFile(<bsk supportData>/MagneticField/WMM2025.COF)`, `epochInMsg` from
-  the run epoch, `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses
-  WMM2025 only.
+  with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
+  `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses WMM2025 only.
+- `WMM2025.COF` is not in the `bsk` wheel (its `supportData` is pruned, and
+  `dataFetcher.get_path` downloads it on first use). Pin it like the kernels: a local file
+  with its SHA-256 listed in the kernel-set manifest, checked before the build, and never
+  downloaded during ConfigureRun.
 - Noise is not seedable in bsk 2.11.1 (§3). Until the team patches upstream or adds seeded
   noise in the service, ConfigureRun rejects `noise_std_tesla > 0`.
 

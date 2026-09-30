@@ -48,7 +48,7 @@ message SpacecraftConfiguration {
   double mass_kg = 1;
   // hub.IHubPntBc_B, about the centre of mass, body axes.
   Matrix3 inertia_body_kg_m2 = 2;
-  // hub.sigma_BNInit = EP2MRP([w, x, y, z]).
+  // hub.sigma_BNInit = EP2MRP(np.array([w, x, y, z])); a list fails when w < 0.
   Quaternion initial_body_to_j2000 = 3;
   // hub.omega_BN_BInit: body relative to J2000, body axes.
   Vector3 initial_angular_velocity_body_rad_per_s = 4;

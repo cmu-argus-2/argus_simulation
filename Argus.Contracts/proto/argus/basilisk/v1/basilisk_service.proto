@@ -56,6 +56,7 @@ message ResetRequest {
 }
 
 message ResetResponse {
+  // Echo of the request.
   string run_id = 1;
 }
 
@@ -70,7 +71,9 @@ message StepRequest {
 }
 
 message StepResponse {
+  // Echo of the request.
   string run_id = 1;
+  // Echo of the request.
   uint64 sequence = 2;
   // CurrentSimNanos; every message below was written at this time.
   uint64 sim_time_ns = 3;
@@ -80,8 +83,9 @@ message StepResponse {
   BasiliskPlanetState earth = 5;
   // spiceInterface.planetStateOutMsgs[sun].
   BasiliskPlanetState sun = 6;
-  // eclipse.eclipseOutMsgs[0].shadowFactor: 1 sunlit, 0 umbra. Required; optional only so that
-  // an unset value is detectable instead of reading as umbra.
+  // eclipse.eclipseOutMsgs[0] illuminationFactor (deprecated alias shadowFactor): 1 sunlit,
+  // 0 umbra. Required; optional only so that an unset value is detectable instead of reading as
+  // umbra.
   optional double spacecraft_shadow_factor = 7;
   // One per sensor whose period divides sim_time_ns.
   repeated BasiliskSensorSample sensor_samples = 8;
