@@ -1,7 +1,7 @@
 namespace Argus.Simulation.Core
 {
     // Renderer-neutral description of one exposure. Unity is one possible implementation.
-    // TODO(D5): add the Sun direction from the snapshot's EnvironmentState for lighting.
+    // TODO(D5): add the Sun direction from the SimulationState's EnvironmentState for lighting.
     public readonly struct RenderRequest
     {
         public RenderRequest(

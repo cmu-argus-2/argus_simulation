@@ -3,7 +3,7 @@ using System;
 namespace Argus.Simulation.Core
 {
     // Deterministic closed-loop session used by in-process agents and future transport adapters.
-    // TODO(D7, G1): Step returns controller-visible observations instead of truth snapshots; add
+    // TODO(D7, G1): Step returns controller-visible observations instead of truth states; add
     // Reset(seed, scenario), a command log for the recorder (D6), actuator-limit validation,
     // authority and heartbeat. Serving it to agents and HIL is headless/Host GatewayServer.
     // Also open: letting command k be computed from observation k (target-architecture §11).
@@ -19,7 +19,7 @@ namespace Argus.Simulation.Core
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         }
 
-        public event Action<SimulationSnapshot> SnapshotProduced;
+        public event Action<SimulationState> StateProduced;
 
         public bool IsInitialized => _engine.IsInitialized;
         public long NextSequence => _nextSequence;
@@ -46,12 +46,12 @@ namespace Argus.Simulation.Core
             _nextSimulationTimeSeconds = 0.0;
         }
 
-        public SimulationSnapshot Step()
+        public SimulationState Step()
         {
             return Step(ActuatorCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
         }
 
-        public SimulationSnapshot Step(ActuatorCommandSet commands)
+        public SimulationState Step(ActuatorCommandSet commands)
         {
             EnsureInitialized();
             if (!commands.IsValid ||
@@ -67,21 +67,21 @@ namespace Argus.Simulation.Core
                 _nextSequence,
                 _nextSimulationTimeSeconds,
                 commands);
-            if (!_engine.TryStep(input, out SimulationSnapshot snapshot) ||
-                !snapshot.IsValid ||
-                snapshot.RunId != _configuration.RunId ||
-                snapshot.Spacecraft.Sequence != _nextSequence ||
-                !SimulationTime.AreSame(snapshot.Spacecraft.SimulationTimeSeconds, _nextSimulationTimeSeconds) ||
-                !SimulationTime.AreSame(snapshot.AppliedCommands.ApplyAtSimulationTimeSeconds, _nextSimulationTimeSeconds))
+            if (!_engine.TryStep(input, out SimulationState state) ||
+                !state.IsValid ||
+                state.RunId != _configuration.RunId ||
+                state.Spacecraft.Sequence != _nextSequence ||
+                !SimulationTime.AreSame(state.Spacecraft.SimulationTimeSeconds, _nextSimulationTimeSeconds) ||
+                !SimulationTime.AreSame(state.AppliedCommands.ApplyAtSimulationTimeSeconds, _nextSimulationTimeSeconds))
             {
                 throw new InvalidOperationException(
-                    $"Simulation backend '{_engine.BackendName}' failed to produce a valid snapshot.");
+                    $"Simulation backend '{_engine.BackendName}' failed to produce a valid state.");
             }
 
             _nextSequence++;
             _nextSimulationTimeSeconds = _nextSequence * _configuration.FixedStepSeconds;
-            SnapshotProduced?.Invoke(snapshot);
-            return snapshot;
+            StateProduced?.Invoke(state);
+            return state;
         }
 
         private void EnsureInitialized()

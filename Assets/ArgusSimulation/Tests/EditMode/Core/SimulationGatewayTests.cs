@@ -11,8 +11,8 @@ namespace Argus.Simulation.Tests
         {
             SimulationGateway gateway = BuildGateway(0.25);
 
-            SimulationSnapshot first = gateway.Step();
-            SimulationSnapshot second = gateway.Step();
+            SimulationState first = gateway.Step();
+            SimulationState second = gateway.Step();
 
             Assert.That(first.Spacecraft.Sequence, Is.EqualTo(0));
             Assert.That(first.Spacecraft.SimulationTimeSeconds, Is.EqualTo(0.0));
@@ -23,7 +23,7 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
-        public void Step_PreservesAppliedControllerCommandInSnapshot()
+        public void Step_PreservesAppliedControllerCommandInState()
         {
             SimulationGateway gateway = BuildGateway(0.1);
             ActuatorCommandSet commands = new ActuatorCommandSet(
@@ -33,13 +33,13 @@ namespace Argus.Simulation.Tests
                 new Vector3d(0.02, 0.0, -0.01),
                 new Vector3d(0.0, 0.0, 0.0));
 
-            SimulationSnapshot snapshot = gateway.Step(commands);
+            SimulationState state = gateway.Step(commands);
 
-            Assert.That(snapshot.IsValid, Is.True);
+            Assert.That(state.IsValid, Is.True);
             Assert.That(
-                snapshot.AppliedCommands.ReactionWheelTorqueBodyNewtonMeters,
+                state.AppliedCommands.ReactionWheelTorqueBodyNewtonMeters,
                 Is.EqualTo(commands.ReactionWheelTorqueBodyNewtonMeters));
-            Assert.That(snapshot.DynamicsBackend, Is.EqualTo("analytic-circular-orbit"));
+            Assert.That(state.DynamicsBackend, Is.EqualTo("analytic-circular-orbit"));
         }
 
         [Test]
@@ -50,7 +50,7 @@ namespace Argus.Simulation.Tests
             gateway.Step();
 
             gateway.Reset();
-            SimulationSnapshot restarted = gateway.Step();
+            SimulationState restarted = gateway.Step();
 
             Assert.That(restarted.Spacecraft.Sequence, Is.EqualTo(0));
             Assert.That(restarted.Spacecraft.SimulationTimeSeconds, Is.EqualTo(0.0));

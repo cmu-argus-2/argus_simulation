@@ -48,7 +48,7 @@ flowchart LR
     Dynamics --> Basilisk[Basilisk Adapter]
     Dynamics --> Replay[Replay Backend]
 
-    Core -->|state snapshots| Unity[Unity GUI]
+    Core -->|simulation states| Unity[Unity GUI]
     Core --> Sensors[Sensor Models]
     Sensors --> Gateway
 
@@ -84,7 +84,7 @@ flowchart LR
 4. The core validates the command and advances a fixed interval.
 5. Sensor models sample the resulting state.
 6. The gateway returns the next observation and termination/status information.
-7. Unity receives decimated snapshots independently and cannot block the loop.
+7. Unity receives decimated states independently and cannot block the loop.
 
 This mode can run faster or slower than real time and is the default for training.
 
@@ -97,8 +97,8 @@ Only one controller has actuator authority during a run.
 
 ### 5.3 Replay mode
 
-Recorded snapshots, sensor frames, commands, and images are played back without an
-active controller. Unity uses the same snapshot contract as a live run.
+Recorded states, sensor frames, commands, and images are played back without an
+active controller. Unity uses the same state contract as a live run.
 
 ## 6. Core contracts
 
@@ -111,7 +111,7 @@ assembly dependency.
 - `SimulationStepInput`: target sequence/time plus actuator commands.
 - `ActuatorCommandSet`: reaction-wheel torque, magnetorquer dipole, and thruster force
   in SI units and the spacecraft body frame.
-- `SimulationSnapshot`: backend-neutral spacecraft truth, applied commands, and in Basilisk
+- `SimulationState`: backend-neutral spacecraft truth, applied commands, and in Basilisk
   runs the SPICE `EnvironmentState` and backend sensor measurements.
 - `SimulationGateway`: deterministic in-process session and future transport boundary.
 - `SensorFrame<TPayload>`: common envelope for simulated, physical, or replay sensors.
@@ -209,7 +209,7 @@ metadata alongside each frame.
 
 ## 10. Unity integration
 
-Unity consumes snapshots and commands for presentation. It may provide:
+Unity consumes states and commands for presentation. It may provide:
 
 - Cesium/NASA GIBS mission visualization;
 - spacecraft and deployable models;
@@ -219,7 +219,7 @@ Unity consumes snapshots and commands for presentation. It may provide:
 - scenario authoring and recorded-run replay.
 
 Unity should normally render at 20–30 Hz while the dynamics and sensors run at their own
-rates. The GUI interpolates presentation between snapshots. No Unity `MonoBehaviour`,
+rates. The GUI interpolates presentation between states. No Unity `MonoBehaviour`,
 `GameObject`, `Transform`, or `RenderTexture` may appear in the core contracts.
 
 ## 11. Basilisk integration
@@ -316,7 +316,7 @@ folders, is [code-organization.md](code-organization.md).
 - [x] Define versioned Protobuf schemas for the Basilisk link (gateway, stream and renderer
       schemas remain).
 - [ ] Run the core in a standalone headless process.
-- [ ] Add the Unity snapshot client and requested-frame renderer adapter.
+- [ ] Add the Unity state-stream client and requested-frame renderer adapter.
 - [ ] Add run recording and replay.
 
 ### Closed-loop integration

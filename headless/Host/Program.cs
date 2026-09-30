@@ -5,9 +5,9 @@ using Argus.Simulation.Core;
 namespace Argus.Simulation.Host
 {
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine.
-    // TODO(D6): feed every snapshot and SensorOutputSet to Core RunRecorder.
+    // TODO(D6): feed every SimulationState and SensorOutputSet to Core RunRecorder.
     // TODO(D7, G1): serve the gateway to agents and HIL through Gateway/GatewayServer.
-    // TODO(G2): stream decimated snapshots to Unity through Streaming/SnapshotStreamServer.
+    // TODO(G2): stream decimated states to Unity through Streaming/StateStreamServer.
     // TODO(G5): read the run configuration from a file instead of HostScenario.
     public static class Program
     {
@@ -70,17 +70,17 @@ namespace Argus.Simulation.Host
             for (long sequence = 0; sequence <= lastSequence; sequence++)
             {
                 cancellation.ThrowIfCancellationRequested();
-                SimulationSnapshot snapshot = gateway.Step();
-                SensorOutputSet frames = sensors.Sample(new SensorSampleContext(configuration.RunId, snapshot));
+                SimulationState simulationState = gateway.Step();
+                SensorOutputSet frames = sensors.Sample(new SensorSampleContext(configuration.RunId, simulationState));
                 frameCount += frames.Frames.Count;
 
                 if (sequence % stepsPerReport == 0)
                 {
-                    SpacecraftState state = snapshot.Spacecraft;
+                    SpacecraftState state = simulationState.Spacecraft;
                     Console.WriteLine(
                         $"t={state.SimulationTimeSeconds,8:F1} s  seq={state.Sequence,6}  " +
                         $"|r|={state.PositionEcefMeters.Magnitude / 1000.0,9:F3} km  " +
-                        $"shadow={snapshot.Environment.Value.SpacecraftShadowFactor:F3}  " +
+                        $"shadow={simulationState.Environment.Value.SpacecraftShadowFactor:F3}  " +
                         $"frames={frameCount}  overruns={engine.PacingOverrunCount}");
                 }
             }

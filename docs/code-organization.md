@@ -53,7 +53,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 |---|---|
 | Engine interfaces | `ISimulationEngine`, `ISpacecraftStateSource` |
 | Rendering interface | `IImageRenderer` |
-| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
+| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `HostScenario`, `Program` |
@@ -109,11 +109,11 @@ Core/Sensors/
     Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
     Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
 Core/Recording/RunRecorder.cs                            # TODO(D6)
-Core/Abstractions/ISimulationSnapshotSource.cs           # TODO(G2)
+Core/Abstractions/ISimulationStateSource.cs              # TODO(G2)
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
-Unity/Runtime/SnapshotStreamClient.cs                    # TODO(G2)
+Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
-headless/Host/Streaming/SnapshotStreamServer.cs          # TODO(G2)
+headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
 Argus.Basilisk/argus_basilisk/{validation,scenario,sensors,kernels,seeds}.py  # TODO(basilisk-team)

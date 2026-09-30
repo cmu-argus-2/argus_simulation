@@ -21,7 +21,7 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
 
 - Rendering is asynchronous (`RenderAsync`), but `SensorModel.TrySample` is synchronous.
   The model needs a pending-frame path and a late-frame policy (gap G3).
-- `RenderRequest` needs the Sun direction from the snapshot's environment for lighting.
+- `RenderRequest` needs the Sun direction from the state's environment for lighting.
 
 The Unity renderer that implements `IImageRenderer` will live in `Unity/Cameras/`, next to
 `CubeSatCameraRig`.

@@ -4,9 +4,9 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(D2, D4): publish whole snapshots rather than only SpacecraftState; this does not wait
-    // for the stream.
-    // TODO(G2): then become a follower of SnapshotStreamClient instead of owning the clock.
+    // TODO(D2, D4): publish whole SimulationStates rather than only SpacecraftState; this does not
+    // wait for the stream.
+    // TODO(G2): then become a follower of StateStreamClient instead of owning the clock.
     public sealed class SimulationRunner : MonoBehaviour
     {
         [SerializeField] private MonoBehaviour stateSourceComponent;

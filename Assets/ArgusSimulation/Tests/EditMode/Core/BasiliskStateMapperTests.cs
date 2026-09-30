@@ -44,13 +44,13 @@ namespace Argus.Simulation.Tests
                 1e-15);
             Assert.That(state.EarthFixedFrame, Is.EqualTo(ReferenceFrame.Itrf93));
             Assert.That(state.TimestampUtc, Is.EqualTo(Epoch));
-            SimulationSnapshot snapshot = new SimulationSnapshot(
+            SimulationState simulationState = new SimulationState(
                 "run-1",
                 "basilisk",
                 state,
                 ActuatorCommandSet.None(0, 0.0),
                 environment: environment);
-            Assert.That(snapshot.IsValid, Is.True);
+            Assert.That(simulationState.IsValid, Is.True);
         }
 
         [Test]

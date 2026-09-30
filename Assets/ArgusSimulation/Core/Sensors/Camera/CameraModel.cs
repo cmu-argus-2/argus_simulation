@@ -7,7 +7,7 @@ namespace Argus.Simulation.Core
     // - At each exposure it sends a RenderRequest to an IImageRenderer and publishes the returned
     //   ImageFrame as a SensorFrame. Rendering is asynchronous and TrySample is not, so it needs a
     //   pending-frame path and a late-frame policy (G3).
-    // - RenderRequest needs the Sun direction from the snapshot's EnvironmentState.
+    // - RenderRequest needs the Sun direction from the SimulationState's EnvironmentState.
     internal abstract class CameraModel
     {
     }

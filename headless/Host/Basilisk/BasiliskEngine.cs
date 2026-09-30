@@ -125,9 +125,9 @@ namespace Argus.Simulation.Host
             PacingOverrunCount = 0;
         }
 
-        public bool TryStep(SimulationStepInput input, out SimulationSnapshot snapshot)
+        public bool TryStep(SimulationStepInput input, out SimulationState state)
         {
-            snapshot = default;
+            state = default;
             if (!IsInitialized || !input.IsValid)
             {
                 return false;
@@ -161,7 +161,7 @@ namespace Argus.Simulation.Host
                 step,
                 environment);
             SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Sensors);
-            snapshot = new SimulationSnapshot(
+            state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
                 spacecraft,
@@ -169,9 +169,9 @@ namespace Argus.Simulation.Host
                 environment: environment,
                 sensorMeasurements: measurements);
             PacingOverrunCount = response.PacingOverrunCount;
-            if (!snapshot.IsValid)
+            if (!state.IsValid)
             {
-                throw new InvalidOperationException($"Basilisk step {input.Sequence} mapped to an invalid snapshot.");
+                throw new InvalidOperationException($"Basilisk step {input.Sequence} mapped to an invalid state.");
             }
 
             return true;

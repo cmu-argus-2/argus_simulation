@@ -77,13 +77,13 @@ namespace Argus.Simulation.Tests
                 new Quaterniond(0.0, 0.0, 0.0, 1.0),
                 new Vector3d(0.0, 0.0, 0.0),
                 ReferenceFrame.AnalyticEarthFixed);
-            SimulationSnapshot snapshot = new SimulationSnapshot(
+            SimulationState simulationState = new SimulationState(
                 "run-1",
                 "test-backend",
                 state,
                 ActuatorCommandSet.None(sequence, time),
                 sensorMeasurements: measurements);
-            return new SensorSampleContext("run-1", snapshot);
+            return new SensorSampleContext("run-1", simulationState);
         }
     }
 }

@@ -1,6 +1,6 @@
 # Argus.Contracts: cross-process schemas
 
-**Status:** v1 Basilisk link defined; gateway, snapshot-stream and renderer schemas planned
+**Status:** v1 Basilisk link defined; gateway, state-stream and renderer schemas planned
 
 Versioned Protobuf schemas for every message that crosses a process boundary. Nothing here
 is generated or compiled into a committed artifact; each consumer generates its own code.
@@ -16,7 +16,7 @@ proto/argus/
 │   └── run_configuration.proto # RunConfiguration (G5)
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
-├── stream/v1/snapshot_stream.proto   # Placeholder: host → Unity snapshot stream (G2)
+├── stream/v1/state_stream.proto      # Placeholder: host → Unity state stream (G2)
 ├── gateway/v1/gateway.proto          # Placeholder: agents and HIL link (D7, G1)
 └── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
@@ -84,7 +84,7 @@ default.
 Added with the PR that first needs them:
 
 - the gateway link for agents and HIL flight computers (observations out, commands in);
-- the decimated snapshot stream from the headless core to Unity (G2);
+- the decimated state stream from the headless core to Unity (G2);
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
   pixel buffers may use shared memory plus a metadata message (system-architecture.md §12);
 - `SensorFrame` envelopes for the recorder.

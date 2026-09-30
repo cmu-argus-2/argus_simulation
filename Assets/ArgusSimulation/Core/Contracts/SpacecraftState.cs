@@ -33,7 +33,7 @@ namespace Argus.Simulation.Core
         // Body rate relative to inertial, in body axes (Basilisk omega_BN_B).
         public Vector3d AngularVelocityBodyRadiansPerSecond { get; }
 
-        // Frame of the Ecef-named members. SimulationSnapshot requires it to be set.
+        // Frame of the Ecef-named members. SimulationState requires it to be set.
         public ReferenceFrame EarthFixedFrame { get; }
 
         public bool IsValid =>

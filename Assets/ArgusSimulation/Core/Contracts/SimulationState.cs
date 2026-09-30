@@ -1,12 +1,14 @@
 namespace Argus.Simulation.Core
 {
-    // Transport-neutral state published to Unity, agents, hardware adapters, and recorders. Deeply
+    // Everything true at one step t_k: spacecraft state, environment, backend sensor measurements
+    // and the applied commands, always delivered together so every part describes the same instant.
+    // Transport-neutral and published to Unity, agents, hardware adapters and recorders. Deeply
     // immutable, so it is safe to hand between threads.
-    public readonly struct SimulationSnapshot
+    public readonly struct SimulationState
     {
         private readonly SensorMeasurementSet _sensorMeasurements;
 
-        public SimulationSnapshot(
+        public SimulationState(
             string runId,
             string dynamicsBackend,
             SpacecraftState spacecraft,
@@ -26,7 +28,7 @@ namespace Argus.Simulation.Core
         public string DynamicsBackend { get; }
         public SpacecraftState Spacecraft { get; }
 
-        // The command applied over [t_k, t_k+1). The state at t_k was produced under snapshot k-1's
+        // The command applied over [t_k, t_k+1). The state at t_k was produced under state k-1's
         // command.
         public ActuatorCommandSet AppliedCommands { get; }
 

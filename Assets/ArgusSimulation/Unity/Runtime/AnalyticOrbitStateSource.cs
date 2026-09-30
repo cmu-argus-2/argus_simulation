@@ -5,11 +5,11 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(G2): replace ISpacecraftStateSource with a snapshot source so one structure carries
+    // TODO(G2): replace ISpacecraftStateSource with ISimulationStateSource so one structure carries
     // every state (spacecraft, environment, sensor measurements, applied commands). TryGetState keeps
-    // only snapshot.Spacecraft and drops the rest, which loses data once Basilisk is behind it. Decide
+    // only state.Spacecraft and drops the rest, which loses data once Basilisk is behind it. Decide
     // the common base contract for the state types in the same change, then rename this class (for
-    // example AnalyticSnapshotSource), keeping its .meta GUID so Foundation.unity keeps the reference.
+    // example AnalyticStateSource), keeping its .meta GUID so Foundation.unity keeps the reference.
     // This is the roadmap's "Follower runner" item (docs/target-architecture.md §10).
     public sealed class AnalyticOrbitStateSource : MonoBehaviour, ISpacecraftStateSource
     {
@@ -63,13 +63,13 @@ namespace Argus.Simulation.Unity
                 sequence,
                 simulationTimeSeconds,
                 commands);
-            if (!_engine.TryStep(input, out SimulationSnapshot snapshot))
+            if (!_engine.TryStep(input, out SimulationState simulationState))
             {
                 state = default;
                 return false;
             }
 
-            state = snapshot.Spacecraft;
+            state = simulationState.Spacecraft;
             return state.IsValid;
         }
 

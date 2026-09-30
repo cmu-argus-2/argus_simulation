@@ -20,23 +20,23 @@ namespace Argus.Simulation.Core
 
     public readonly struct SensorSampleContext
     {
-        private readonly SimulationSnapshot _snapshot;
-        private readonly bool _hasSnapshot;
+        private readonly SimulationState _state;
+        private readonly bool _hasState;
 
         public SensorSampleContext(string runId, SpacecraftState spacecraft)
         {
             RunId = runId;
             Spacecraft = spacecraft;
-            _snapshot = default;
-            _hasSnapshot = false;
+            _state = default;
+            _hasState = false;
         }
 
-        public SensorSampleContext(string runId, SimulationSnapshot snapshot)
+        public SensorSampleContext(string runId, SimulationState state)
         {
             RunId = runId;
-            Spacecraft = snapshot.Spacecraft;
-            _snapshot = snapshot;
-            _hasSnapshot = true;
+            Spacecraft = state.Spacecraft;
+            _state = state;
+            _hasState = true;
         }
 
         public string RunId { get; }
@@ -44,11 +44,11 @@ namespace Argus.Simulation.Core
 
         // Backend measurements for BackendSensorModel; empty for a state-only context.
         public SensorMeasurementSet Measurements =>
-            _hasSnapshot ? _snapshot.SensorMeasurements : SensorMeasurementSet.Empty;
+            _hasState ? _state.SensorMeasurements : SensorMeasurementSet.Empty;
 
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(RunId) &&
             Spacecraft.IsValid &&
-            (!_hasSnapshot || (_snapshot.IsValid && string.Equals(_snapshot.RunId, RunId, StringComparison.Ordinal)));
+            (!_hasState || (_state.IsValid && string.Equals(_state.RunId, RunId, StringComparison.Ordinal)));
     }
 }

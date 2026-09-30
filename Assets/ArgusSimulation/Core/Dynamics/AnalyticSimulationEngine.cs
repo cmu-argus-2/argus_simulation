@@ -2,7 +2,7 @@ using System;
 
 namespace Argus.Simulation.Core
 {
-    // Development and test fixture (D9). Commands are recorded in each snapshot but do not perturb the
+    // Development and test fixture (D9). Commands are recorded in each state but do not perturb the
     // orbit. It reports no EnvironmentState and never approximates SPICE data (D3). It ignores
     // RandomSeed, KernelSetId and Sensors.
     public sealed class AnalyticSimulationEngine : ISimulationEngine
@@ -70,21 +70,21 @@ namespace Argus.Simulation.Core
             Initialize(_configuration);
         }
 
-        public bool TryStep(SimulationStepInput input, out SimulationSnapshot snapshot)
+        public bool TryStep(SimulationStepInput input, out SimulationState state)
         {
             if (_orbit == null || !input.IsValid)
             {
-                snapshot = default;
+                state = default;
                 return false;
             }
 
-            SpacecraftState state = _orbit.Sample(input.Sequence, input.SimulationTimeSeconds);
-            snapshot = new SimulationSnapshot(
+            SpacecraftState spacecraft = _orbit.Sample(input.Sequence, input.SimulationTimeSeconds);
+            state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
-                state,
+                spacecraft,
                 input.Commands);
-            return snapshot.IsValid;
+            return state.IsValid;
         }
     }
 }

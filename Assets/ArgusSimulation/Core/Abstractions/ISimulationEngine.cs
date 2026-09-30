@@ -8,6 +8,6 @@ namespace Argus.Simulation.Core
 
         void Initialize(SimulationConfiguration configuration);
         void Reset();
-        bool TryStep(SimulationStepInput input, out SimulationSnapshot snapshot);
+        bool TryStep(SimulationStepInput input, out SimulationState state);
     }
 }

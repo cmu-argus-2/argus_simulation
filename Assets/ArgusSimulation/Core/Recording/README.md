@@ -8,7 +8,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
 
 ## Inputs
 
-- Every `SimulationSnapshot`: spacecraft truth plus `EnvironmentState` when the backend
+- Every `SimulationState`: spacecraft truth plus `EnvironmentState` when the backend
   provides it (Basilisk runs; the analytic engine reports none).
 - Every `SensorOutputSet` from `SensorManager`, including ground-truth sensors and camera
   `ImageFrame`s once cameras are sensor models. Camera frames carry their capture time;
@@ -20,7 +20,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
 ```text
 <run>/
 ├── manifest.json        # schema version, run ID, configuration, backend, kernel set, seed
-├── snapshots.jsonl      # one line per snapshot
+├── states.jsonl         # one line per SimulationState
 ├── sensors.jsonl        # one line per SensorFrame envelope (payload or file reference)
 ├── commands.jsonl       # one line per gateway command record
 └── images/<sensorId>/<sequence>.png
