@@ -42,17 +42,18 @@ types directly.
   becomes `reserved`. A breaking change goes to `v2`.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
-- **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted. For
-  scalars zero is a value; range checks reject meaningless zeros. A scalar whose zero would
-  be a plausible wrong value is declared `optional` (for example
-  `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).
+- **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the
+  one exception is `BasiliskSensorSample.measurement`, whose unset value means the sensor
+  ran without data (reported Unavailable). For scalars zero is a value; range checks reject
+  meaningless zeros. A scalar whose zero would be a plausible wrong value is declared
+  `optional` (for example `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).
 - Every field states its frame, unit and time scale, in its name and its comment.
 
 **Unit suffixes:** `_m`, `_m_per_s`, `_m_per_s2`, `_rad`, `_deg`, `_rad_per_s`, `_s`, `_ns`,
 `_kg`, `_kg_m2`, `_n`, `_n_m`, `_a_m2`, `_tesla`, `_w_per_m2`, `_per_s`, `_per_sqrt_hz`,
 `_per_sqrt_s`.
 
-**Frame tokens:** `_body`, `_sensor`, `_j2000`, `_itrf93`, `_inertial`, `_bn`.
+**Frame tokens:** `_body`, `_sensor`, `_j2000`, `_itrf93`, `_inertial`, `_planet_fixed`, `_bn`.
 
 ## Code generation (never committed)
 
@@ -60,7 +61,9 @@ types directly.
   Mapping code uses the aliases `using PbSim = Argus.Contracts.Sim.V1;` and
   `using PbBasilisk = Argus.Contracts.Basilisk.V1;` and never imports those namespaces
   unqualified, because their type names collide with Core. (`Pb` alone clashes with a
-  namespace inside Google.Protobuf.) Core and Unity never reference Protobuf or gRPC.
+  namespace inside Google.Protobuf.) Core never references Protobuf or gRPC, and Unity
+  does not yet; the planned Unity `StateStreamClient` (G2) will consume `argus.stream.v1`,
+  never `argus.basilisk.v1` (D8).
 - **Python:** `Argus.Basilisk/scripts/generate_protos.py` writes into the gitignored
   `Argus.Basilisk/generated/`.
 
@@ -85,9 +88,9 @@ Added with the PR that first needs them:
 
 - the gateway link for HIL flight computers and other external controllers (observations
   out, commands in);
-- the decimated state stream from the headless core to Unity (G2);
+- the decimated state stream from the headless core to Unity, with the host's
+  `SensorOutputSet`s (G2);
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
-  pixel buffers may use shared memory plus a metadata message (system-architecture.md §12);
-- `SensorFrame` envelopes for the recorder.
+  pixel buffers may use shared memory plus a metadata message (system-architecture.md §12).
 
 See [target-architecture.md](../docs/target-architecture.md).

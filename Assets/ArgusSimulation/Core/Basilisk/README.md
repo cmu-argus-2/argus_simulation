@@ -20,9 +20,9 @@ so Core never references Protobuf or gRPC.
 
 ## Mapping
 
-- `EnvironmentState` comes from SPICE only (D3): `q_EN` from `J20002Pfix`, Earth's rate
-  from the antisymmetric part of `J20002Pfix_dot · J20002Pfixᵀ`, and the Sun rotated into
-  ITRF93.
+- `EnvironmentState` comes from Basilisk's SPICE and eclipse outputs only (D3): `q_EN` from
+  `J20002Pfix`, Earth's rate from the antisymmetric part of `J20002Pfix_dot · J20002Pfixᵀ`,
+  the Sun rotated into ITRF93, and the shadow factor from the eclipse `illuminationFactor`.
 - `SpacecraftState` is Earth-fixed and tagged `Itrf93`:
   `r_E = q_EN (r_BN_N − r_Earth)`, `v_E = q_EN (v_BN_N − v_Earth) − ω × r_E`,
   `BodyToEcef = q_EN * q_NB`. The body rate passes through.

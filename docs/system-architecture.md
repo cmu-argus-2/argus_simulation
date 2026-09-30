@@ -3,9 +3,8 @@
 Status: foundational design and implementation baseline
 
 The agreed target design, its decisions, and the open gaps are in
-[target-architecture.md](target-architecture.md). Where the two documents differ (for
-example, Basilisk owns simulation time in Basilisk runs), the target decisions take
-precedence.
+[target-architecture.md](target-architecture.md). Where the two documents differ, the
+target decisions take precedence.
 
 ## 1. Purpose
 
@@ -22,13 +21,16 @@ changing the GUI, flight-hardware adapters, sensor contracts, or exporters.
 
 ## 2. Architectural principles
 
-1. **The simulation core owns truth and time.** Unity frame time never advances the
-   physical simulation.
+1. **The simulation, not Unity, owns truth and time.** In Basilisk runs Basilisk owns
+   simulation time (target-architecture D2), and Unity frame time never advances the run.
+   The one exception is the analytic development fixture, which `SimulationRunner` steps in
+   fixed steps from Unity frame time.
 2. **Unity is optional.** Closing the GUI must not stop a headless run.
 3. **All boundaries use explicit contracts.** Units, coordinate frames, timestamps,
    validity, sequence numbers, and source identifiers are mandatory.
-4. **Backends are replaceable.** Analytic development dynamics, Basilisk, recorded
-   trajectories, and future engines implement the same interface.
+4. **Backends are replaceable.** Analytic development dynamics, Basilisk, and future
+   engines implement the same interface. A recorded run is replayed for review (§5.3),
+   never used as a live backend (target-architecture D2).
 5. **Controllers do not talk directly to Unity.** Flight software (SIL) and flight hardware (HIL) exchange
    observations and commands through the simulation gateway.
 6. **Pixels are renderer output, not dynamics truth.** The core specifies camera pose,
@@ -38,36 +40,64 @@ changing the GUI, flight-hardware adapters, sensor contracts, or exporters.
 
 ## 3. Logical architecture
 
+Solid boxes and arrows exist on `main`. Dashed boxes and arrows are planned; a solid box
+with "(planned: …)" exists but gains that role later (as in
+[target-architecture.md §1](target-architecture.md#1-block-diagram)).
+
 ```mermaid
-flowchart LR
-    Controller[Flight Software / Flight Computer] <-->|observations and commands| Gateway[Simulation Gateway]
-    Gateway <--> Core[Headless Simulation Core]
-    Core <--> Dynamics[ISimulationEngine]
-    Dynamics --> Analytic[Analytic Backend]
-    Dynamics --> Basilisk[Basilisk Adapter]
-    Dynamics --> Replay[Replay Backend]
+flowchart TB
+    ctrl["Controllers<br/>tests (planned: flight software SIL, flight computer HIL)"]
 
-    Core -->|simulation states| Unity[Unity GUI]
-    Core --> Sensors[Sensor Models]
-    Sensors --> Gateway
+    subgraph CORE["Headless C# — Argus.Simulation.Core + headless/Host"]
+        gate["Simulation Gateway<br/>(planned: observations, command log)"]
+        subgraph ENG["ISimulationEngine"]
+            beng["BasiliskEngine (headless/Host)<br/>gRPC client"]
+            ana["Analytic engine<br/>development and test fixture"]
+        end
+        sim[/"SimulationState<br/>spacecraft, EnvironmentState (Basilisk runs),<br/>backend sensor measurements, applied commands"/]
+        sens["Sensor models — SensorManager<br/>Core and backend sensor models<br/>(planned: camera models)"]
+        rec["Run Recorder"]
+    end
 
-    Sensors -->|RenderRequest| Renderer[IImageRenderer]
-    Renderer --> UnityRenderer[Unity Renderer]
-    Renderer --> GibsRenderer[NASA GIBS / Reference Provider]
-    Renderer --> ReplayRenderer[Recorded Image Provider]
-    Renderer -->|ImageFrame| Sensors
+    bsk["Basilisk service — Argus.Basilisk<br/>dynamics, sensors, actuators, SPICE (spiceInterface)"]
+    naif[("NAIF kernels<br/>one pinned set")]
 
-    Core --> Recorder[Run Recorder / Exporter]
-    Gateway --> Recorder
+    subgraph UNITY["Unity app (optional)"]
+        viz["Visualization<br/>Cesium globe with NASA GIBS imagery, dashboard<br/>(planned: follows the decimated state stream)"]
+        rend["Camera renderer — CubeSatCameraRig<br/>(planned: IImageRenderer)"]
+    end
+
+    data[("Datasets")]
+
+    ctrl -->|"actuator commands"| gate
+    gate -.->|"observations"| ctrl
+    gate -->|"validated commands (TryStep)"| ENG
+    beng -.->|"actuator commands (gRPC + Protobuf v1)"| bsk
+    bsk -.->|"state, SPICE environment, sensor messages"| beng
+    naif -.->|"kernels"| bsk
+    ENG --> sim
+    sim -->|"Sample"| sens
+    sim -->|"states (StateProduced)"| viz
+    sim -.->|"states"| rec
+    sens -.->|"controller-visible sensor frames"| gate
+    sens -.->|"all sensor frames"| rec
+    sens -.->|"RenderRequest"| rend
+    rend -.->|"ImageFrame"| sens
+    gate -.->|"command log"| rec
+    rec -.-> data
+    UNITY -->|"PNG + JSONL (NavigationEpisodeExporter, to retire)"| data
+
+    classDef planned stroke-dasharray: 5 5
+    class rec,bsk,naif planned
 ```
 
 ## 4. Component ownership
 
 | Component | Owns | Must not own |
 |---|---|---|
-| Simulation core | simulation clock, run lifecycle, truth state, scheduling | Unity objects or rendering |
-| Dynamics backend | orbit, attitude, forces, torques, actuator dynamics | GUI and transport protocols |
-| Sensor models | cadence, calibration, noise, failures, standardized frames | controller logic |
+| Simulation core | simulation clock (except in Basilisk runs, where Basilisk owns it: target-architecture D2), run lifecycle, truth state, scheduling | Unity objects or rendering |
+| Dynamics backend | orbit, attitude, forces, torques, actuator dynamics; in Basilisk runs also simulation time, the SPICE environment and Basilisk-modelled sensors (D2, D3, D10) | GUI and transport protocols |
+| Sensor models | cadence, calibration, noise, failures, standardized frames; Basilisk-modelled sensors keep their physics and cadence in Basilisk (D10) | controller logic |
 | Simulation gateway | controller authority, validation, transport adapters, synchronization | orbital physics |
 | Unity GUI | visualization, controls, interpolation, replay presentation | authoritative truth or clock |
 | Image renderer | rasterization from a `RenderRequest` | camera scheduling or dynamics |
@@ -86,11 +116,17 @@ flowchart LR
 7. Unity receives decimated states independently and cannot block the loop.
 
 This mode can run faster or slower than real time and is the default for SIL and tests.
+On `main`, `SimulationGateway` exposes `Reset()` and `Step(commands)` and returns truth
+`SimulationState`s; `Reset(seed, scenario)`, observation returns (D7) and the decimated
+Unity stream (G2) are planned ([target-architecture.md §4](target-architecture.md#4-run-modes)).
+Computing command k from observation k, as steps 2-3 assume, needs an `ISimulationEngine`
+and gateway change (target-architecture §11).
 
 ### 5.2 Hardware-in-the-loop mode
 
 The same contracts are adapted to the flight computer's real interfaces, for example
-Ethernet, UART, CAN, SPI, or I2C. The core runs against a monotonic wall-clock schedule.
+Ethernet, UART, CAN, SPI, or I2C. Basilisk paces the run against wall-clock time
+(`clockSynch`, target-architecture D2).
 Late, duplicate, or invalid commands are recorded and rejected according to policy.
 Only one controller has actuator authority during a run.
 
@@ -218,8 +254,9 @@ Unity consumes states and commands for presentation. It may provide:
 - scenario authoring and recorded-run replay.
 
 Unity should normally render at 20–30 Hz while the dynamics and sensors run at their own
-rates. The GUI interpolates presentation between states. No Unity `MonoBehaviour`,
-`GameObject`, `Transform`, or `RenderTexture` may appear in the core contracts.
+rates. The GUI should interpolate presentation between states; today it applies each state
+as it arrives. No Unity `MonoBehaviour`, `GameObject`, `Transform`, or `RenderTexture` may
+appear in the core contracts.
 
 ## 11. Basilisk integration
 
@@ -231,16 +268,18 @@ when selected.
 Recommended topology:
 
 ```text
-Argus gateway/orchestrator
-    <-> generated gRPC/Protobuf contracts
-Basilisk Python service
+BasiliskEngine (headless/Host, stepped by the gateway)
+    <-> generated gRPC/Protobuf contracts (Argus.Contracts v1)
+Basilisk Python service (Argus.Basilisk), with SPICE through spiceInterface
     <-> Basilisk processes, tasks, modules, and messages
 ```
 
 Keep Argus extensions outside the Basilisk source tree. Do not expose Basilisk-specific
 message classes to Unity or flight-hardware adapters. Mapping tests must cover
 units, ECI/ECEF conversion, attitude convention, timestamp conversion, resets, and
-command application.
+command application. `BasiliskStateMapperTests` covers frames, attitude and time today;
+reset and command-application tests are still missing (no backend applies commands yet,
+target-architecture G1).
 
 ## 12. Transport strategy
 
@@ -254,8 +293,9 @@ command application.
 | Large images on one host | shared memory plus metadata message |
 | Datasets and replay | versioned files/manifests |
 
-REST is not part of the inner control loop. Protobuf schemas will be the cross-language
-source of truth when the first out-of-process adapter is implemented.
+REST is not part of the inner control loop. Protobuf schemas in `Argus.Contracts/` are the
+cross-language source of truth; v1 covers the Basilisk link, and the gateway, stream and
+renderer schemas are placeholders.
 
 ## 13. Safety, validation, and observability
 
@@ -273,16 +313,19 @@ source of truth when the first out-of-process adapter is implemented.
 
 ```text
 Assets/ArgusSimulation/Core/Abstractions/  Replaceable service interfaces
+Assets/ArgusSimulation/Core/Basilisk/      Internal Basilisk-to-Argus mapping
 Assets/ArgusSimulation/Core/Contracts/     State, command, and configuration DTOs
-Assets/ArgusSimulation/Core/Dynamics/      Dynamics implementations
+Assets/ArgusSimulation/Core/Dynamics/      Analytic engine (development and test fixture)
 Assets/ArgusSimulation/Core/Imaging/       Camera and render contracts
+Assets/ArgusSimulation/Core/Math/          Vectors, quaternions, MRPs, 3x3 matrices
+Assets/ArgusSimulation/Core/Recording/     Run recorder (placeholder)
 Assets/ArgusSimulation/Core/Runtime/       Headless orchestration
 Assets/ArgusSimulation/Core/Sensors/       Sensor contracts and models
 Assets/ArgusSimulation/Unity/              GUI, Cesium, render, and runtime adapters
 Assets/ArgusSimulation/Editor/Scene/       Scene/bootstrap tooling
 Assets/ArgusSimulation/Tests/              Mirrored core and Unity tests
 docs/                              Architecture and interface documentation
-headless/                          dotnet build of Core and the EditMode tests
+headless/                          dotnet build of Core and the EditMode tests; Host/ with BasiliskEngine
 
 Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
 Argus.Basilisk/                    Python Basilisk service with SPICE (skeleton + brief)
@@ -313,7 +356,9 @@ folders, is [code-organization.md](code-organization.md).
 
 - [x] Define versioned Protobuf schemas for the Basilisk link (gateway, stream and renderer
       schemas remain).
-- [ ] Run the core in a standalone headless process.
+- [ ] Run the core in a standalone headless process (`headless/Host` runs the gateway,
+      `BasiliskEngine` and the P0 sensors; the recorder, gateway server and Unity state
+      stream remain, target-architecture G2).
 - [ ] Add the Unity state-stream client and requested-frame renderer adapter.
 - [ ] Add run recording and replay.
 
@@ -335,11 +380,12 @@ The analytic backend is only a deterministic integration fixture. It records act
 commands but does not yet apply them to orbit or attitude. The only Argus-computed
 non-image sensor is a truth-backed, noise-free body-rate model. The IMU (rate and specific
 force), magnetometer and light sensors are Basilisk-sourced models that publish only what
-the Basilisk service measures, and that service is still a skeleton. GPS, power, thermal,
-radio, radiation and star-tracker models are unavailable until their physics and hardware
-profiles are implemented. The v1 Basilisk-link schemas and the `BasiliskEngine` client
-exist; the Basilisk service, the other network transports and the physical hardware
-adapters are not implemented yet.
+the Basilisk service measures, and that service is still a skeleton. GNSS, fine Sun sensor,
+star-tracker, power, thermal, radio and radiation models are unavailable until their physics
+and hardware profiles are implemented, and the camera models are placeholders. The v1
+Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service, the run
+recorder, the other network transports and the physical hardware adapters are not
+implemented yet.
 
 ## References
 

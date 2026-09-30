@@ -1,16 +1,17 @@
 # Argus Simulator — Target Architecture
 
-Status: agreed target design. Baseline: `main` at `7d3469d` (2026-09-29) plus the Phase 1
-structure change that adds this document (§10).
+Status: agreed target design. Baseline: `main` at `da9475b` (2026-09-30), which includes the
+Phase 1 structure change that added this document and the other items marked done in §10.
 
 This document records where the simulator is going, the decisions behind it, and the gaps
 still open. [system-architecture.md](system-architecture.md) holds the original principles
-and the current contracts; where the two differ, for example on who owns the clock in
-Basilisk runs, the decisions here take precedence. [code-organization.md](code-organization.md)
+and the current contracts; where the two differ, the decisions here take precedence.
+[code-organization.md](code-organization.md)
 is the authoritative class and folder map.
 
 Legend used throughout: **main** means the code exists on `main`; **planned** means it
-does not exist yet.
+is not implemented yet (some planned pieces hold an inert placeholder file; see
+[code-organization.md](code-organization.md#placeholders-and-todos)).
 
 ## 1. Block diagram
 
@@ -29,7 +30,7 @@ flowchart TB
         globe["Globe view + visualization<br/>Cesium, GIBS layers, CubeSat pose, orbit trail"]
         camr["Camera rig — CubeSatCameraRig<br/>(planned: IImageRenderer)"]
         runner["SimulationRunner<br/>clock (planned: follower)"]
-        src["State source<br/>AnalyticStateSource"]
+        src["State source<br/>AnalyticStateSource<br/>(planned: StateStreamClient)"]
         sens["Sensor runtime<br/>SimulationSensorRuntime"]
         dash["Mission dashboard<br/>SimulatorDashboard"]
         exporter["NavigationEpisodeExporter<br/>(retired once the recorder replaces it)"]
@@ -77,10 +78,10 @@ flowchart TB
     bsk -.- spice
     spice -.->|loads| naif
     dyn -.->|states| rec
+    dyn -.->|decimated state stream, G2| src
     smod -.->|all sensor frames| rec
     smod -.->|controller-visible frames| gate
     gate -.->|command log| rec
-    gate -.->|actuator commands| beng
     hil <-.->|observations / commands, gRPC or HIL| gate
     rec -.-> data
 
@@ -97,7 +98,7 @@ flowchart TB
 | SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | Publishes whole `SimulationState`s from its `ISimulationStateSource`; clock for the step-driven analytic source (fixed 0.1 s steps from Unity frame time × time scale) | Follower: broadcasts states received from the headless core | main (follower planned) |
 | State source | `Unity/Runtime/AnalyticStateSource.cs` (`IStepDrivenStateSource`) | Wraps the analytic engine in the Unity process and publishes whole states | `StateStreamClient` (`ISimulationStateSource`) for Basilisk runs; `BasiliskEngine` runs in the headless core (G2). The analytic source stays for development | main (stream client planned) |
 | Sensor runtime | `Unity/Sensors/` | Temporary bridge feeding each state to a Core `SensorManager` | Moves into the headless core (G2); Unity only displays frames | main (temporary) |
-| Mission dashboard | `Unity/UI/` | Truth + sensor status from `SimulationState`, orbit and attitude nudges, GT imagery date, capture | Same, listing sensors from received frames; nudges become engine commands | main (received sensor list (G2) and nudges as commands (G1) planned) |
+| Mission dashboard | `Unity/UI/` | Truth from `SimulationState`, body-rate status from the sensor runtime, camera status from the rig, fixed text for the other sensors, orbit and attitude nudges, GT imagery date, capture | Same, listing sensors from received frames; nudges become engine commands | main (received sensor list (G2) and nudges as commands (G1) planned) |
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | Retired once the recorder covers what its consumers read (D6) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a `SimulationState` with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
@@ -143,7 +144,7 @@ sequenceDiagram
 
     loop Every Basilisk step (paced by clockSynch)
         B->>E: state, SPICE, sensor messages (gRPC)
-        E->>S: SimulationState + mapped sensor frames
+        E->>S: SimulationState with mapped sensor measurements (D10)
         E-->>U: decimated state stream
         S->>U: RenderRequest when an exposure is due
         U-->>S: ImageFrame (late-frame policy, G3)
@@ -219,11 +220,11 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 
 | # | Gap | Notes |
 |---|---|---|
-| G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. |
-| G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. |
+| G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state; `BasiliskEngine` sends it as `StepRequest.command`, and the v1 link defines a non-zero command as UNIMPLEMENTED until actuators exist. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. |
+| G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. `headless/Host` already runs the gateway, `BasiliskEngine` and the P0 sensors; the recorder, the gateway server and the state stream (`StateStreamServer`, `StateStreamClient`, `state_stream.proto`) are placeholders. |
 | G3 | Camera timing in real time | A Cesium render can take longer than a step. Needs a late-frame policy: stamp with capture time, drop, or mark stale. |
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. None of it has run against a real Basilisk service yet. |
-| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. |
+| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` still builds it in code (`HostScenario`, placeholder values); reading it from a run configuration file is planned. |
 
 **Not built yet:** the Basilisk service behind the v1 schemas (it is a skeleton, so
 `BasiliskEngine` is unverified against real Basilisk); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
@@ -248,6 +249,11 @@ hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are i
   both poles.
 - Attitude nudges change what the cameras render but not the recorded `BodyToEcef`, so
   exported images can disagree with the exported attitude.
+- The analytic fixture's body rate is not `omega_BN_B` (§6): `CircularOrbitModel` reports
+  (0, n, 0), with n the mean motion, while its velocity-aligned body frame turns at about
+  (0, −n, yaw rate). The ideal body-rate sensor in development runs reports the fixture's value.
+- `SensorModel<T>` accumulates its sample period, so its schedule drifts from the step
+  clock; the 10 Hz ideal body-rate sensor in development runs first misses a frame near 5094 s.
 
 ## 8. Teammate branches that diverge from these decisions
 
@@ -306,8 +312,8 @@ Argus.Hardware/            HIL adapters                                        p
 
 **Phase 2: contract seams (one PR each)**
 
-- [x] Frame tags, MRP → quaternion math (quaternion → MRP is `EP2MRP` in the service), and
-      the shared run configuration (G4, G5).
+- [x] Frame tags, MRP → quaternion math (quaternion → MRP is `EP2MRP` in the planned
+      service, `Argus.Basilisk/README.md` §4), and the shared run configuration (G4, G5).
 - [x] `EnvironmentState` in the `SimulationState` and the full state in `SensorSampleContext`
       (D4).
 - [x] P0 sensor contracts (IMU, magnetometer, light sensor) and backend-sourced sensor
@@ -342,8 +348,8 @@ the gateway.
 ## 11. Open questions
 
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
-  (D2) The service supports `real_time_factor` 0 (unpaced); whether lockstep runs use it
-  stays open.
+  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service is
+  still a skeleton); whether lockstep runs use it stays open.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6)
 - Does `SpacecraftState` stay canonical ITRF93 with conversion only at the Basilisk

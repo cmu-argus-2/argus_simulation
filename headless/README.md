@@ -15,8 +15,9 @@ Nothing here is copied from `Assets/`. The projects compile the Unity source in 
 | `Host/Argus.Simulation.Host.csproj` | `headless/Host/**/*.cs` plus client code generated from `Argus.Contracts/proto` (net8.0 exe) | `Argus.Simulation.Host` |
 
 The assembly names match the Unity assemblies and the `InternalsVisibleTo` entries in
-`Core/AssemblyInfo.cs`, which expose the internal `Core/Basilisk` mapping to the host and
-the EditMode tests. `Directory.Build.props` pins C# 9 to match Unity 6.
+`Assets/ArgusSimulation/Core/AssemblyInfo.cs`, which expose the internal `Core/Basilisk`
+mapping to the host and the EditMode tests. `Directory.Build.props` pins C# 9 to match
+Unity 6.
 
 ## Run
 
@@ -45,6 +46,7 @@ with no service), 2 on bad arguments.
   `noEngineReferences`, so Unity rejects `UnityEngine` usage in Core as well.
 - EditMode tests reference only Core. Tests that need Unity belong in
   `Assets/ArgusSimulation/Tests/PlayMode/`.
-- gRPC and Protobuf appear only in `Host/Basilisk/`. Generated code is `Access="Internal"`,
-  lives in `obj/` and is never committed. `BasiliskEngine` owns the client and the request
-  and response envelopes; `BasiliskProtoMapper` converts payloads to and from Core types.
+- gRPC and Protobuf appear only in `Host/` (today only `Host/Basilisk/` uses them).
+  Generated code is `Access="Internal"`, lives in `obj/` and is never committed.
+  `BasiliskEngine` owns the client and the request and response envelopes;
+  `BasiliskProtoMapper` converts payloads to and from Core types.

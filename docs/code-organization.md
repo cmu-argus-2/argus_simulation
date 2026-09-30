@@ -1,9 +1,10 @@
 # Argus Simulator Code Organization
 
 This is the authoritative map for class placement. Class namespaces remain
-`Argus.Simulation.Core` and `Argus.Simulation.Unity`; folders describe ownership and
-dependencies rather than creating deeply nested namespaces. The target design these folders
-work toward is in [target-architecture.md](target-architecture.md).
+`Argus.Simulation.Core` and `Argus.Simulation.Unity` (`Argus.Simulation.Host`,
+`Argus.Simulation.Editor` and `Argus.Simulation.Tests` for the headless host, editor tools and
+tests); folders describe ownership and dependencies rather than creating deeply nested namespaces.
+The target design these folders work toward is in [target-architecture.md](target-architecture.md).
 
 ## Source tree
 
@@ -40,7 +41,11 @@ Assets/ArgusSimulation/
     └── PlayMode/UI/              # Unity integration and dashboard tests
 
 headless/                         # dotnet build of Core and the EditMode tests (no Unity)
+├── Core/, Tests/                 # csproj files that compile Core and Tests/EditMode
 └── Host/                         # Headless host: BasiliskEngine gRPC client, P0 scenario
+    ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
+    ├── Gateway/                  # GatewayServer (placeholder)
+    └── Streaming/                # StateStreamServer (placeholder)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_basilisk/, kernel_sets/, scripts/)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
@@ -74,17 +79,24 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 
 - Put a class in `Core` only when it compiles without Unity, Cesium, or editor APIs. The
   Core asmdef sets `noEngineReferences`, and `headless/` must still build.
-- Put cross-process messages and stable DTOs in `Core/Contracts`.
-- Put an interface in `Core/Abstractions` when multiple implementations are expected.
-- Put physical sensor behavior in `Core/Sensors`; Unity may supply only a rendering or
-  geometry adapter.
+- Put stable simulation DTOs in `Core/Contracts`; sensor and camera DTOs stay with their owners in
+  `Core/Sensors` and `Core/Imaging`. Cross-process messages are the Protobuf schemas in
+  `Argus.Contracts/`, which mirror Core types.
+- Put a replaceable backend or service interface in `Core/Abstractions` when multiple
+  implementations are expected; sensor interfaces (`ISensor`, `ISensorFrame`) stay in `Core/Sensors`.
+- Put Argus-computed sensor behavior in `Core/Sensors`. Sensors that Basilisk models keep their
+  physics and cadence in Basilisk, and their `BackendSensorModel<T>` only publishes the mapped
+  measurements (D10). Unity may supply only a rendering or geometry adapter.
 - Put camera calibration and frame formats in `Core/Imaging`; put Unity rasterization in
   `Unity/Cameras`.
-- Put gRPC and Protobuf code only in `headless/Host`, with generated code `Access=Internal`.
-  Core never references Google.Protobuf or Grpc, and Basilisk-native Core types are
-  internal. Future transports go in top-level packages, never in Unity UI classes.
+- Put C# gRPC and Protobuf code in `headless/Host`, with generated code `Access=Internal`; the
+  planned exceptions are the Unity ends of `argus/stream/v1` (`StateStreamClient`, G2) and
+  `argus/render/v1` (D5, G3). Core never references Google.Protobuf or Grpc, and
+  Basilisk-native Core types are internal. Future transports go in `headless/Host`, those Unity
+  endpoints or top-level packages such as `Argus.Hardware/`, never in Unity UI classes.
 - Keep one public top-level class per file, except a small enum that exists only to
-  describe the adjacent contract.
+  describe the adjacent contract. `SensorContexts.cs`, `SensorDefinition.cs` and `SensorFrame.cs`
+  are exceptions: each holds two public non-enum sensor types.
 - Tests mirror the responsibility of the production code they verify.
 
 ## Placeholders and TODOs

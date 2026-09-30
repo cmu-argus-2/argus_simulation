@@ -16,7 +16,7 @@ See [code organization](docs/code-organization.md) for the class and folder map,
 
 ## Configure the Cesium token
 
-Open `.env` in this directory and fill in the token:
+Copy `.env.example` to `.env` in this directory and fill in the token:
 
 ```dotenv
 CESIUM_ION_ACCESS_TOKEN=your_token_here
@@ -39,10 +39,10 @@ UNITY_EDITOR="/Applications/Unity/Hub/Editor/6000.6.0f1/Unity.app/Contents/MacOS
 When Unity opens for the first time:
 
 1. Wait for the Cesium package and other dependencies to finish importing.
-2. Select **Argus Simulation > Create Foundation Scene**.
+2. Open `Assets/ArgusSimulation/Scenes/Foundation.unity`. It is tracked in Git; **Argus Simulation > Create Foundation Scene** regenerates it and overwrites the tracked file.
 3. Press the **Play** button.
 
-The generated scene is saved at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
+The scene is at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 
 NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-06-21`, a date with daylight imagery up to the north pole. To change it, use the **SETTINGS** panel in the top toolbar, pass `-gt-date YYYY-MM-DD` and `-gt-layer LAYER` on the command line, or select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
 

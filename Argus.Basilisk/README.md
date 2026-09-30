@@ -70,7 +70,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
      `InitializeSimulation`, and CSPICE aborts the whole process outside coverage.
-3. Verify the kernels (§8), build the simulation (§7 to §9) and call
+3. Verify the kernels (§8), build the simulation (§4 to §9) and call
    `InitializeSimulation()`. Run no step. A `BasiliskError` raised while loading kernels
    is FAILED_PRECONDITION.
 4. Store the request, end READY, and fill every `ConfigureRunResponse` field; the client
