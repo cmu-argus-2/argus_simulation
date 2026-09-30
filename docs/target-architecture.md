@@ -101,7 +101,7 @@ flowchart TB
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | Retired once the recorder covers what its consumers read (D6) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a snapshot with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
-| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used only by tests | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (unused; observations planned) |
+| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; observations planned) |
 | BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; unverified against a real service, which is a skeleton | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | main (client; service planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
@@ -163,7 +163,8 @@ sequenceDiagram
 The controller calls `Reset(seed, scenario)` and then `Step(commands)` on the gateway, which
 advances the engine by a fixed interval and returns observations. On `main`,
 `SimulationGateway` already exposes `Initialize`, `Reset()` and `Step(commands)` over the
-analytic engine, but it returns truth `SimulationSnapshot`s and only tests use it.
+analytic engine in the tests and over `BasiliskEngine` in `headless/Host`, but it returns
+truth `SimulationSnapshot`s.
 `Reset(seed, scenario)` and observation-only returns are planned (§5, D7). Whether Basilisk
 also runs lockstep (faster than real time, paced by the caller) is an open question (§11).
 
@@ -219,11 +220,11 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the snapshot. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine snapshot's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. |
 | G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated snapshot stream. |
 | G3 | Camera timing in real time | A Cesium render can take longer than a step. Needs a late-frame policy: stamp with capture time, drop, or mark stale. |
-| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; the engine that calls them does not. |
+| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. None of it has run against a real Basilisk service yet. |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. |
 
-**Not built yet:** `BasiliskEngine` and the Basilisk service behind the v1 schemas (the
-service is a skeleton); camera models; Argus-computed sensor models (GNSS, star tracker);
+**Not built yet:** the Basilisk service behind the v1 schemas (it is a skeleton, so
+`BasiliskEngine` is unverified against real Basilisk); camera models; Argus-computed sensor models (GNSS, star tracker);
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are in
 `Argus.Basilisk/kernel_sets/`).
@@ -302,7 +303,8 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
 
 **Phase 2: contract seams (one PR each)**
 
-- [x] Frame tags, MRP ↔ quaternion math, and the shared run configuration (G4, G5).
+- [x] Frame tags, MRP → quaternion math (quaternion → MRP is `EP2MRP` in the service), and
+      the shared run configuration (G4, G5).
 - [x] `EnvironmentState` in the snapshot and the full snapshot in `SensorSampleContext`
       (D4).
 - [x] P0 sensor contracts (IMU, magnetometer, light sensor) and backend-sourced sensor

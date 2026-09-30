@@ -106,11 +106,13 @@ The first implementation lives in `Assets/ArgusSimulation/Core` and has no Unity
 assembly dependency.
 
 - `ISimulationEngine`: initializes, resets, and advances a replaceable backend.
-- `SimulationConfiguration`: run ID, UTC epoch, and fixed simulation step.
+- `SimulationConfiguration`: run ID, UTC epoch and fixed simulation step, plus the optional
+  Basilisk inputs: initial orbit, spacecraft, random seed, kernel-set ID and sensors.
 - `SimulationStepInput`: target sequence/time plus actuator commands.
 - `ActuatorCommandSet`: reaction-wheel torque, magnetorquer dipole, and thruster force
   in SI units and the spacecraft body frame.
-- `SimulationSnapshot`: backend-neutral spacecraft truth and applied commands.
+- `SimulationSnapshot`: backend-neutral spacecraft truth, applied commands, and in Basilisk
+  runs the SPICE `EnvironmentState` and backend sensor measurements.
 - `SimulationGateway`: deterministic in-process session and future transport boundary.
 - `SensorFrame<TPayload>`: common envelope for simulated, physical, or replay sensors.
 - `RenderRequest`, `CameraIntrinsics`, `ImageFrame`, and `IImageRenderer`: the
@@ -222,9 +224,9 @@ rates. The GUI interpolates presentation between snapshots. No Unity `MonoBehavi
 
 ## 11. Basilisk integration
 
-`BasiliskEngine` will implement `ISimulationEngine` behind a Python process boundary.
-It will translate Argus commands into Basilisk messages and translate Basilisk state and
-sensor messages into Argus contracts. Basilisk becomes authoritative for simulation time
+`BasiliskEngine` (`headless/Host`) implements `ISimulationEngine` as the gRPC client of the
+Python Basilisk service (`Argus.Basilisk/`, a skeleton today). It sends Argus commands and
+maps Basilisk state and sensor messages into Argus contracts through `Core/Basilisk`. Basilisk becomes authoritative for simulation time
 when selected.
 
 Recommended topology:
@@ -311,7 +313,8 @@ folders, is [code-organization.md](code-organization.md).
 
 ### Runtime separation
 
-- [ ] Define versioned Protobuf schemas.
+- [x] Define versioned Protobuf schemas for the Basilisk link (gateway, stream and renderer
+      schemas remain).
 - [ ] Run the core in a standalone headless process.
 - [ ] Add the Unity snapshot client and requested-frame renderer adapter.
 - [ ] Add run recording and replay.
@@ -324,19 +327,22 @@ folders, is [code-organization.md](code-organization.md).
 
 ### High-fidelity backends
 
-- [ ] Implement `BasiliskEngine` and mapping/contract tests.
+- [x] Implement the `BasiliskEngine` client and mapping tests.
+- [ ] Implement the Basilisk service and validate `BasiliskEngine` against it.
 - [ ] Validate the analytic and Basilisk trajectories against reference cases.
 - [ ] Add synchronized camera rendering and NASA-image comparison metrics.
 
 ## 16. Current limitations
 
 The analytic backend is only a deterministic integration fixture. It records actuator
-commands but does not yet apply them to orbit or attitude. The only implemented
-non-image sensor is a truth-backed, noise-free body-rate model; GPS, accelerometer,
-magnetometer, power, thermal, radio, radiation, and star-tracker models are unavailable
-until their physics and hardware profiles are implemented. Network transports, Protobuf
-definitions, the Basilisk adapter, and physical hardware adapters are planned but are
-not implemented yet.
+commands but does not yet apply them to orbit or attitude. The only Argus-computed
+non-image sensor is a truth-backed, noise-free body-rate model. The IMU (rate and specific
+force), magnetometer and light sensors are Basilisk-sourced models that publish only what
+the Basilisk service measures, and that service is still a skeleton. GPS, power, thermal,
+radio, radiation and star-tracker models are unavailable until their physics and hardware
+profiles are implemented. The v1 Basilisk-link schemas and the `BasiliskEngine` client
+exist; the Basilisk service, the other network transports and the physical hardware
+adapters are not implemented yet.
 
 ## References
 

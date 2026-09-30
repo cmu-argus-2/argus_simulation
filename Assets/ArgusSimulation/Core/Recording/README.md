@@ -8,7 +8,8 @@ write-only archive. It never feeds data back into the run and never blocks the s
 
 ## Inputs
 
-- Every `SimulationSnapshot`: spacecraft truth plus the planned `EnvironmentState`.
+- Every `SimulationSnapshot`: spacecraft truth plus `EnvironmentState` when the backend
+  provides it (Basilisk runs; the analytic engine reports none).
 - Every `SensorOutputSet` from `SensorManager`, including ground-truth sensors and camera
   `ImageFrame`s once cameras are sensor models. Camera frames carry their capture time;
   late frames follow the late-frame policy (gap G3).

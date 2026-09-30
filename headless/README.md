@@ -45,5 +45,6 @@ with no service), 2 on bad arguments.
   `noEngineReferences`, so Unity rejects `UnityEngine` usage in Core as well.
 - EditMode tests reference only Core. Tests that need Unity belong in
   `Assets/ArgusSimulation/Tests/PlayMode/`.
-- gRPC and Protobuf appear only in `Host/`. Generated code is `Access="Internal"`, lives in
-  `obj/` and is never committed; `BasiliskProtoMapper` is the only file that touches it.
+- gRPC and Protobuf appear only in `Host/Basilisk/`. Generated code is `Access="Internal"`,
+  lives in `obj/` and is never committed. `BasiliskEngine` owns the client and the request
+  and response envelopes; `BasiliskProtoMapper` converts payloads to and from Core types.

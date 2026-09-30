@@ -1,6 +1,6 @@
 # Core/Basilisk: Basilisk-to-Argus mapping
 
-**Diagram block:** BasiliskEngine · **Assembly:** `Argus.Simulation.Core` · **Status:** mapping built; engine in `headless/Host` (planned)
+**Diagram block:** BasiliskEngine · **Assembly:** `Argus.Simulation.Core` · **Status:** mapping built; used by `BasiliskEngine` in `headless/Host` (not yet run against a real Basilisk service)
 
 This folder holds the transport-free half of `BasiliskEngine`: plain C# mirrors of the
 Basilisk messages Argus reads, and the conversions from them to Argus contracts. The
@@ -15,7 +15,7 @@ so Core never references Protobuf or gRPC.
 | `BasiliskSpacecraftState` | `SCStatesMsgPayload` subset: `r_BN_N`, `v_BN_N`, `sigma_BN`, `omega_BN_B` |
 | `BasiliskPlanetState` | `SpicePlanetStateMsgPayload` subset: position, velocity, `J20002Pfix`, `J20002Pfix_dot` |
 | `BasiliskSensorSample` | One sensor output, already an Argus measurement type |
-| `BasiliskStepState` | Everything one step reports; mirrors `StepResponse` field for field |
+| `BasiliskStepState` | The `StepResponse` state fields; `BasiliskEngine` checks `run_id` and `sequence` itself |
 | `BasiliskStateMapper` | `MapEnvironment`, `MapSpacecraft`, `MapMeasurements` |
 
 ## Mapping
