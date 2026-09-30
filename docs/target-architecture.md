@@ -48,7 +48,7 @@ flowchart TB
             bsk["Basilisk service<br/>dynamics, sensors, actuators"]
             spice["SPICE<br/>spiceInterface module"]
         end
-        agents["Agents + flight computer<br/>agent SDK, HIL adapters"]
+        agents["Flight computer (HIL)<br/>Argus.Hardware adapters"]
     end
 
     naif[("NAIF kernels<br/>one pinned set")]
@@ -106,7 +106,7 @@ flowchart TB
 | Run recorder | `Core/Recording/` | — | The single export route for run data: states, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
 | Basilisk service + SPICE | `Argus.Basilisk/` | Basilisk-free gRPC skeleton (every RPC UNIMPLEMENTED), pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | skeleton on main; Basilisk/SPICE team implements |
-| Agents + flight computer | `Argus.Agent/`, `Argus.Hardware/` | README placeholders | Agent SDK and HIL hardware adapters talking to the gateway | planned |
+| Flight computer (HIL) | `Argus.Hardware/` | README placeholder | HIL hardware adapters talking to the gateway | planned |
 | Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` with a placeholder P0 scenario | Hosts the headless core process (G2): recorder, gateway server, Unity state stream | main (host skeleton) |
 
 `Unity/Export/CesiumReferenceMapExporter.cs` is an offline tool that renders reference-map
@@ -288,7 +288,7 @@ Assets/ArgusSimulation/
 headless/                  dotnet build of Core + EditMode tests; Host/        main
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
 Argus.Basilisk/            Basilisk service with SPICE                         skeleton + brief
-Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        planned (README)
+Argus.Hardware/            HIL adapters                                        planned (README)
 ```
 
 ## 10. Roadmap
@@ -332,7 +332,7 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
 - [ ] Orbit and attitude nudges become engine commands, so rendered images match the
       recorded state.
 
-Beyond Phase 3: the agent SDK and HIL adapters (`Argus.Agent/`, `Argus.Hardware/`) against
+Beyond Phase 3: the HIL adapters (`Argus.Hardware/`) against
 the gateway.
 
 ## 11. Open questions

@@ -43,7 +43,6 @@ headless/                         # dotnet build of Core and the EditMode tests 
 └── Host/                         # Headless host: BasiliskEngine gRPC client, P0 scenario
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_basilisk/, kernel_sets/, scripts/)
-Argus.Agent/                      # Training environment and agent SDK (README placeholder)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
 ```
 
@@ -118,7 +117,7 @@ headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
 Argus.Basilisk/argus_basilisk/{validation,scenario,sensors,kernels,seeds}.py  # TODO(basilisk-team)
 Argus.Basilisk/scripts/fetch_kernels.py                  # TODO(spice-team)
-Argus.Agent/README.md, Argus.Hardware/README.md          # TODO(D7, G1)
+Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
 
 When a placeholder is implemented, make it public if it is API, register it where it is used,

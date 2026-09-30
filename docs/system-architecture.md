@@ -289,7 +289,6 @@ Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
 Argus.Basilisk/                    Python Basilisk service with SPICE (skeleton + brief)
 
 Future external packages/services:
-Argus.Agent/                       Training environment/SDK (README placeholder)
 Argus.Hardware/                    Flight-computer protocol adapters (README placeholder)
 ```
 

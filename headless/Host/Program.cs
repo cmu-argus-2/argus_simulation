@@ -6,7 +6,7 @@ namespace Argus.Simulation.Host
 {
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine.
     // TODO(D6): feed every SimulationState and SensorOutputSet to Core RunRecorder.
-    // TODO(D7, G1): serve the gateway to agents and HIL through Gateway/GatewayServer.
+    // TODO(D7, G1): serve the gateway to HIL and external controllers through Gateway/GatewayServer.
     // TODO(G2): stream decimated states to Unity through Streaming/StateStreamServer.
     // TODO(G5): read the run configuration from a file instead of HostScenario.
     public static class Program

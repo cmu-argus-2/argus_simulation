@@ -17,7 +17,7 @@ proto/argus/
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
 ├── stream/v1/state_stream.proto      # Placeholder: host → Unity state stream (G2)
-├── gateway/v1/gateway.proto          # Placeholder: agents and HIL link (D7, G1)
+├── gateway/v1/gateway.proto          # Placeholder: HIL and controller link (D7, G1)
 └── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
 
@@ -83,7 +83,8 @@ default.
 
 Added with the PR that first needs them:
 
-- the gateway link for agents and HIL flight computers (observations out, commands in);
+- the gateway link for HIL flight computers and other external controllers (observations
+  out, commands in);
 - the decimated state stream from the headless core to Unity (G2);
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
   pixel buffers may use shared memory plus a metadata message (system-architecture.md §12);

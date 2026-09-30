@@ -1,6 +1,6 @@
 # Argus.Hardware: flight-computer adapters (placeholder)
 
-**Diagram block:** Agents + flight computer · **Process:** outside Unity · **Status:** not started
+**Diagram block:** Flight computer (HIL) · **Process:** outside Unity · **Status:** not started
 
 TODO(D7, G1): hardware-in-the-loop adapters that connect a physical flight computer to the
 gateway link (`argus/gateway/v1`): sensor observations out in the flight software's formats,
