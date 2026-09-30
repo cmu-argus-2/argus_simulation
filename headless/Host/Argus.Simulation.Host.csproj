@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless simulation host: runs the gateway and sensors over BasiliskEngine, the gRPC client
+       of the Argus.Basilisk service. The only project that references gRPC or Protobuf; generated
+       code is internal and never committed. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <AssemblyName>Argus.Simulation.Host</AssemblyName>
+    <RootNamespace>Argus.Simulation.Host</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.36.2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.84.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.84.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="$(ArgusContractsDir)proto/argus/**/*.proto"
+              ProtoRoot="$(ArgusContractsDir)proto"
+              GrpcServices="Client"
+              Access="Internal" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Core/Argus.Simulation.Core.Headless.csproj" />
+  </ItemGroup>
+
+</Project>

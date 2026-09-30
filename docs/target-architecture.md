@@ -35,11 +35,11 @@ flowchart TB
         exporter["NavigationEpisodeExporter<br/>(retired once the recorder replaces it)"]
     end
 
-    subgraph CORE["Core — Argus.Simulation.Core (headless C#)"]
+    subgraph CORE["Headless C# — Argus.Simulation.Core + headless/Host"]
         dyn["Dynamics<br/>ISimulationEngine → SimulationSnapshot<br/>+ EnvironmentState (Basilisk runs)"]
         smod["Sensor models<br/>SensorManager, SensorModel&lt;T&gt;<br/>(planned: CameraModel)"]
         gate["Simulation gateway<br/>Reset / Step over ISimulationEngine<br/>(planned: observations, command log)"]
-        beng["BasiliskEngine<br/>ISimulationEngine adapter"]
+        beng["BasiliskEngine (headless/Host)<br/>gRPC client over Core/Basilisk mapping"]
         rec["Run recorder<br/>single export route for run data"]
     end
 
@@ -71,9 +71,9 @@ flowchart TB
     exporter --> data
 
     smod -.->|RenderRequest / ImageFrame| camr
-    beng -.->|implements| dyn
-    beng -.->|mapped sensor frames| smod
-    beng -.->|gRPC + Protobuf| bsk
+    beng -->|implements| dyn
+    beng -->|SensorMeasurementSet in snapshot| smod
+    beng -.->|gRPC + Protobuf v1| bsk
     bsk -.- spice
     spice -.->|loads| naif
     dyn -.->|snapshots| rec
@@ -85,7 +85,7 @@ flowchart TB
     rec -.-> data
 
     classDef planned stroke-dasharray: 5 5
-    class beng,rec,bsk,spice,agents,naif planned
+    class rec,bsk,spice,agents,naif planned
 ```
 
 ## 2. Blocks
@@ -102,12 +102,12 @@ flowchart TB
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a snapshot with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
 | Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth snapshots; used only by tests | Live link for agents and HIL: controller-visible sensor frames out, commands in, command log to the recorder | main (unused; observations planned) |
-| BasiliskEngine | `Core/Basilisk/`, `headless/Host/` | Internal mapping from Basilisk state, SPICE output and sensor messages to Argus contracts | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | mapping on main (engine planned) |
+| BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; unverified against a real service, which is a skeleton | Builds snapshots from Basilisk state + SPICE; maps sensor messages; carries commands | main (client; service planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: snapshots, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
 | Basilisk service + SPICE | `Argus.Basilisk/` | Basilisk-free gRPC skeleton (every RPC UNIMPLEMENTED), pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | skeleton on main; Basilisk/SPICE team implements |
 | Agents + flight computer | `Argus.Agent/`, `Argus.Hardware/` | — | Agent SDK and HIL hardware adapters talking to the gateway | planned |
-| Headless build | `headless/` | Builds Core and runs the EditMode tests with `dotnet` (Phase 1) | Also hosts the headless core process (G2) | main (host planned) |
+| Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` with a placeholder P0 scenario | Hosts the headless core process (G2): recorder, gateway server, Unity snapshot stream | main (host skeleton) |
 
 `Unity/Export/CesiumReferenceMapExporter.cs` is an offline tool that renders reference-map
 tiles. It is not run data and sits outside D6.
@@ -283,7 +283,7 @@ Assets/ArgusSimulation/
 ├── Unity/                 Cameras, Cesium, Export, Runtime, Sensors, UI, Visualization   main
 ├── Editor/Scene/          Scene builder                                       main
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
-headless/                  dotnet build of Core + EditMode tests               main (Phase 1)
+headless/                  dotnet build of Core + EditMode tests; Host/        main
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
 Argus.Basilisk/            Basilisk service with SPICE                         skeleton + brief
 Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        planned
@@ -323,7 +323,9 @@ Argus.Agent/, Argus.Hardware/   Agent SDK, HIL adapters                        p
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
 - [ ] `Argus.Basilisk/` service with SPICE (skeleton, kernel manifest and implementation
       brief on main; the Basilisk/SPICE team implements it).
-- [ ] `BasiliskEngine`, the headless core process (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
+- [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
+- [ ] The headless core process serving the recorder, the gateway and the Unity stream
+      (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
 - [ ] Orbit and attitude nudges become engine commands, so rendered images match the
       recorded state.
 
@@ -333,12 +335,17 @@ the gateway.
 ## 11. Open questions
 
 - Does lockstep agent training run Basilisk faster than real time, or only the analytic
-  fixture? (D2)
+  fixture? (D2) The service supports `real_time_factor` 0 (unpaced); whether training uses
+  it stays open.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6)
 - Does `SpacecraftState` stay canonical ITRF93 with conversion only at the Basilisk
   boundary, or also carry inertial fields? (G4) Proposed: canonical Earth-fixed plus the
   frame tag; inertial quantities are recoverable from `EnvironmentState` (q and ω).
-- Where does the gRPC client for `BasiliskEngine` live: inside Core, or in a separate
-  headless assembly that Core only abstracts? (D1) Proposed: `headless/Host`, over the
-  internal `Core/Basilisk` mapping, so Core never references Protobuf or gRPC.
+- Where does the gRPC client for `BasiliskEngine` live? (D1) Answered on `main`:
+  `headless/Host`, with internal generated code, over the internal `Core/Basilisk`
+  mapping, so Core never references Protobuf or gRPC.
+- Gateway ordering: today `Step(k)` carries command k and returns snapshot k, so command k
+  cannot be computed from observation k. The closed loop in system-architecture §5.1
+  (Reset → observation 0, Step(command k) → observation k+1) needs an `ISimulationEngine`
+  and gateway change; the v1 wire can stay as it is. (D7, G1)

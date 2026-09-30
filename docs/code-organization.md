@@ -40,6 +40,7 @@ Assets/ArgusSimulation/
     └── PlayMode/UI/              # Unity integration and dashboard tests
 
 headless/                         # dotnet build of Core and the EditMode tests (no Unity)
+└── Host/                         # Headless host: BasiliskEngine gRPC client, P0 scenario
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared) and basilisk/v1 (Basilisk link)
 Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_basilisk/, kernel_sets/, scripts/)
 ```
@@ -53,6 +54,7 @@ Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_bas
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationSnapshot`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
+| Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `HostScenario`, `Program` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
 | Implemented sensor models | `IdealBodyRateSensorModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
@@ -77,7 +79,9 @@ Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_bas
   geometry adapter.
 - Put camera calibration and frame formats in `Core/Imaging`; put Unity rasterization in
   `Unity/Cameras`.
-- Put network transports in future top-level packages, not in Unity UI classes.
+- Put gRPC and Protobuf code only in `headless/Host`, with generated code `Access=Internal`.
+  Core never references Google.Protobuf or Grpc, and Basilisk-native Core types are
+  internal. Future transports go in top-level packages, never in Unity UI classes.
 - Keep one public top-level class per file, except a small enum that exists only to
   describe the adjacent contract.
 - Tests mirror the responsibility of the production code they verify.
@@ -95,9 +99,6 @@ Core/Sensors/Camera/
 
 Core/Recording/
 └── RunRecorder.cs                # Snapshots, every SensorFrame, gateway command log
-
-headless/Host/
-└── BasiliskEngine.cs             # ISimulationEngine gRPC client over Core/Basilisk mapping
 
 Unity/Cameras/
 └── UnityImageRenderer.cs         # IImageRenderer implementation
