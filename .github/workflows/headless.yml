@@ -1,0 +1,50 @@
+name: Headless CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Replace outdated runs when another commit lands on the same pull request.
+concurrency:
+  group: headless-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  headless:
+    name: Headless build, tests and schemas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Protobuf compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler libprotobuf-dev
+
+      - name: Build headless host
+        run: dotnet build headless/Host/Argus.Simulation.Host.csproj --configuration Release
+
+      - name: Run headless EditMode tests
+        run: dotnet test headless/Tests/Argus.Simulation.Tests.EditMode.Headless.csproj --configuration Release
+
+      - name: Compile all contract schemas
+        shell: bash
+        run: |
+          # Check every schema, including placeholders and files unused by the host.
+          # /usr/include supplies the standard google/protobuf imports on Ubuntu.
+          mapfile -d '' schemas < <(find Argus.Contracts/proto -type f -name '*.proto' -print0)
+          test "${#schemas[@]}" -gt 0
+          protoc -I Argus.Contracts/proto -I /usr/include \
+            --descriptor_set_out="$RUNNER_TEMP/argus-contracts.pb" "${schemas[@]}"
