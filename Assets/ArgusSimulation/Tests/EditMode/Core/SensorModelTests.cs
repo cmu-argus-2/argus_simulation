@@ -26,6 +26,41 @@ namespace Argus.Simulation.Tests
             Assert.That(early.Frames, Is.Empty);
             Assert.That(second.TryGetFrame("imu.gyroscope", out SensorFrame<Vector3d> secondFrame), Is.True);
             Assert.That(secondFrame.Sequence, Is.EqualTo(1));
+
+            // A jump skips expired sampling slots, but emitted frame sequences stay consecutive.
+            SensorOutputSet afterJump = manager.Sample(Context(3, 2.0));
+            Assert.That(afterJump.Frames.Count, Is.EqualTo(1));
+            Assert.That(afterJump.Frames[0].Sequence, Is.EqualTo(2));
+            Assert.That(afterJump.Frames[0].SimulationTimeSeconds, Is.EqualTo(2.0));
+            Assert.That(manager.Sample(Context(4, 2.25)).Frames, Is.Empty);
+            SensorOutputSet next = manager.Sample(Context(5, 2.5));
+            Assert.That(next.Frames.Count, Is.EqualTo(1));
+            Assert.That(next.Frames[0].Sequence, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void SensorModel_TenHertzProducesOneFramePerStepForSixtyThousandSteps()
+        {
+            const long stepNanoseconds = 100_000_000;
+            SensorManager manager = new SensorManager();
+            manager.Register(new IdealBodyRateSensorModel("imu.gyroscope", "imu_link", 0.1));
+            manager.Reset(new SensorResetContext("run-1", DateTimeOffset.UnixEpoch, 42));
+
+            // Derive time from integer ticks so the test clock cannot share the scheduler's
+            // accumulation error. This run extends beyond the old failure near 5094 s.
+            for (long step = 0; step < 60_000; step++)
+            {
+                double sampleTime = (step * stepNanoseconds) / 1_000_000_000.0;
+                SensorSampleContext context = Context(step, sampleTime);
+                SensorOutputSet output = manager.Sample(context);
+
+                Assert.That(output.Frames.Count, Is.EqualTo(1), $"Missing frame at step {step}.");
+                Assert.That(output.Frames[0].Sequence, Is.EqualTo(step));
+                Assert.That(output.Frames[0].SimulationTimeSeconds, Is.EqualTo(sampleTime));
+
+                // Rechecking the same authoritative timestamp must not emit another frame.
+                Assert.That(manager.Sample(context).Frames, Is.Empty, $"Duplicate frame at step {step}.");
+            }
         }
 
         [Test]
