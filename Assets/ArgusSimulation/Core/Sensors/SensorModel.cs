@@ -8,6 +8,8 @@ namespace Argus.Simulation.Core
 
         private bool _isReset;
         private long _nextSequence;
+        // Scheduled slots can advance past skipped deadlines independently of emitted frames.
+        private long _nextSampleIndex;
         private double _nextSampleTimeSeconds;
         private string _runId;
 
@@ -32,6 +34,7 @@ namespace Argus.Simulation.Core
 
             _runId = context.RunId;
             _nextSequence = 0;
+            _nextSampleIndex = 0;
             _nextSampleTimeSeconds = 0.0;
             _isReset = true;
             OnReset(context);
@@ -72,12 +75,13 @@ namespace Argus.Simulation.Core
                 payload);
 
             _nextSequence++;
-            // TODO(sensors): accumulating the period drifts against the integer-nanosecond clock
-            // (first missed 10 Hz frame near 5094 s); derive the next sample time from a sample
-            // count instead.
+            // Anchor every deadline to simulation time zero instead of accumulating rounding
+            // error. If a step crosses several deadlines, emit only for the supplied state and
+            // advance to the next future slot; intermediate states are not available to measure.
             do
             {
-                _nextSampleTimeSeconds += Definition.SamplePeriodSeconds;
+                _nextSampleIndex++;
+                _nextSampleTimeSeconds = _nextSampleIndex * Definition.SamplePeriodSeconds;
             }
             while (_nextSampleTimeSeconds <= sampleTime + TimeToleranceSeconds);
 
