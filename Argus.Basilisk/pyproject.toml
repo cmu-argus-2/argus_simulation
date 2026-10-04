@@ -16,6 +16,11 @@ dependencies = [
 
 [project.optional-dependencies]
 basilisk = ["bsk==2.11.1"]
+test = ["pytest>=7,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.setuptools]
 packages = ["argus_basilisk"]
