@@ -23,10 +23,11 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
   only after reconciling it with D2, D3 and D8: SPICE only through `spiceInterface`, no
   standalone SPICE worker or offline tables, and live runs rather than recording replay.
 
-Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call placeholder modules
+Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call modules
 that the team fills in: `validation.py` (§3), `scenario.py` (§4 to §8), `sensors.py` (§9),
-`kernels.py` (§8) and `seeds.py` (§10). `scripts/fetch_kernels.py` is the SPICE team's
-fetch/verify tool (§8). Each carries a `TODO(basilisk-team)` or `TODO(spice-team)`.
+`kernels.py` (§8) and `seeds.py` (§10). The local kernel verifier is implemented;
+the other modules remain placeholders. `scripts/fetch_kernels.py` is the SPICE team's
+fetch/verify tool (§8), still marked `TODO(spice-team)`.
 
 ## 2. Install and run
 
@@ -182,6 +183,64 @@ when it is linked, so an unread CSS would report a zero payload that still passe
 transposed `J20002Pfix` / `J20002Pfix_dot` pair, whose Earth rate points along ITRF93 −z.
 
 ## 8. SPICE and kernels
+
+### Local verifier (BSK-1 / #14)
+
+`argus_basilisk.kernels.load_kernel_set(kernel_set_id, *, data_dir=None)` reads and
+verifies local files only. The default data directory is this `Argus.Basilisk/` directory,
+independent of the process working directory; tests can supply a temporary directory.
+The module uses only the Python standard library, never imports Basilisk or the fetch tool,
+and does not download or load SPICE data.
+
+It returns a `KernelSet` with:
+
+- `kernel_set_id`: the requested ID, also checked against the manifest's `id`;
+- `kernel_paths`: a tuple of absolute `Path` objects in manifest order. The scenario can
+  pass `[str(path) for path in result.kernel_paths]` to `addKernelPaths`;
+- `coverage_utc`: `KernelCoverage(start, end, reconstructed_end)`, all timezone-aware UTC
+  datetimes, with `start <= reconstructed_end <= end`. These are manifest declarations,
+  not independently measured SPICE coverage; request/step range checks belong to validation;
+- `support_files`: an immutable mapping from each support filename to its verified absolute
+  path, separate from `kernel_paths`.
+
+`KernelSetError` exposes `code` and `details`. The future servicer maps these with
+`context.abort(grpc.StatusCode[error.code], error.details)`: invalid IDs give
+`INVALID_ARGUMENT`, absent manifests give `NOT_FOUND`, and unreadable/malformed manifests,
+missing files or SHA-256 mismatches give `FAILED_PRECONDITION`. Errors name the relevant
+manifest, field or file. Filenames must be local basenames; paths resolving outside the
+kernel directory, duplicates and kernel/support overlap are rejected.
+
+**Proposed support-file format, pending agreement with SPICE-1 (#12):** an optional
+`support_files` array whose entries use `file`, `urls`, `sha256`, and `validity`. The verifier
+uses `file` and `sha256`; fetching and validity metadata interpretation remain with their
+respective consumers. An omitted array means no support files. Example shape:
+
+```text
+"support_files": [
+  {
+    "file": "WMM2025.COF",
+    "urls": [<pinned download URL>],
+    "sha256": <64-character SHA-256>,
+    "validity": {"start": "2025-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"}
+  }
+]
+```
+
+This is a schema proposal, not a downloadable manifest. The existing immutable
+`argus-2026-09-25.json` is unchanged. A set adding WMM needs a new ID and verified hash.
+The validity boundary semantics must be agreed with #12 and the magnetometer validator.
+`ConfigureRun` remains a skeleton until BSK-3 (#16) wires these modules together.
+
+Run the synthetic, offline verifier tests from `Argus.Basilisk/`:
+
+```bash
+python -m pytest tests -q
+```
+
+Install the `test` extra to obtain pytest (`pip install -e '.[test]'`); Basilisk and
+generated protobuf modules are not needed by these tests.
+
+### Scenario integration (planned)
 
 - Kernel manifests live in `kernel_sets/<id>.json`; the first is `argus-2026-09-25`. An ID
   is immutable: changing any file needs a new ID. `coverage_utc` bounds every run.
