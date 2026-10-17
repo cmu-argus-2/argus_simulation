@@ -4,7 +4,8 @@
 [target architecture](../docs/target-architecture.md), decision D1 and gap G2). This
 folder builds the same source files outside Unity, so that rule can be checked with plain
 `dotnet` and the core tests can run without a Unity licence, and it holds the headless
-simulation host. No CI runs it yet.
+simulation host. [Headless CI](../.github/workflows/headless.yml) checks the build,
+tests and schemas on every pull request and push to `main`.
 
 Nothing here is copied from `Assets/`. The projects compile the Unity source in place:
 
@@ -18,6 +19,21 @@ The assembly names match the Unity assemblies and the `InternalsVisibleTo` entri
 `Assets/ArgusSimulation/Core/AssemblyInfo.cs`, which expose the internal `Core/Basilisk`
 mapping to the host and the EditMode tests. `Directory.Build.props` pins C# 9 to match
 Unity 6.
+
+## Continuous integration
+
+GitHub Actions runs the **Headless build, tests and schemas** job on Ubuntu 24.04
+with .NET 8 and `protoc`. It builds the host (including Core and generated client
+code), runs the headless EditMode tests, and compiles every `.proto` file under
+`Argus.Contracts/proto` into a temporary descriptor set. Any failed command fails
+the job, including a failing test. Generated output is not committed.
+
+The workflow also supports manual runs from the Actions tab. New commits replace
+outdated runs for the same pull request. It does not launch the Basilisk service
+or Unity; Basilisk service tests and Unity PlayMode tests are separate work.
+
+To require a passing result before merge, select **Headless build, tests and
+schemas** as a required status check in the repository's branch rules.
 
 ## Run
 
