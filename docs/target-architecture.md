@@ -252,8 +252,6 @@ hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are i
 - The analytic fixture's body rate is not `omega_BN_B` (§6): `CircularOrbitModel` reports
   (0, n, 0), with n the mean motion, while its velocity-aligned body frame turns at about
   (0, −n, yaw rate). The ideal body-rate sensor in development runs reports the fixture's value.
-- `SensorModel<T>` accumulates its sample period, so its schedule drifts from the step
-  clock; the 10 Hz ideal body-rate sensor in development runs first misses a frame near 5094 s.
 
 ## 8. Teammate branches that diverge from these decisions
 
