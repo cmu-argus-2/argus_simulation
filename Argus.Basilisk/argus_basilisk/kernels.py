@@ -147,6 +147,18 @@ def _verify_files(
     return verified_paths
 
 
+def _resolve_directory(path: Path, *, strict: bool) -> Path:
+    """Resolve a directory, mapping symlink loops and other OS errors to
+    FAILED_PRECONDITION. Python < 3.13 raises RuntimeError for loops."""
+    try:
+        resolved = path.resolve(strict=strict)
+        if strict and not resolved.is_dir():
+            _fail(f"{path}: expected a directory")
+    except (OSError, RuntimeError) as exc:
+        _fail(f"{path}: cannot resolve directory: {exc}")
+    return resolved
+
+
 def _read_manifest(manifest_path: Path, kernel_set_id: str) -> dict:
     """Read the JSON manifest and check that it describes the requested set."""
     try:
@@ -224,7 +236,7 @@ def load_kernel_set(
     if data_dir is None:
         root = Path(__file__).resolve().parents[1]
     else:
-        root = Path(data_dir).resolve()
+        root = _resolve_directory(Path(data_dir), strict=False)
 
     manifest_path = root / "kernel_sets" / f"{kernel_set_id}.json"
     manifest_data = _read_manifest(manifest_path, kernel_set_id)
@@ -236,7 +248,7 @@ def load_kernel_set(
     )
 
     # 4. Verify SPICE kernels in manifest order.
-    kernels_directory = (root / "kernels").resolve()
+    kernels_directory = _resolve_directory(root / "kernels", strict=True)
     kernel_files = _verify_files(
         manifest_data.get("kernels"),
         kernels_directory,

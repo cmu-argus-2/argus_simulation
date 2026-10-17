@@ -155,6 +155,22 @@ def test_symlink_outside_kernels(manifest):
         load_kernel_set("test-set", data_dir=root)
 
 
+@pytest.mark.parametrize("damage", ["loop", "missing"])
+def test_bad_kernels_directory(manifest, damage):
+    root, data = manifest
+    write_manifest(root, data)
+    path = root / "kernels"
+    for child in path.iterdir():
+        child.unlink()
+    path.rmdir()
+    if damage == "loop":
+        path.symlink_to(path)
+    with pytest.raises(KernelSetError, match="cannot resolve directory") as error:
+        load_kernel_set("test-set", data_dir=root)
+    assert error.value.code == "FAILED_PRECONDITION"
+    assert str(path) in error.value.details
+
+
 def test_offline_and_basilisk_free_from_another_cwd(manifest):
     root, data = manifest
     write_manifest(root, data)
