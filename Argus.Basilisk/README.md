@@ -71,6 +71,19 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
      `InitializeSimulation`, and CSPICE aborts the whole process outside coverage.
+
+   `argus_basilisk.validation` implements this step (BSK-2, #15) without importing
+   Basilisk. `validate_configure_run(request, coverage_utc=..., wmm_validity=...,
+   supported_sensor_kinds=...)` raises `ValidationError(code, details)`; the servicer maps it
+   with `context.abort(grpc.StatusCode[error.code], error.details)`. Problems rank
+   INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
+   of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
+   set's coverage); both windows are inclusive and compared in exact nanoseconds.
+   `SUPPORTED_SENSOR_KINDS` starts empty and BSK-4 (#17) to BSK-6 (#19) add theirs; pacing,
+   magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22)
+   and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
+   generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
    `InitializeSimulation()`. Run no step. A `BasiliskError` raised while loading kernels
    is FAILED_PRECONDITION.
