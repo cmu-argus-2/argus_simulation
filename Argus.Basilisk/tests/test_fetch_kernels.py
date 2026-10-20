@@ -146,26 +146,35 @@ def test_invalid_manifest_fetches_nothing(kernel_set, damage):
     assert not (root / "kernels").exists()
 
 
-# --- Coverage, against the real kernels when fetch_kernels.py has put them in kernels/ ----
+# --- The checked-in kernel sets ------------------------------------------------------------
 
-REAL_SET = json.loads((ROOT / "kernel_sets" / "argus-2026-09-25.json").read_text())
-has_real_kernels = all(
-    (ROOT / "kernels" / entry["file"]).is_file() for entry in REAL_SET["kernels"]
-)
-real_kernels = pytest.mark.skipif(
-    not has_real_kernels, reason="run scripts/fetch_kernels.py argus-2026-09-25 first"
-)
+KERNEL_SETS = sorted(path.stem for path in (ROOT / "kernel_sets").glob("*.json"))
+# headless/Host/HostScenario.cs
+P0_KERNEL_SET = "argus-2026-10-20"
 
 
-@real_kernels
-def test_real_set_covers_its_coverage_utc():
+@pytest.mark.parametrize("kernel_set_id", KERNEL_SETS)
+def test_every_kernel_set_manifest_is_valid(kernel_set_id):
+    fetch_kernels.load_manifest(ROOT, kernel_set_id)
+
+
+def real_set(kernel_set_id):
+    """The manifest, skipping unless fetch_kernels.py has put its kernels in kernels/."""
     pytest.importorskip("spiceypy")
-    report = fetch_kernels.check_coverage(REAL_SET, ROOT / "kernels")
+    manifest = fetch_kernels.load_manifest(ROOT, kernel_set_id)
+    if not all((ROOT / "kernels" / entry["file"]).is_file() for entry in manifest["kernels"]):
+        pytest.skip(f"run scripts/fetch_kernels.py {kernel_set_id} first")
+    return manifest
+
+
+@pytest.mark.parametrize("kernel_set_id", KERNEL_SETS)
+def test_real_set_covers_its_coverage_utc(kernel_set_id):
+    manifest = real_set(kernel_set_id)
+    report = fetch_kernels.check_coverage(manifest, ROOT / "kernels")
     assert all(line.endswith("OK") for line in report[1:])
-    assert "2026-09-25T00:00:00.000Z" in report[-1]
+    assert manifest["coverage_utc"]["reconstructed_end"].replace("Z", ".000Z") in report[-1]
 
 
-@real_kernels
 @pytest.mark.parametrize(
     "field, value, gap",
     [
@@ -175,8 +184,7 @@ def test_real_set_covers_its_coverage_utc():
     ],
 )
 def test_coverage_outside_the_files_fails(field, value, gap):
-    pytest.importorskip("spiceypy")
-    manifest = json.loads(json.dumps(REAL_SET))
+    manifest = real_set(P0_KERNEL_SET)
     manifest["coverage_utc"][field] = value
     with pytest.raises(fetch_kernels.FetchError, match=gap):
         fetch_kernels.check_coverage(manifest, ROOT / "kernels")

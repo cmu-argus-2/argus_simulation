@@ -33,7 +33,7 @@ From `Argus.Basilisk/`:
 ```bash
 uv sync --frozen --all-extras
 uv run --frozen python scripts/generate_protos.py
-uv run --frozen python scripts/fetch_kernels.py argus-2026-09-25
+uv run --frozen python scripts/fetch_kernels.py argus-2026-10-20
 uv run --frozen python -m argus_basilisk --endpoint 127.0.0.1:50051
 ```
 
@@ -41,9 +41,8 @@ uv run --frozen python -m argus_basilisk --endpoint 127.0.0.1:50051
    same on every machine. Without uv, use the hashed `requirements.txt` in a Python 3.12 venv
    instead (see [Argus.Basilisk/README.md §2](Argus.Basilisk/README.md#2-install-and-run)).
 2. `generate_protos.py` writes the gRPC code from `Argus.Contracts/` into `generated/`.
-3. `fetch_kernels.py` downloads the pinned SPICE kernels into `kernels/` and checks their
-   SHA-256. NAIF has since deleted the set's Earth PCK, so until a new kernel set is published
-   (#13) that file has to be copied into `kernels/` by hand from someone who has it.
+3. `fetch_kernels.py` downloads the P0 kernel set's SPICE kernels and `WMM2025.COF` into
+   `kernels/` and checks their SHA-256 and coverage.
 4. The last command serves on loopback until Ctrl+C.
 
 Run the service tests with `uv run --frozen python -m pytest -q`. Tests that need the real

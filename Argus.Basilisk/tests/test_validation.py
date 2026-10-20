@@ -24,10 +24,10 @@ from argus.sim.v1 import commands_pb2, run_configuration_pb2, sensors_pb2
 
 ALL_KINDS = frozenset({"imu", "magnetometer", "light_sensor"})
 
-# coverage_utc of kernel_sets/argus-2026-09-25.json.
+# coverage_utc of kernel_sets/argus-2026-10-20.json, the P0 kernel set.
 COVERAGE = UtcWindow(
-    start=datetime(2000, 1, 1, tzinfo=timezone.utc),
-    end=datetime(2026, 12, 22, tzinfo=timezone.utc),
+    start=datetime(1962, 1, 20, tzinfo=timezone.utc),
+    end=datetime(2026, 8, 6, tzinfo=timezone.utc),
 )
 
 X = (1.0, 0.0, 0.0)
@@ -94,7 +94,7 @@ def p0_default_request():
         run_id="p0-default",
         fixed_step_ns=100_000_000,
         random_seed=1,
-        kernel_set_id="argus-2026-09-25",
+        kernel_set_id="argus-2026-10-20",
     )
     configuration.epoch_utc.FromDatetime(datetime(2025, 1, 15, tzinfo=timezone.utc))
 
@@ -181,7 +181,7 @@ def test_kernel_coverage_dataclass_is_accepted():
     class Coverage:
         start = COVERAGE.start
         end = COVERAGE.end
-        reconstructed_end = datetime(2026, 9, 25, tzinfo=timezone.utc)
+        reconstructed_end = datetime(2026, 8, 6, tzinfo=timezone.utc)
 
     assert configure_run_problems(p0_default_request(), coverage_utc=Coverage(), supported_sensor_kinds=ALL_KINDS) == []
 
@@ -213,7 +213,7 @@ INVALID_CASES = [
      "configuration.spacecraft.initial_angular_velocity_body_rad_per_s"),
     # Run fields.
     ("blank run_id", lambda r: setattr(r.configuration, "run_id", "  "), "configuration.run_id"),
-    ("upper-case kernel set", lambda r: setattr(r.configuration, "kernel_set_id", "Argus-2026-09-25"),
+    ("upper-case kernel set", lambda r: setattr(r.configuration, "kernel_set_id", "Argus-2026-10-20"),
      "configuration.kernel_set_id"),
     ("kernel set starts with a separator", lambda r: setattr(r.configuration, "kernel_set_id", "-argus"),
      "configuration.kernel_set_id"),
@@ -345,8 +345,8 @@ def test_invalid_argument_outranks_unimplemented_and_out_of_range():
 
 
 @pytest.mark.parametrize("epoch", [
-    datetime(1999, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
-    datetime(2026, 12, 22, 0, 0, 1, tzinfo=timezone.utc),
+    datetime(1962, 1, 19, 23, 59, 59, tzinfo=timezone.utc),
+    datetime(2026, 8, 6, 0, 0, 1, tzinfo=timezone.utc),
 ])
 def test_epoch_outside_kernel_coverage_is_out_of_range(epoch):
     request = p0_default_request()
@@ -388,7 +388,7 @@ def test_step_time_check_uses_exact_nanoseconds():
     with pytest.raises(ValidationError) as error:
         check_utc_in_range(end_ns + 1, "epoch_utc + sim_time_ns", coverage_utc=COVERAGE)
     assert error.value.code == "OUT_OF_RANGE"
-    assert "2026-12-22T00:00:00.000000001Z" in error.value.details
+    assert "2026-08-06T00:00:00.000000001Z" in error.value.details
 
     with pytest.raises(ValidationError):
         check_utc_in_range(
