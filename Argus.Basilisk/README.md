@@ -32,11 +32,43 @@ fetch/verify tool (§8).
 ## 2. Install and run
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -e ".[basilisk]"
+uv sync --frozen --all-extras
 .venv/bin/python scripts/generate_protos.py
 .venv/bin/python -m argus_basilisk --endpoint 127.0.0.1:50051
 ```
+
+### Reproducible environment (BSK-12, #86)
+
+Every machine gets the same packages: `uv.lock` pins all 42 direct and transitive
+dependencies, for every extra, with the SHA-256 of each wheel, and `.python-version` pins
+Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version forks).
+
+- **With uv** (recommended; [install uv](https://docs.astral.sh/uv/getting-started/installation/),
+  0.13.4 or later): `uv sync --frozen --all-extras` creates `.venv` from the lock, downloading
+  Python 3.12 if needed. `--frozen` installs exactly the lock and never re-resolves.
+- **With pip only**: `requirements.txt` is exported from the lock with the same versions and
+  hashes. Install it into a Python 3.12 venv; there is no need to install the project itself,
+  since everything runs from this directory:
+
+  ```bash
+  python3.12 -m venv .venv
+  .venv/bin/pip install --require-hashes -r requirements.txt
+  ```
+
+- Supported platforms are the ones with a `bsk==2.11.1` wheel: macOS arm64, Linux x86_64 and
+  aarch64, and Windows x86_64. Intel Macs have none, so `uv sync` refuses them, and pip installs
+  nothing from `requirements.txt` there, since every line's platform marker is false.
+- To change a dependency, edit `pyproject.toml`, then regenerate both files and commit them
+  together:
+
+  ```bash
+  uv lock
+  uv export --frozen --all-extras --no-emit-project --format requirements-txt -o requirements.txt
+  ```
+
+  `uv lock --upgrade-package <name>` moves one pinned package. CI fails when `pyproject.toml`,
+  `uv.lock` and `requirements.txt` disagree.
+- The kernels are pinned separately, by SHA-256 in `kernel_sets/` (§8).
 
 - The skeleton needs only `pip install -e .`; the `basilisk` extra adds `bsk==2.11.1`.
 - The endpoint comes from `--endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
@@ -251,7 +283,6 @@ generated protobuf modules are not needed by these tests.
 ### Fetching a kernel set
 
 ```bash
-.venv/bin/pip install -e ".[tools]"
 .venv/bin/python scripts/fetch_kernels.py argus-2026-09-25
 ```
 
