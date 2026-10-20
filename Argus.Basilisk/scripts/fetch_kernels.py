@@ -63,7 +63,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     kernels_dir = args.data_dir / "kernels"
-    kernels_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        kernels_dir.mkdir(parents=True, exist_ok=True)
+        # Resolved, as kernels.py does, so fetch_file can apply the same inside-kernels/ rule.
+        kernels_dir = kernels_dir.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        print(f"error: {kernels_dir}: cannot use kernels directory: {error}", file=sys.stderr)
+        return 1
 
     failed = False
     for entry in manifest["kernels"] + manifest.get("support_files", []):
@@ -144,6 +150,9 @@ def fetch_file(entry: dict, kernels_dir: Path) -> str:
     expected = entry["sha256"].lower()
 
     if path.exists():
+        # kernels.py rejects a file that resolves outside kernels/, so the tool must too.
+        if path.resolve().parent != kernels_dir:
+            raise FetchError(f"{path}: resolves outside kernels directory {kernels_dir}")
         if not path.is_file():
             raise FetchError(f"{path}: exists but is not a regular file")
         actual = sha256_file(path)

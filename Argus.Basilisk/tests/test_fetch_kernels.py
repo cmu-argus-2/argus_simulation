@@ -108,6 +108,21 @@ def test_altered_local_file_is_reported_and_kept(kernel_set, capsys):
     assert hashlib.sha256(b"edited").hexdigest() in error
 
 
+def test_looping_kernels_directory_fails_cleanly(kernel_set, capsys):
+    root, source, data = kernel_set
+    (root / "kernels").symlink_to(root / "kernels")
+    assert run(root, data) == 1
+    assert "cannot use kernels directory" in capsys.readouterr().err
+
+
+def test_file_resolving_outside_kernels_is_rejected(kernel_set, capsys):
+    root, source, data = kernel_set
+    (root / "kernels").mkdir()
+    (root / "kernels" / "a.tls").symlink_to(source / "a.tls")
+    assert run(root, data) == 1
+    assert "resolves outside kernels directory" in capsys.readouterr().err
+
+
 def test_unknown_set_names_manifest(tmp_path, capsys):
     assert fetch_kernels.main(["unknown", "--data-dir", str(tmp_path)]) == 1
     assert str(tmp_path / "kernel_sets" / "unknown.json") in capsys.readouterr().err
