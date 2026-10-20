@@ -23,10 +23,11 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
   only after reconciling it with D2, D3 and D8: SPICE only through `spiceInterface`, no
   standalone SPICE worker or offline tables, and live runs rather than recording replay.
 
-Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call placeholder modules
+Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call modules
 that the team fills in: `validation.py` (§3), `scenario.py` (§4 to §8), `sensors.py` (§9),
-`kernels.py` (§8) and `seeds.py` (§10). `scripts/fetch_kernels.py` is the SPICE team's
-fetch/verify tool (§8). Each carries a `TODO(basilisk-team)` or `TODO(spice-team)`.
+`kernels.py` (§8) and `seeds.py` (§10). The local kernel verifier is implemented;
+the other modules remain placeholders. `scripts/fetch_kernels.py` is the SPICE team's
+fetch/verify tool (§8).
 
 ## 2. Install and run
 
@@ -41,6 +42,7 @@ python3.12 -m venv .venv
 - The endpoint comes from `--endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
   `127.0.0.1:50051`. v1 is an insecure channel, so non-loopback hosts are refused.
 - Generated code goes to `generated/` and kernel files to `kernels/`; both are gitignored.
+  Fill `kernels/` with `scripts/fetch_kernels.py` (§8) before starting a run.
 - The server runs one worker and `maximum_concurrent_rpcs=1`, so a concurrent call gets
   RESOURCE_EXHAUSTED.
 
@@ -70,6 +72,19 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
      `InitializeSimulation`, and CSPICE aborts the whole process outside coverage.
+
+   `argus_basilisk.validation` implements this step (BSK-2, #15) without importing
+   Basilisk. `validate_configure_run(request, coverage_utc=..., wmm_validity=...,
+   supported_sensor_kinds=...)` raises `ValidationError(code, details)`; the servicer maps it
+   with `context.abort(grpc.StatusCode[error.code], error.details)`. Problems rank
+   INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
+   of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
+   set's coverage); both windows are inclusive and compared in exact nanoseconds.
+   `SUPPORTED_SENSOR_KINDS` starts empty and BSK-4 (#17) to BSK-6 (#19) add theirs; pacing,
+   magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22)
+   and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
+   generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
    `InitializeSimulation()`. Run no step. A `BasiliskError` raised while loading kernels
    is FAILED_PRECONDITION.
@@ -170,12 +185,53 @@ transposed `J20002Pfix` / `J20002Pfix_dot` pair, whose Earth rate points along I
 
 ## 8. SPICE and kernels
 
+### Local verifier (BSK-1 / #14)
+
+`argus_basilisk.kernels.load_kernel_set(kernel_set_id, *, data_dir=None)` reads and
+verifies local files only. The default data directory is this `Argus.Basilisk/` directory,
+independent of the process working directory; tests can supply a temporary directory.
+The module uses only the Python standard library, never imports Basilisk or the fetch tool,
+and does not download or load SPICE data.
+
+It returns a `KernelSet` with:
+
+- `kernel_set_id`: the requested ID, also checked against the manifest's `id`;
+- `kernel_paths`: a tuple of absolute `Path` objects in manifest order. The scenario can
+  pass `[str(path) for path in result.kernel_paths]` to `addKernelPaths`;
+- `coverage_utc`: `KernelCoverage(start, end, reconstructed_end)`, all timezone-aware UTC
+  datetimes, with `start <= reconstructed_end <= end`. These are manifest declarations,
+  not independently measured SPICE coverage; request/step range checks belong to validation;
+- `support_files`: an immutable mapping from each support filename to its verified absolute
+  path, separate from `kernel_paths`.
+
+`KernelSetError` exposes `code` and `details`. The future servicer maps these with
+`context.abort(grpc.StatusCode[error.code], error.details)`: invalid IDs give
+`INVALID_ARGUMENT`, absent manifests give `NOT_FOUND`, and unreadable/malformed manifests,
+missing files or SHA-256 mismatches give `FAILED_PRECONDITION`. Errors name the relevant
+manifest, field or file. Filenames must be local basenames; paths resolving outside the
+kernel directory, duplicates and kernel/support overlap are rejected.
+
+Support files use the agreed format in [Manifest format](#manifest-format); the verifier
+reads only `file` and `sha256`. The immutable `argus-2026-09-25.json` has none, so a set
+adding WMM needs a new ID and verified hash (SPICE-2, #13). `ConfigureRun` remains a
+skeleton until BSK-3 (#16) wires these modules together.
+
+Run the synthetic, offline verifier tests from `Argus.Basilisk/`:
+
+```bash
+python -m pytest tests -q
+```
+
+Install the `test` extra to obtain pytest (`pip install -e '.[test]'`); Basilisk and
+generated protobuf modules are not needed by these tests.
+
+### Scenario integration (planned)
+
 - Kernel manifests live in `kernel_sets/<id>.json`; the first is `argus-2026-09-25`. An ID
   is immutable: changing any file needs a new ID. `coverage_utc` bounds every run.
 - Before loading, check that each file exists in `kernels/` and matches its SHA-256;
-  otherwise FAILED_PRECONDITION. Never download during ConfigureRun. The fetch/verify tool
-  (a port of `origin/spice-integration:Argus.Spice/generate_reference.py`) is SPICE-team
-  work.
+  otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
+  (below) puts the files there beforehand.
 - Build `spiceInterface.SpiceInterface()` directly and call `addKernelPaths` with the
   manifest files in order. Never use the `createSpiceInterface` defaults, which load
   de430 through pooch. A failed kernel load raises `BasiliskError` from `bskLogger.bskError`
@@ -191,6 +247,53 @@ transposed `J20002Pfix` / `J20002Pfix_dot` pair, whose Earth rate points along I
   in Basilisk and never read from the PCK.)
 - Eclipse: `sunInMsg` from the SPICE Sun, `addPlanetToModel(earth)`,
   `addSpacecraftToModel(scStateOutMsg)`.
+
+### Fetching a kernel set
+
+```bash
+.venv/bin/pip install -e ".[tools]"
+.venv/bin/python scripts/fetch_kernels.py argus-2026-09-25
+```
+
+- For every `kernels` and `support_files` entry missing from `kernels/`, the tool tries
+  each URL in order and keeps the download only if its SHA-256 matches; otherwise nothing
+  is left in `kernels/` and it exits non-zero naming the file and both hashes. A file
+  already present is hashed and never replaced, so a second run downloads nothing.
+- It then reports, with spiceypy, the SPK coverage of the Sun (10) and Earth (399), the
+  binary PCK coverage of ITRF93 (3000) and the PCK's "UTC Epoch of last datum" comment,
+  and fails unless they cover `coverage_utc` and match `reconstructed_end`.
+- spiceypy is a dependency of this tool only (the `tools` extra). `argus_basilisk` never
+  imports it or the tool, so the service's only SPICE source stays `spiceInterface` (D3).
+- NAIF deletes superseded high-precision Earth PCKs (`earth_000101_*`) rather than moving
+  them to `a_old_versions/`, so a set's PCK can stop being downloadable within days. A copy
+  placed in `kernels/` by hand is accepted when its hash matches.
+
+### Manifest format
+
+```json
+{
+  "id": "<file stem; immutable>",
+  "coverage_utc": {"start": "...Z", "end": "...Z", "reconstructed_end": "...Z", "source": "..."},
+  "kernels": [
+    {"file": "naif0012.tls", "type": "LSK", "purpose": "...", "urls": ["..."], "sha256": "..."}
+  ],
+  "support_files": [
+    {"file": "WMM2025.COF", "purpose": "...", "urls": ["..."], "sha256": "...",
+     "validity": {"start": "2025-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"}}
+  ]
+}
+```
+
+- `kernels` are passed to `addKernelPaths` in list order. `type` is one of `LSK`, `SPK`,
+  `binary PCK`, `text PCK`; the coverage check needs exactly one each of `LSK`, `SPK` and
+  `binary PCK`.
+- `support_files` (optional) are non-SPICE data files fetched and verified like kernels but
+  never passed to `addKernelPaths`; `kernels.py` returns their verified paths by `file`.
+  `validity` is a closed UTC interval: a run is inside it when `start <= t <= end`, the
+  same rule as `validation.py`'s `UtcWindow`. Neither the tool nor `kernels.py` reads it.
+- `purpose` (both lists) is a free-text note that no code reads.
+- `file` is a plain filename, unique across both lists; all files share `kernels/`. `urls`
+  is a non-empty list tried in order. `sha256` is 64 hex characters.
 
 ## 9. P0 sensors
 

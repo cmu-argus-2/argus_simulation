@@ -126,8 +126,7 @@ Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
-Argus.Basilisk/argus_basilisk/{validation,scenario,sensors,kernels,seeds}.py  # TODO(basilisk-team)
-Argus.Basilisk/scripts/fetch_kernels.py                  # TODO(spice-team)
+Argus.Basilisk/argus_basilisk/{validation,scenario,sensors,seeds}.py  # TODO(basilisk-team)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
 

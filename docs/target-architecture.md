@@ -248,8 +248,6 @@ hardware-limit validation, heartbeat, failsafe); kernel loading (manifests are i
 - The analytic fixture's body rate is not `omega_BN_B` (§6): `CircularOrbitModel` reports
   (0, n, 0), with n the mean motion, while its velocity-aligned body frame turns at about
   (0, −n, yaw rate). The ideal body-rate sensor in development runs reports the fixture's value.
-- `SensorModel<T>` accumulates its sample period, so its schedule drifts from the step
-  clock; the 10 Hz ideal body-rate sensor in development runs first misses a frame near 5094 s.
 
 ## 8. Teammate branches that diverge from these decisions
 
@@ -264,6 +262,23 @@ before they merge.
   ephemeris provider (`IEphemerisProvider` in `Core/Abstractions/`, `EphemerisSample` and
   `SunObservation` in `Core/Contracts/`, implementations in `Core/Environment/`) instead of
   `EnvironmentState` in the state, which conflicts with D4.
+
+  Port/drop list for `spice-integration` (DATA-9, #74):
+  - Ported: `Argus.Spice/kernels.json` → `Argus.Basilisk/kernel_sets/argus-2026-09-25.json`
+    (on `main`); `ensure_kernels`, `download`, `sha256_file` and `check_coverage` from
+    `generate_reference.py` → `Argus.Basilisk/scripts/fetch_kernels.py` (SPICE-1, #12); the
+    t = 0 values of `foundation_one_orbit.json` → `BasiliskStateMapperTests` (on `main`;
+    BSK-3, #16, checks the service against them). `Matrix3d` and `AssemblyInfo` are already
+    on `main`.
+  - Dropped: the rest of `Argus.Spice/` (reference-table generation, `regenerate.sh`,
+    `scenarios/`) and `Assets/StreamingAssets/Argus/Spice/` (offline tables, D3);
+    `IEphemerisProvider`, `EphemerisSample`, `SunObservation`, `TabulatedEphemerisProvider`,
+    `SpiceReferenceFile`, `SolarGeometry`, `EarthShadowModel` and their tests (Sun and
+    eclipse come from Basilisk in `EnvironmentState`, D3 and D4).
+  - To confirm with the branch owners before the branch is closed: the `Quaterniond`,
+    `CircularOrbitModel`, `AnalyticSimulationEngine`, `AnalyticOrbitStateSource` and
+    `OrbitTrailRenderer` changes, `Core/Serialization/JsonReader` and the orbit-trail PlayMode
+    tests.
 - `basilisk-integration` replays an offline Basilisk recording from `dynamics/basilisk/`.
   This conflicts with D2. Its Unity `BasiliskReplayStateSource` also parses Basilisk output
   inside Unity and supplies gyro measurements outside `BasiliskEngine` and the Core sensor
