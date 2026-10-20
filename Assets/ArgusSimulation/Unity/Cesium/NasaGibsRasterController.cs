@@ -40,6 +40,12 @@ namespace Argus.Simulation.Unity
 
         public string ObservationDateUtc => observationDateUtc;
 
+        public void ConfigureSunlight(Light source)
+        {
+            sunlight = source;
+            _lastNightCenterLongitude = float.NaN;
+        }
+
         private void OnEnable()
         {
             if (Application.isPlaying)
@@ -176,8 +182,7 @@ namespace Argus.Simulation.Unity
                 ConfigureOverlay(
                     _nightOverlayEast,
                     NasaGibsUrl.BuildTemplate(nightLayer, nightDate),
-                    // TODO(cesium): the default tileset material has overlay slots 0-2 only, so
-                    // key "3" is never drawn and night lights past the antimeridian are missing.
+                    // Foundation's project-owned tileset material supports overlay slots 0-3.
                     "3",
                     true,
                     90.0);

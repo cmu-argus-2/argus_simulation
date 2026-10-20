@@ -12,6 +12,8 @@ namespace Argus.Simulation.Editor
     {
         private const string SceneDirectory = "Assets/ArgusSimulation/Scenes";
         private const string ScenePath = SceneDirectory + "/Foundation.unity";
+        internal const string TilesetMaterialPath =
+            "Assets/ArgusSimulation/Materials/ArgusFourOverlayTileset.mat";
         private const string PendingCreationKey = "ArgusSimulation.FoundationSceneCreationPending";
 
         [InitializeOnLoadMethod]
@@ -56,6 +58,14 @@ namespace Argus.Simulation.Editor
         [MenuItem("Argus Simulation/Create Foundation Scene")]
         public static void CreateFoundationScene()
         {
+            Material tilesetMaterial = AssetDatabase.LoadAssetAtPath<Material>(TilesetMaterialPath);
+            if (tilesetMaterial == null || !tilesetMaterial.HasProperty("_overlayTexture_3"))
+            {
+                throw new System.InvalidOperationException(
+                    "Import the four-overlay tileset material before building Foundation: " +
+                    TilesetMaterialPath);
+            }
+
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
             {
                 return;
@@ -70,6 +80,7 @@ namespace Argus.Simulation.Editor
             GameObject earth = new GameObject("Cesium World Terrain + NASA GIBS");
             earth.transform.SetParent(geospatialRoot.transform, false);
             Cesium3DTileset tileset = earth.AddComponent<Cesium3DTileset>();
+            tileset.opaqueMaterial = tilesetMaterial;
             tileset.tilesetSource = CesiumDataSource.FromCesiumIon;
             tileset.ionAssetID = 1;
             tileset.maximumScreenSpaceError = 4.0f;
@@ -78,7 +89,8 @@ namespace Argus.Simulation.Editor
             CesiumIonEnvironmentLoader credentialLoader =
                 earth.AddComponent<CesiumIonEnvironmentLoader>();
             credentialLoader.Configure(tileset);
-            earth.AddComponent<NasaGibsRasterController>();
+            NasaGibsRasterController rasterController =
+                earth.AddComponent<NasaGibsRasterController>();
 
             GameObject simulation = new GameObject("Simulation");
             AnalyticStateSource stateSource = simulation.AddComponent<AnalyticStateSource>();
@@ -133,6 +145,7 @@ namespace Argus.Simulation.Editor
             light.type = LightType.Directional;
             light.intensity = 1.0f;
             sunlight.transform.rotation = Quaternion.Euler(30f, -35f, 0f);
+            rasterController.ConfigureSunlight(light);
 
             EnsureDirectory(SceneDirectory);
             EditorSceneManager.SaveScene(scene, ScenePath);
