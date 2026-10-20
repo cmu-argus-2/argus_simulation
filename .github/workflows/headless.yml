@@ -48,3 +48,28 @@ jobs:
           test "${#schemas[@]}" -gt 0
           protoc -I Argus.Contracts/proto -I /usr/include \
             --descriptor_set_out="$RUNNER_TEMP/argus-contracts.pb" "${schemas[@]}"
+
+  python-lock:
+    name: Python lock matches pyproject.toml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: Argus.Basilisk
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install uv
+        working-directory: .
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uv"
+          "$RUNNER_TEMP/uv/bin/pip" install --quiet "uv==0.13.4"
+          echo "$RUNNER_TEMP/uv/bin" >> "$GITHUB_PATH"
+
+      # README §2 "Reproducible environment": regenerate both files and require no change.
+      - name: Check uv.lock and requirements.txt
+        run: |
+          uv lock --check
+          uv export --frozen --all-extras --no-emit-project --format requirements-txt -o requirements.txt
+          git diff --exit-code -- uv.lock requirements.txt
