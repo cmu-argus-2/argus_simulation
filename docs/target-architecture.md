@@ -243,10 +243,6 @@ for provenance and the offline GPU validation command.
 
 **Known issues:**
 
-- The night-side longitude is computed from the Sun direction in the georeference's local
-  East-Up-North frame (`NasaGibsRasterController.cs`, night-side longitude) instead of Earth-fixed
-  coordinates. With the scene's origin near Denver, the night-lights band sits about 20°
-  away from the true night side.
 - The scene's Sun light is fixed.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
@@ -269,6 +265,23 @@ before they merge.
   ephemeris provider (`IEphemerisProvider` in `Core/Abstractions/`, `EphemerisSample` and
   `SunObservation` in `Core/Contracts/`, implementations in `Core/Environment/`) instead of
   `EnvironmentState` in the state, which conflicts with D4.
+
+  Port/drop list for `spice-integration` (DATA-9, #74):
+  - Ported: `Argus.Spice/kernels.json` → `Argus.Basilisk/kernel_sets/argus-2026-09-25.json`
+    (on `main`); `ensure_kernels`, `download`, `sha256_file` and `check_coverage` from
+    `generate_reference.py` → `Argus.Basilisk/scripts/fetch_kernels.py` (SPICE-1, #12); the
+    t = 0 values of `foundation_one_orbit.json` → `BasiliskStateMapperTests` (on `main`;
+    BSK-3, #16, checks the service against them). `Matrix3d` and `AssemblyInfo` are already
+    on `main`.
+  - Dropped: the rest of `Argus.Spice/` (reference-table generation, `regenerate.sh`,
+    `scenarios/`) and `Assets/StreamingAssets/Argus/Spice/` (offline tables, D3);
+    `IEphemerisProvider`, `EphemerisSample`, `SunObservation`, `TabulatedEphemerisProvider`,
+    `SpiceReferenceFile`, `SolarGeometry`, `EarthShadowModel` and their tests (Sun and
+    eclipse come from Basilisk in `EnvironmentState`, D3 and D4).
+  - To confirm with the branch owners before the branch is closed: the `Quaterniond`,
+    `CircularOrbitModel`, `AnalyticSimulationEngine`, `AnalyticOrbitStateSource` and
+    `OrbitTrailRenderer` changes, `Core/Serialization/JsonReader` and the orbit-trail PlayMode
+    tests.
 - `basilisk-integration` replays an offline Basilisk recording from `dynamics/basilisk/`.
   This conflicts with D2. Its Unity `BasiliskReplayStateSource` also parses Basilisk output
   inside Unity and supplies gyro measurements outside `BasiliskEngine` and the Core sensor

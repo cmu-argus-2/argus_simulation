@@ -27,21 +27,54 @@ Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call module
 that the team fills in: `validation.py` (§3), `scenario.py` (§4 to §8), `sensors.py` (§9),
 `kernels.py` (§8) and `seeds.py` (§10). The local kernel verifier is implemented;
 the other modules remain placeholders. `scripts/fetch_kernels.py` is the SPICE team's
-fetch/verify tool (§8), still marked `TODO(spice-team)`.
+fetch/verify tool (§8).
 
 ## 2. Install and run
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -e ".[basilisk]"
+uv sync --frozen --all-extras
 .venv/bin/python scripts/generate_protos.py
 .venv/bin/python -m argus_basilisk --endpoint 127.0.0.1:50051
 ```
+
+### Reproducible environment (BSK-12, #86)
+
+Every machine gets the same packages: `uv.lock` pins all 42 direct and transitive
+dependencies, for every extra, with the SHA-256 of each wheel, and `.python-version` pins
+Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version forks).
+
+- **With uv** (recommended; [install uv](https://docs.astral.sh/uv/getting-started/installation/),
+  0.13.4 or later): `uv sync --frozen --all-extras` creates `.venv` from the lock, downloading
+  Python 3.12 if needed. `--frozen` installs exactly the lock and never re-resolves.
+- **With pip only**: `requirements.txt` is exported from the lock with the same versions and
+  hashes. Install it into a Python 3.12 venv; there is no need to install the project itself,
+  since everything runs from this directory:
+
+  ```bash
+  python3.12 -m venv .venv
+  .venv/bin/pip install --require-hashes -r requirements.txt
+  ```
+
+- Supported platforms are the ones with a `bsk==2.11.1` wheel: macOS arm64, Linux x86_64 and
+  aarch64, and Windows x86_64. Intel Macs have none, so `uv sync` refuses them, and pip installs
+  nothing from `requirements.txt` there, since every line's platform marker is false.
+- To change a dependency, edit `pyproject.toml`, then regenerate both files and commit them
+  together:
+
+  ```bash
+  uv lock
+  uv export --frozen --all-extras --no-emit-project --format requirements-txt -o requirements.txt
+  ```
+
+  `uv lock --upgrade-package <name>` moves one pinned package. CI fails when `pyproject.toml`,
+  `uv.lock` and `requirements.txt` disagree.
+- The kernels are pinned separately, by SHA-256 in `kernel_sets/` (§8).
 
 - The skeleton needs only `pip install -e .`; the `basilisk` extra adds `bsk==2.11.1`.
 - The endpoint comes from `--endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
   `127.0.0.1:50051`. v1 is an insecure channel, so non-loopback hosts are refused.
 - Generated code goes to `generated/` and kernel files to `kernels/`; both are gitignored.
+  Fill `kernels/` with `scripts/fetch_kernels.py` (§8) before starting a run.
 - The server runs one worker and `maximum_concurrent_rpcs=1`, so a concurrent call gets
   RESOURCE_EXHAUSTED.
 
@@ -210,26 +243,10 @@ missing files or SHA-256 mismatches give `FAILED_PRECONDITION`. Errors name the 
 manifest, field or file. Filenames must be local basenames; paths resolving outside the
 kernel directory, duplicates and kernel/support overlap are rejected.
 
-**Proposed support-file format, pending agreement with SPICE-1 (#12):** an optional
-`support_files` array whose entries use `file`, `urls`, `sha256`, and `validity`. The verifier
-uses `file` and `sha256`; fetching and validity metadata interpretation remain with their
-respective consumers. An omitted array means no support files. Example shape:
-
-```text
-"support_files": [
-  {
-    "file": "WMM2025.COF",
-    "urls": [<pinned download URL>],
-    "sha256": <64-character SHA-256>,
-    "validity": {"start": "2025-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"}
-  }
-]
-```
-
-This is a schema proposal, not a downloadable manifest. The existing immutable
-`argus-2026-09-25.json` is unchanged. A set adding WMM needs a new ID and verified hash.
-The validity boundary semantics must be agreed with #12 and the magnetometer validator.
-`ConfigureRun` remains a skeleton until BSK-3 (#16) wires these modules together.
+Support files use the agreed format in [Manifest format](#manifest-format); the verifier
+reads only `file` and `sha256`. The immutable `argus-2026-09-25.json` has none, so a set
+adding WMM needs a new ID and verified hash (SPICE-2, #13). `ConfigureRun` remains a
+skeleton until BSK-3 (#16) wires these modules together.
 
 Run the synthetic, offline verifier tests from `Argus.Basilisk/`:
 
@@ -245,9 +262,8 @@ generated protobuf modules are not needed by these tests.
 - Kernel manifests live in `kernel_sets/<id>.json`; the first is `argus-2026-09-25`. An ID
   is immutable: changing any file needs a new ID. `coverage_utc` bounds every run.
 - Before loading, check that each file exists in `kernels/` and matches its SHA-256;
-  otherwise FAILED_PRECONDITION. Never download during ConfigureRun. The fetch/verify tool
-  (a port of `origin/spice-integration:Argus.Spice/generate_reference.py`) is SPICE-team
-  work.
+  otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
+  (below) puts the files there beforehand.
 - Build `spiceInterface.SpiceInterface()` directly and call `addKernelPaths` with the
   manifest files in order. Never use the `createSpiceInterface` defaults, which load
   de430 through pooch. A failed kernel load raises `BasiliskError` from `bskLogger.bskError`
@@ -263,6 +279,52 @@ generated protobuf modules are not needed by these tests.
   in Basilisk and never read from the PCK.)
 - Eclipse: `sunInMsg` from the SPICE Sun, `addPlanetToModel(earth)`,
   `addSpacecraftToModel(scStateOutMsg)`.
+
+### Fetching a kernel set
+
+```bash
+.venv/bin/python scripts/fetch_kernels.py argus-2026-09-25
+```
+
+- For every `kernels` and `support_files` entry missing from `kernels/`, the tool tries
+  each URL in order and keeps the download only if its SHA-256 matches; otherwise nothing
+  is left in `kernels/` and it exits non-zero naming the file and both hashes. A file
+  already present is hashed and never replaced, so a second run downloads nothing.
+- It then reports, with spiceypy, the SPK coverage of the Sun (10) and Earth (399), the
+  binary PCK coverage of ITRF93 (3000) and the PCK's "UTC Epoch of last datum" comment,
+  and fails unless they cover `coverage_utc` and match `reconstructed_end`.
+- spiceypy is a dependency of this tool only (the `tools` extra). `argus_basilisk` never
+  imports it or the tool, so the service's only SPICE source stays `spiceInterface` (D3).
+- NAIF deletes superseded high-precision Earth PCKs (`earth_000101_*`) rather than moving
+  them to `a_old_versions/`, so a set's PCK can stop being downloadable within days. A copy
+  placed in `kernels/` by hand is accepted when its hash matches.
+
+### Manifest format
+
+```json
+{
+  "id": "<file stem; immutable>",
+  "coverage_utc": {"start": "...Z", "end": "...Z", "reconstructed_end": "...Z", "source": "..."},
+  "kernels": [
+    {"file": "naif0012.tls", "type": "LSK", "purpose": "...", "urls": ["..."], "sha256": "..."}
+  ],
+  "support_files": [
+    {"file": "WMM2025.COF", "purpose": "...", "urls": ["..."], "sha256": "...",
+     "validity": {"start": "2025-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"}}
+  ]
+}
+```
+
+- `kernels` are passed to `addKernelPaths` in list order. `type` is one of `LSK`, `SPK`,
+  `binary PCK`, `text PCK`; the coverage check needs exactly one each of `LSK`, `SPK` and
+  `binary PCK`.
+- `support_files` (optional) are non-SPICE data files fetched and verified like kernels but
+  never passed to `addKernelPaths`; `kernels.py` returns their verified paths by `file`.
+  `validity` is a closed UTC interval: a run is inside it when `start <= t <= end`, the
+  same rule as `validation.py`'s `UtcWindow`. Neither the tool nor `kernels.py` reads it.
+- `purpose` (both lists) is a free-text note that no code reads.
+- `file` is a plain filename, unique across both lists; all files share `kernels/`. `urls`
+  is a non-empty list tried in order. `sha256` is 64 hex characters.
 
 ## 9. P0 sensors
 

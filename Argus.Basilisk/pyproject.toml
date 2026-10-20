@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "argus-basilisk"
 version = "0.1.0"
 description = "Argus Basilisk simulation service (gRPC server for BasiliskEngine)"
-requires-python = ">=3.10,<3.15"
+# One interpreter minor, so every machine resolves the same uv.lock (README §2).
+requires-python = "==3.12.*"
 # grpcio-tools 1.82.0 is yanked, and 1.83+ need protobuf>=7.35.1 while bsk 2.11.1 allows <=7.35.0.
 dependencies = [
     "grpcio==1.81.0",
@@ -17,6 +18,8 @@ dependencies = [
 [project.optional-dependencies]
 basilisk = ["bsk==2.11.1"]
 test = ["pytest>=7,<9"]
+# scripts/fetch_kernels.py only (coverage check); argus_basilisk never imports spiceypy (D3).
+tools = ["spiceypy==8.2.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -24,3 +27,20 @@ pythonpath = ["."]
 
 [tool.setuptools]
 packages = ["argus_basilisk"]
+
+# uv.lock pins every dependency with hashes; requirements.txt is exported from it (README §2).
+[tool.uv]
+required-version = ">=0.13.4"
+# The platforms with a bsk==2.11.1 wheel; Intel Macs have none.
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]

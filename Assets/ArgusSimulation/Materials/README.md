@@ -11,5 +11,5 @@ It closes the preview scene and destroys temporary textures/materials afterward.
 It needs a graphics device and does not depend on Cesium ion or NASA requests.
 
 This offline check is separate from #55's geographic acceptance: with the fixed
-Sun, capture actual city lights in the east night rectangle (about 180°–145°W)
+Sun, capture actual city lights in the east night rectangle (about 180°–165°W)
 in the PR. A successful material check does not establish successful GIBS downloads.

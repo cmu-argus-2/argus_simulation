@@ -1,6 +1,7 @@
 using System;
 using Argus.Simulation.Core;
 using CesiumForUnity;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
@@ -31,6 +32,9 @@ namespace Argus.Simulation.Unity
         private CesiumUrlTemplateRasterOverlay _observationOverlay;
         private CesiumUrlTemplateRasterOverlay _nightOverlayWest;
         private CesiumUrlTemplateRasterOverlay _nightOverlayEast;
+        private CesiumGeoreference _georeference;
+        private bool _hasSunDirectionInput;
+        private Vector3 _sunDirectionWorld;
         private float _lastNightCenterLongitude = float.NaN;
 
         public string ActiveTemplateUrl =>
@@ -44,6 +48,20 @@ namespace Argus.Simulation.Unity
         {
             sunlight = source;
             _lastNightCenterLongitude = float.NaN;
+        }
+
+        // Sun input: the direction from the scene towards the Sun, in Unity world axes. SunLightDriver
+        // feeds it from EnvironmentState (UNITY-3); until something sets it, the controller reads the
+        // scene's directional light.
+        public void SetSunDirection(Vector3 towardSunWorld)
+        {
+            _sunDirectionWorld = towardSunWorld;
+            _hasSunDirectionInput = true;
+        }
+
+        public void ClearSunDirection()
+        {
+            _hasSunDirectionInput = false;
         }
 
         private void OnEnable()
@@ -63,22 +81,35 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            if (sunlight == null)
-            {
-                sunlight = FindAnyObjectByType<Light>();
-            }
-
-            if (sunlight == null || transform.parent == null)
+            if (!TryGetSunDirectionWorld(out Vector3 towardSunWorld))
             {
                 return;
             }
 
-            // TODO(D4): this longitude is taken in the georeference's local East-Up-North frame, not
-            // Earth-fixed, so the night band sits about 20 degrees off; use Earth-fixed coordinates
-            // and the EnvironmentState Sun once SunLightDriver exists.
-            Vector3 sunDirection = transform.parent.InverseTransformDirection(-sunlight.transform.forward);
-            float sunLongitude = Mathf.Atan2(sunDirection.z, sunDirection.x) * Mathf.Rad2Deg;
-            float nightCenterLongitude = NormalizeLongitude(sunLongitude + 180f);
+            if (_georeference == null)
+            {
+                _georeference = GetComponentInParent<CesiumGeoreference>();
+            }
+
+            if (_georeference == null)
+            {
+                return;
+            }
+
+            // Unity world -> georeference local -> Earth-fixed. The local axes are East-Up-North only
+            // at the georeference origin, so a longitude read from them is off by the origin's
+            // offset (about 20 degrees near Denver).
+            Vector3 towardSunLocal = _georeference.transform.InverseTransformDirection(towardSunWorld);
+            double3 towardSunEcef = _georeference.TransformUnityDirectionToEarthCenteredEarthFixed(
+                new double3(towardSunLocal.x, towardSunLocal.y, towardSunLocal.z));
+            double antisolarLongitude = NasaGibsNightSide.AntisolarLongitudeDegrees(
+                new Vector3d(towardSunEcef.x, towardSunEcef.y, towardSunEcef.z));
+            if (double.IsNaN(antisolarLongitude))
+            {
+                return;
+            }
+
+            float nightCenterLongitude = (float)antisolarLongitude;
             if (!float.IsNaN(_lastNightCenterLongitude) &&
                 Mathf.Abs(Mathf.DeltaAngle(_lastNightCenterLongitude, nightCenterLongitude)) < 0.5f)
             {
@@ -98,6 +129,23 @@ namespace Argus.Simulation.Unity
                 SetNightRectangle(_nightOverlayWest, west, 180f, true);
                 SetNightRectangle(_nightOverlayEast, -180f, east, true);
             }
+        }
+
+        private bool TryGetSunDirectionWorld(out Vector3 towardSunWorld)
+        {
+            if (_hasSunDirectionInput)
+            {
+                towardSunWorld = _sunDirectionWorld;
+                return towardSunWorld.sqrMagnitude > 0f;
+            }
+
+            if (sunlight == null)
+            {
+                sunlight = FindAnyObjectByType<Light>();
+            }
+
+            towardSunWorld = sunlight == null ? Vector3.zero : -sunlight.transform.forward;
+            return sunlight != null;
         }
 
         public bool TryConfigure(string gibsLayer, string dateUtc, out string error)
