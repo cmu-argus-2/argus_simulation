@@ -261,7 +261,7 @@ appear in the core contracts.
 ## 11. Basilisk integration
 
 `BasiliskEngine` (`headless/Host`) implements `ISimulationEngine` as the gRPC client of the
-Python Basilisk service (`Argus.Basilisk/`, a skeleton today). It sends Argus commands and
+Python Basilisk service (`Argus.Basilisk/`; spacecraft, SPICE and eclipse today, no sensors). It sends Argus commands and
 maps Basilisk state and sensor messages into Argus contracts through `Core/Basilisk`. Basilisk becomes authoritative for simulation time
 when selected.
 
@@ -328,7 +328,7 @@ docs/                              Architecture and interface documentation
 headless/                          dotnet build of Core and the EditMode tests; Host/ with BasiliskEngine
 
 Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
-Argus.Basilisk/                    Python Basilisk service with SPICE (skeleton + brief)
+Argus.Basilisk/                    Python Basilisk service with SPICE (build step 1 + brief)
 
 Future external packages/services:
 Argus.Hardware/                    Flight-computer protocol adapters (README placeholder)
@@ -380,11 +380,11 @@ The analytic backend is only a deterministic integration fixture. It records act
 commands but does not yet apply them to orbit or attitude. The only Argus-computed
 non-image sensor is a truth-backed, noise-free body-rate model. The IMU (rate and specific
 force), magnetometer and light sensors are Basilisk-sourced models that publish only what
-the Basilisk service measures, and that service is still a skeleton. GNSS, fine Sun sensor,
+the Basilisk service measures, and that service does not build sensors yet. GNSS, fine Sun sensor,
 star-tracker, power, thermal, radio and radiation models are unavailable until their physics
 and hardware profiles are implemented, and the camera models are placeholders. The v1
-Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service, the run
-recorder, the other network transports and the physical hardware adapters are not
+Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's sensors,
+pacing and actuators, the run recorder, the other network transports and the physical hardware adapters are not
 implemented yet.
 
 ## References
