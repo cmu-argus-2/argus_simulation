@@ -8,7 +8,6 @@ namespace Argus.Simulation.Host
     // TODO(D6): feed every SimulationState and SensorOutputSet to Core RunRecorder.
     // TODO(D7, G1): serve the gateway to HIL and external controllers through Gateway/GatewayServer.
     // TODO(G2): stream decimated states to Unity through Streaming/StateStreamServer.
-    // TODO(G5): read the run configuration from a file instead of HostScenario.
     public static class Program
     {
         public static int Main(string[] args)
@@ -17,6 +16,20 @@ namespace Argus.Simulation.Host
             {
                 Console.Error.WriteLine(error);
                 Console.Error.WriteLine(HostOptions.Usage);
+                return 2;
+            }
+
+            // A bad run file is bad input, rejected before the host connects to the service.
+            SimulationConfiguration configuration;
+            try
+            {
+                configuration = RunConfigurationFile.Load(
+                    options.RunConfigurationPath,
+                    "host-" + Guid.NewGuid().ToString("N"));
+            }
+            catch (RunConfigurationException exception)
+            {
+                Console.Error.WriteLine($"Run configuration {options.RunConfigurationPath}: {exception.Message}");
                 return 2;
             }
 
@@ -29,7 +42,7 @@ namespace Argus.Simulation.Host
 
             try
             {
-                Run(options, cancellation.Token);
+                Run(options, configuration, cancellation.Token);
                 return 0;
             }
             catch (Exception exception) when (cancellation.IsCancellationRequested)
@@ -46,9 +59,8 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static void Run(HostOptions options, CancellationToken cancellation)
+        private static void Run(HostOptions options, SimulationConfiguration configuration, CancellationToken cancellation)
         {
-            SimulationConfiguration configuration = HostScenario.CreateP0Default("host-" + Guid.NewGuid().ToString("N"));
             using BasiliskEngine engine = new BasiliskEngine(options.BasiliskAddress, options.RealTimeFactor, cancellation);
             SimulationGateway gateway = new SimulationGateway(engine);
             gateway.Initialize(configuration);

@@ -258,9 +258,9 @@ generated protobuf modules are not needed by these tests.
 
 ### Scenario integration (planned)
 
-- Kernel manifests live in `kernel_sets/<id>.json`. P0 (`HostScenario`) uses
-  `argus-2026-10-20`; `argus-2026-09-25` stays for the §13 SPICE check. An ID is immutable:
-  changing any file needs a new ID. `coverage_utc` bounds every run.
+- Kernel manifests live in `kernel_sets/<id>.json`. P0 (`headless/Host/runs/p0-default.json`)
+  uses `argus-2026-10-20`; `argus-2026-09-25` stays for the §13 SPICE check. An ID is
+  immutable: changing any file needs a new ID. `coverage_utc` bounds every run.
 - Before loading, check that each file exists in `kernels/` and matches its SHA-256;
   otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
   (below) puts the files there beforehand.

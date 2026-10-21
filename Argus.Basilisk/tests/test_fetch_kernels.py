@@ -149,7 +149,7 @@ def test_invalid_manifest_fetches_nothing(kernel_set, damage):
 # --- The checked-in kernel sets ------------------------------------------------------------
 
 KERNEL_SETS = sorted(path.stem for path in (ROOT / "kernel_sets").glob("*.json"))
-# headless/Host/HostScenario.cs
+# headless/Host/runs/p0-default.json
 P0_KERNEL_SET = "argus-2026-10-20"
 
 
