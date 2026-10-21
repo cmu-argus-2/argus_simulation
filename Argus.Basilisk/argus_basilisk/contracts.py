@@ -13,6 +13,7 @@ sys.path.insert(0, str(_GENERATED))
 
 from argus.basilisk.v1 import basilisk_service_pb2 as service_pb  # noqa: E402
 from argus.basilisk.v1 import basilisk_service_pb2_grpc as service_grpc  # noqa: E402
+from argus.sim.v1 import sensors_pb2 as sensors_pb  # noqa: E402
 from argus.sim.v1 import types_pb2 as types_pb  # noqa: E402
 
-__all__ = ["service_pb", "service_grpc", "types_pb"]
+__all__ = ["sensors_pb", "service_pb", "service_grpc", "types_pb"]
