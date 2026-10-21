@@ -1,7 +1,8 @@
 """BSK-3 service acceptance (README §13) over a real in-process gRPC server.
 
-Needs bsk==2.11.1 (the basilisk extra). The tests marked real_kernels also need the
-argus-2026-09-25 files in kernels/ (scripts/fetch_kernels.py) and are skipped without them.
+Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
+argus-2026-10-20 in kernels/, and the SPICE reference test needs argus-2026-09-25
+(scripts/fetch_kernels.py); each is skipped without its files.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -29,13 +30,24 @@ from test_validation import p0_default_request, zero_command  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 STEP_NS = 100_000_000
 
-try:
-    load_kernel_set("argus-2026-09-25")
-    has_real_kernels = True
-except KernelSetError:
-    has_real_kernels = False
+P0_KERNEL_SET = "argus-2026-10-20"
+# README §13: the reference values below come from this set's Earth PCK.
+REFERENCE_KERNEL_SET = "argus-2026-09-25"
+
+
+def kernels_present(kernel_set_id):
+    try:
+        load_kernel_set(kernel_set_id)
+        return True
+    except KernelSetError:
+        return False
+
+
 real_kernels = pytest.mark.skipif(
-    not has_real_kernels, reason="run scripts/fetch_kernels.py argus-2026-09-25 first")
+    not kernels_present(P0_KERNEL_SET), reason=f"run scripts/fetch_kernels.py {P0_KERNEL_SET} first")
+reference_kernels = pytest.mark.skipif(
+    not kernels_present(REFERENCE_KERNEL_SET),
+    reason=f"needs the {REFERENCE_KERNEL_SET} files in kernels/; NAIF has deleted its Earth PCK")
 
 # Step(0) at 2025-01-15T00:00Z: the inputs of Core BasiliskStateMapperTests (README §13).
 J2000_TO_ITRF93 = [
@@ -127,7 +139,7 @@ def test_configure_run_rejects_before_building(service):
 def test_kernel_load_failure_is_failed_precondition(service, monkeypatch, tmp_path):
     _, stub = service
     window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
-    vanished = KernelSet("argus-2026-09-25", (tmp_path / "vanished.bsp",), window, {})
+    vanished = KernelSet(P0_KERNEL_SET, (tmp_path / "vanished.bsp",), window, {})
     monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: vanished)
     code, details = status_of(stub.ConfigureRun, configure_request())
     assert code == grpc.StatusCode.FAILED_PRECONDITION
@@ -138,7 +150,7 @@ def test_configure_run_echoes_sensor_ids_in_request_order(service, monkeypatch, 
     """Sensor IDs live in SensorConfiguration.definition; checked before any kind is built."""
     _, stub = service
     window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
-    kernel_set = KernelSet("argus-2026-09-25", (tmp_path / "unused.bsp",), window, {})
+    kernel_set = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
     monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: kernel_set)
     monkeypatch.setattr(servicer_module, "SUPPORTED_SENSOR_KINDS", frozenset({"imu", "magnetometer", "light_sensor"}))
     monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set: SimpleNamespace(
@@ -189,7 +201,7 @@ assert not attempts, attempts
     assert not cache.exists() or not any(path.is_file() for path in cache.rglob("*"))
 
 
-# --- A live run against argus-2026-09-25 ---------------------------------------------------
+# --- A live run against the P0 kernel set ---------------------------------------------------
 
 
 @real_kernels
@@ -197,7 +209,7 @@ def test_configure_run_echoes_every_field(service):
     servicer, stub = service
     response = stub.ConfigureRun(configure_request())
     assert response.run_id == "p0-default"
-    assert response.kernel_set_id == "argus-2026-09-25"
+    assert response.kernel_set_id == P0_KERNEL_SET
     assert response.fixed_step_ns == STEP_NS
     assert list(response.configured_sensor_ids) == []
     assert response.basilisk_version == "2.11.1"
@@ -226,7 +238,7 @@ def test_step_checks_run_id_sequence_time_command_and_coverage(service):
     # Configured 50 ms before coverage ends: Step(1) is outside it and must not execute, since
     # CSPICE aborts the process outside coverage.
     at_end = configure_request()
-    at_end.configuration.epoch_utc.FromDatetime(datetime(2026, 12, 21, 23, 59, 59, 950_000, tzinfo=timezone.utc))
+    at_end.configuration.epoch_utc.FromDatetime(datetime(2026, 8, 5, 23, 59, 59, 950_000, tzinfo=timezone.utc))
     stub.ConfigureRun(at_end)
     stub.Step(step_request(0))
     assert status_of(stub.Step, step_request(1))[0] == grpc.StatusCode.OUT_OF_RANGE
@@ -248,10 +260,12 @@ def test_steps_repeat_bit_for_bit_after_reset(service):
         r.SerializeToString(deterministic=True) for r in second]
 
 
-@real_kernels
+@reference_kernels
 def test_step_zero_matches_the_spice_reference(service):
     _, stub = service
-    stub.ConfigureRun(configure_request())
+    request = configure_request()
+    request.configuration.kernel_set_id = REFERENCE_KERNEL_SET
+    stub.ConfigureRun(request)
     response = stub.Step(step_request(0))
 
     earth, sun = response.earth, response.sun

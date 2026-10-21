@@ -245,9 +245,8 @@ manifest, field or file. Filenames must be local basenames; paths resolving outs
 kernel directory, duplicates and kernel/support overlap are rejected.
 
 Support files use the agreed format in [Manifest format](#manifest-format); the verifier
-reads only `file` and `sha256`. The immutable `argus-2026-09-25.json` has none, so a set
-adding WMM needs a new ID and verified hash (SPICE-2, #13). `ConfigureRun` calls
-`load_kernel_set` before building anything (BSK-3, #16).
+reads only `file` and `sha256`. `argus-2026-10-20` pins `WMM2025.COF` this way.
+`ConfigureRun` calls `load_kernel_set` before building anything (BSK-3, #16).
 
 Run the synthetic, offline verifier tests from `Argus.Basilisk/`:
 
@@ -257,13 +256,14 @@ python -m pytest tests -q
 
 Install the `test` extra to obtain pytest (`pip install -e '.[test]'`); Basilisk and
 generated protobuf modules are not needed by these tests. `tests/test_service.py` needs the
-`basilisk` extra, and its live-run tests also need the `argus-2026-09-25` files in `kernels/`
-(they are skipped otherwise).
+`basilisk` extra. Its live-run tests also need the P0 set `argus-2026-10-20` in `kernels/`,
+and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped without its files.
 
 ### Scenario integration
 
-- Kernel manifests live in `kernel_sets/<id>.json`; the first is `argus-2026-09-25`. An ID
-  is immutable: changing any file needs a new ID. `coverage_utc` bounds every run.
+- Kernel manifests live in `kernel_sets/<id>.json`. P0 (`HostScenario`) uses
+  `argus-2026-10-20`; `argus-2026-09-25` stays for the §13 SPICE check. An ID is immutable:
+  changing any file needs a new ID. `coverage_utc` bounds every run.
 - Before loading, check that each file exists in `kernels/` and matches its SHA-256;
   otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
   (below) puts the files there beforehand.
@@ -291,7 +291,7 @@ generated protobuf modules are not needed by these tests. `tests/test_service.py
 ### Fetching a kernel set
 
 ```bash
-.venv/bin/python scripts/fetch_kernels.py argus-2026-09-25
+.venv/bin/python scripts/fetch_kernels.py argus-2026-10-20
 ```
 
 - For every `kernels` and `support_files` entry missing from `kernels/`, the tool tries
@@ -303,9 +303,23 @@ generated protobuf modules are not needed by these tests. `tests/test_service.py
   and fails unless they cover `coverage_utc` and match `reconstructed_end`.
 - spiceypy is a dependency of this tool only (the `tools` extra). `argus_basilisk` never
   imports it or the tool, so the service's only SPICE source stays `spiceInterface` (D3).
-- NAIF deletes superseded high-precision Earth PCKs (`earth_000101_*`) rather than moving
-  them to `a_old_versions/`, so a set's PCK can stop being downloadable within days. A copy
-  placed in `kernels/` by hand is accepted when its hash matches.
+- A copy placed in `kernels/` by hand is accepted when its hash matches.
+
+### Choosing the Earth PCK
+
+- NAIF replaces its daily high-precision Earth PCK (`earth_000101_*`) every few days and
+  deletes the old one; it is never moved to `a_old_versions/`. A set that pins one stops
+  being downloadable within days, as `argus-2026-09-25` has: its PCK must now be copied
+  into `kernels/` by hand.
+- New sets pin NAIF's yearly historical PCK (`earth_620120_<last datum>.bpc`, published each
+  August). Superseded versions move to `a_old_versions/` and stay there, so each entry lists
+  both URLs and the set stays downloadable.
+- Runs use measured Earth orientation only: `coverage_utc.end` equals `reconstructed_end`
+  (the PCK's last datum, 2026-08-06 for `argus-2026-10-20`), not the two extrapolated days
+  after it, so a later epoch is OUT_OF_RANGE.
+- Not decided yet: who publishes the next set and when, and whether runs will ever need
+  epochs after the last datum. If they do, the option is a daily PCK hosted by the team,
+  since NAIF does not keep it.
 
 ### Manifest format
 
@@ -371,9 +385,10 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
   `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses WMM2025 only.
 - `WMM2025.COF` is not in the `bsk` wheel (its `supportData` is pruned, and
-  `dataFetcher.get_path` downloads it on first use). Pin it like the kernels: a local file
-  with its SHA-256 listed in the kernel-set manifest, checked before the build, and never
-  downloaded during ConfigureRun.
+  `dataFetcher.get_path` downloads it on first use). It is pinned like the kernels, as a
+  `support_files` entry of `argus-2026-10-20` checked before the build, and never downloaded
+  during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
+  Basilisk v2.11.1's byte-identical copy (the file `dataFetcher` would download).
 - Noise is not seedable in bsk 2.11.1 (§3). Until the team patches upstream or adds seeded
   noise in the service, ConfigureRun rejects `noise_std_tesla > 0`.
 

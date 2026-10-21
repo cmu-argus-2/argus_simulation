@@ -47,7 +47,7 @@ namespace Argus.Simulation.Host
                 0.1,
                 initialOrbit: orbit,
                 randomSeed: 1,
-                kernelSetId: "argus-2026-09-25",
+                kernelSetId: "argus-2026-10-20",
                 spacecraft: spacecraft,
                 sensors: sensors);
         }

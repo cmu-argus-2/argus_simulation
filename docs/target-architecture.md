@@ -237,12 +237,8 @@ hardware-limit validation, heartbeat, failsafe).
 - The east night-lights overlay uses material key `"3"`
   (the east night overlay in `Unity/Cesium/NasaGibsRasterController.cs`), but the default Cesium tileset
   material only has overlay slots `0`, `1` and `2`, so that overlay is never drawn. The part
-  of the night side past the antimeridian (about 180° to 145°W with the fixed Sun) shows no
+  of the night side past the antimeridian (about 180° to 165°W with the fixed Sun) shows no
   city lights.
-- The night-side longitude is computed from the Sun direction in the georeference's local
-  East-Up-North frame (`NasaGibsRasterController.cs`, night-side longitude) instead of Earth-fixed
-  coordinates. With the scene's origin near Denver, the night-lights band sits about 20°
-  away from the true night side.
 - The scene's Sun light is fixed.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
