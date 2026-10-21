@@ -47,7 +47,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
     ├── Gateway/                  # GatewayServer (placeholder)
     └── Streaming/                # StateStreamServer (placeholder)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
-Argus.Basilisk/                   # Basilisk service skeleton + brief (argus_basilisk/, kernel_sets/, scripts/)
+Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
 ```
 
@@ -126,7 +126,7 @@ Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
-Argus.Basilisk/argus_basilisk/{validation,scenario,sensors,seeds}.py  # TODO(basilisk-team)
+Argus.Basilisk/argus_basilisk/{validation,sensors,seeds}.py  # TODO(basilisk-team)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
 

@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** Basilisk-free handoff skeleton (every RPC returns UNIMPLEMENTED)
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build step 1 (§12): spacecraft, SPICE and eclipse; every sensor kind, pacing and non-zero commands are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -11,7 +11,7 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
 
 ## 1. Ownership
 
-- This folder holds the skeleton, the pinned kernel manifest and this brief. The
+- This folder holds the service, the pinned kernel manifest and this brief. The
   Basilisk/SPICE team implements everything that imports Basilisk.
 - Keep the RPC names and field meanings in `argus/basilisk/v1/basilisk_service.proto`.
   Schema changes are additive only and go through `Argus.Contracts` with the matching Core
@@ -23,10 +23,10 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
   only after reconciling it with D2, D3 and D8: SPICE only through `spiceInterface`, no
   standalone SPICE worker or offline tables, and live runs rather than recording replay.
 
-Code layout: `argus_basilisk/servicer.py` (the three RPCs, §3) will call modules
-that the team fills in: `validation.py` (§3), `scenario.py` (§4 to §8), `sensors.py` (§9),
-`kernels.py` (§8) and `seeds.py` (§10). The local kernel verifier is implemented;
-the other modules remain placeholders. `scripts/fetch_kernels.py` is the SPICE team's
+Code layout: `argus_basilisk/servicer.py` (the three RPCs and the lifecycle, §3) calls
+`validation.py` (§3), `kernels.py` (§8) and `scenario.py` (§4 to §8), which builds the
+spacecraft, SPICE and eclipse (BSK-3, #16). `sensors.py` (§9) and `seeds.py` (§10) remain
+placeholders. `scripts/fetch_kernels.py` is the SPICE team's
 fetch/verify tool (§8).
 
 ## 2. Install and run
@@ -70,7 +70,8 @@ Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version fork
   `uv.lock` and `requirements.txt` disagree.
 - The kernels are pinned separately, by SHA-256 in `kernel_sets/` (§8).
 
-- The skeleton needs only `pip install -e .`; the `basilisk` extra adds `bsk==2.11.1`.
+- The service needs the `basilisk` extra (`bsk==2.11.1`); `validation.py`, `kernels.py` and
+  their tests run without it.
 - The endpoint comes from `--endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
   `127.0.0.1:50051`. v1 is an insecure channel, so non-loopback hosts are refused.
 - Generated code goes to `generated/` and kernel files to `kernels/`; both are gitignored.
@@ -208,7 +209,7 @@ when it is linked, so an unread CSS would report a zero payload that still passe
 |---|---|
 | `spacecraft` | `spacecraft.scStateOutMsg`: `r_BN_N`, `v_BN_N`, `sigma_BN` as written, `omega_BN_B` |
 | `earth`, `sun` | `spiceInterface.planetStateOutMsgs`: `PlanetName`, `PositionVector`, `VelocityVector`, `J20002Pfix`, `J20002Pfix_dot`, `computeOrient` |
-| `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0]` read through its reader, field `illuminationFactor` (1 sunlit, 0 umbra; `shadowFactor` is its deprecated alias and warns on every read); always set |
+| `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0]` read through its reader (1 sunlit, 0 umbra); always set. In bsk 2.11.1 the reader returns the `eclipse` module's payload, whose only field is the C name `shadowFactor` and reads without a warning; `illuminationFactor` is a Python alias that exists only on `messaging.EclipseMsgPayload` |
 | `sensor_samples` | One per sensor whose period divides `sim_time_ns`, with `sample_time_ns` from the subscribed reader's `timeWritten()`; measurement unset when the sensor ran without data |
 | `pacing_overrun_count` | `clockSynch.clockOutMsg.overrunCounter`; 0 when unpaced |
 
@@ -245,7 +246,7 @@ kernel directory, duplicates and kernel/support overlap are rejected.
 
 Support files use the agreed format in [Manifest format](#manifest-format); the verifier
 reads only `file` and `sha256`. `argus-2026-10-20` pins `WMM2025.COF` this way.
-`ConfigureRun` remains a skeleton until BSK-3 (#16) wires these modules together.
+`ConfigureRun` calls `load_kernel_set` before building anything (BSK-3, #16).
 
 Run the synthetic, offline verifier tests from `Argus.Basilisk/`:
 
@@ -254,9 +255,11 @@ python -m pytest tests -q
 ```
 
 Install the `test` extra to obtain pytest (`pip install -e '.[test]'`); Basilisk and
-generated protobuf modules are not needed by these tests.
+generated protobuf modules are not needed by these tests. `tests/test_service.py` needs the
+`basilisk` extra. Its live-run tests also need the P0 set `argus-2026-10-20` in `kernels/`,
+and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped without its files.
 
-### Scenario integration (planned)
+### Scenario integration
 
 - Kernel manifests live in `kernel_sets/<id>.json`. P0 (`HostScenario`) uses
   `argus-2026-10-20`; `argus-2026-09-25` stays for the §13 SPICE check. An ID is immutable:
@@ -264,11 +267,16 @@ generated protobuf modules are not needed by these tests.
 - Before loading, check that each file exists in `kernels/` and matches its SHA-256;
   otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
   (below) puts the files there beforehand.
-- Build `spiceInterface.SpiceInterface()` directly and call `addKernelPaths` with the
-  manifest files in order. Never use the `createSpiceInterface` defaults, which load
-  de430 through pooch. A failed kernel load raises `BasiliskError` from `bskLogger.bskError`
-  during `InitializeSimulation`; map it to FAILED_PRECONDITION. The SHA-256 check stays,
-  because it also catches a wrong file that loads fine.
+- Build `spiceInterface.SpiceInterface(auto_configure_kernels=False)` directly and call
+  `addKernelPaths` with the manifest files in order. In bsk 2.11.1 the plain constructor
+  fetches its default kernels (de430 and others, about 120 MB) through pooch, and the
+  `createSpiceInterface` defaults do the same. Do not import `simIncludeGravBody` either: it
+  imports `dataFetcher`, which sends a request to github.com at import time; `scenario.py`
+  builds the two point-mass `GravBodyData` itself.
+- A kernel that cannot be loaded raises `BasiliskError` during `InitializeSimulation`; it is
+  FAILED_PRECONDITION. A file that loads but lacks data (no leap seconds, no ITRF93 for the
+  epoch) is not an error until CSPICE needs that data, and then CSPICE aborts the process.
+  The SHA-256 check and the `fetch_kernels.py` coverage check are what prevent that.
 - `addPlanetNames(["earth", "sun"])` in gravity-body order; `planetFrames = ["ITRF93", ""]`
   (the default `IAU_EARTH` is silently wrong, and a non-empty frame forces
   `computeOrient`); `referenceBase = "j2000"`; `zeroBase = "Earth"`. Echo the Earth frame in
@@ -409,7 +417,7 @@ with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the sh
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | This skeleton; a non-zero command; a sensor kind or magnetometer noise not built yet; `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A non-zero command; a sensor kind or magnetometer noise not built yet; `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 
