@@ -59,10 +59,11 @@ namespace Argus.Simulation.Core
                 0.0);
             Vector3d velocityEcef = RotateZ(velocityEci - earthCrossPosition, -earthAngle);
 
-            Vector3d bodyX = velocityEcef.Normalized();
+            // Local-vertical local-horizontal body frame: x along the inertial velocity, z to nadir.
+            // On a circular orbit it turns about the orbit normal (-y) at the mean motion.
+            Vector3d bodyX = RotateZ(velocityEci.Normalized(), -earthAngle);
             Vector3d bodyZ = (-positionEcef).Normalized();
-            Vector3d bodyY = Vector3d.Cross(bodyZ, bodyX).Normalized();
-            bodyX = Vector3d.Cross(bodyY, bodyZ).Normalized();
+            Vector3d bodyY = Vector3d.Cross(bodyZ, bodyX);
 
             return new SpacecraftState(
                 sequence,
@@ -71,11 +72,7 @@ namespace Argus.Simulation.Core
                 positionEcef,
                 velocityEcef,
                 Quaterniond.FromBasis(bodyX, bodyY, bodyZ),
-                // TODO(fixture): not omega_BN_B (see SpacecraftState). With x along the ECEF
-                // velocity the body rate is about (0, -n, yaw rate), exactly (0, -n, 0) only for
-                // equatorial orbits. Derive it from the frame derivative, or align x with the
-                // inertial velocity to get (0, -n, 0).
-                new Vector3d(0.0, _meanMotionRadiansPerSecond, 0.0),
+                new Vector3d(0.0, -_meanMotionRadiansPerSecond, 0.0),
                 ReferenceFrame.AnalyticEarthFixed);
         }
 
