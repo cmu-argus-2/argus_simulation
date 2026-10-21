@@ -39,6 +39,9 @@ jobs:
       - name: Run headless EditMode tests
         run: dotnet test headless/Tests/Argus.Simulation.Tests.EditMode.Headless.csproj --configuration Release
 
+      - name: Run headless host tests
+        run: dotnet test headless/Host.Tests/Argus.Simulation.Host.Tests.csproj --configuration Release
+
       - name: Compile all contract schemas
         shell: bash
         run: |
