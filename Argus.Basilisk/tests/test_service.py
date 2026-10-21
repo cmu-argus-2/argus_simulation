@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import grpc
 import numpy as np
@@ -133,6 +134,22 @@ def test_kernel_load_failure_is_failed_precondition(service, monkeypatch, tmp_pa
     assert "vanished.bsp" in details
 
 
+def test_configure_run_echoes_sensor_ids_in_request_order(service, monkeypatch, tmp_path):
+    """Sensor IDs live in SensorConfiguration.definition; checked before any kind is built."""
+    _, stub = service
+    window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
+    kernel_set = KernelSet("argus-2026-09-25", (tmp_path / "unused.bsp",), window, {})
+    monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: kernel_set)
+    monkeypatch.setattr(servicer_module, "SUPPORTED_SENSOR_KINDS", frozenset({"imu", "magnetometer", "light_sensor"}))
+    monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set: SimpleNamespace(
+        spice_earth_frame="ITRF93"))
+    request = p0_default_request()
+    response = stub.ConfigureRun(request)
+    assert list(response.configured_sensor_ids) == [
+        sensor.definition.sensor_id for sensor in request.configuration.sensors]
+    assert response.configured_sensor_ids[:2] == ["imu.main", "mag.main"]
+
+
 def test_concurrent_call_is_resource_exhausted(service):
     servicer, stub = service
     with servicer._lock:
@@ -143,6 +160,7 @@ def test_building_a_scenario_never_downloads(tmp_path):
     """bsk 2.11.1 fetches de430 through pooch when SpiceInterface is built with defaults (D3)."""
     script = """
 import sys
+from types import SimpleNamespace
 sys.path[:0] = [".", "tests"]
 attempts = []
 def audit(event, args):

@@ -120,7 +120,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
             run_id=configuration.run_id,
             kernel_set_id=kernel_set.kernel_set_id,
             fixed_step_ns=configuration.fixed_step_ns,
-            configured_sensor_ids=[sensor.sensor_id for sensor in configuration.sensors],
+            configured_sensor_ids=[sensor.definition.sensor_id for sensor in configuration.sensors],
             basilisk_version=BASILISK_VERSION,
             spice_earth_frame=scenario.spice_earth_frame,
         )
