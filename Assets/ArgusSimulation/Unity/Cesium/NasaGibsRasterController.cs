@@ -44,6 +44,12 @@ namespace Argus.Simulation.Unity
 
         public string ObservationDateUtc => observationDateUtc;
 
+        public void ConfigureSunlight(Light source)
+        {
+            sunlight = source;
+            _lastNightCenterLongitude = float.NaN;
+        }
+
         // Sun input: the direction from the scene towards the Sun, in Unity world axes. SunLightDriver
         // feeds it from EnvironmentState (UNITY-3); until something sets it, the controller reads the
         // scene's directional light.
@@ -224,8 +230,7 @@ namespace Argus.Simulation.Unity
                 ConfigureOverlay(
                     _nightOverlayEast,
                     NasaGibsUrl.BuildTemplate(nightLayer, nightDate),
-                    // TODO(cesium): the default tileset material has overlay slots 0-2 only, so
-                    // key "3" is never drawn and night lights past the antimeridian are missing.
+                    // Foundation's project-owned tileset material supports overlay slots 0-3.
                     "3",
                     true,
                     90.0);
