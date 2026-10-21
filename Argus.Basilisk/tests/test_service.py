@@ -1,4 +1,4 @@
-"""BSK-3 service acceptance (README §13) over a real in-process gRPC server.
+"""Service acceptance (README §13) over a real in-process gRPC server: BSK-3 and the IMU (BSK-4).
 
 Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
 argus-2026-10-20 in kernels/, and the SPICE reference test needs argus-2026-09-25
@@ -25,7 +25,7 @@ from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
-from test_validation import p0_default_request, zero_command  # noqa: E402
+from test_validation import p0_default_request, set_quaternion, set_vector, zero_command  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 STEP_NS = 100_000_000
@@ -76,9 +76,16 @@ def service():
 
 
 def configure_request():
-    """The P0 default without sensors, which BSK-4 (#17) to BSK-6 (#19) add."""
+    """The P0 default without sensors."""
     request = p0_default_request()
     del request.configuration.sensors[:]
+    return request
+
+
+def imu_request():
+    """The P0 default with only its IMU; BSK-5 (#18) and BSK-6 (#19) add the other sensors."""
+    request = p0_default_request()
+    del request.configuration.sensors[1:]
     return request
 
 
@@ -122,8 +129,10 @@ def test_calls_need_a_configured_run(service):
 
 def test_configure_run_rejects_before_building(service):
     _, stub = service
-    # Every sensor kind is still UNIMPLEMENTED.
-    assert status_of(stub.ConfigureRun, p0_default_request())[0] == grpc.StatusCode.UNIMPLEMENTED
+    # The magnetometer and the light sensors are still UNIMPLEMENTED.
+    code, details = status_of(stub.ConfigureRun, p0_default_request())
+    assert code == grpc.StatusCode.UNIMPLEMENTED
+    assert "'magnetometer'" in details and "'imu'" not in details
 
     unknown = configure_request()
     unknown.configuration.kernel_set_id = "no-such-set"
@@ -187,8 +196,10 @@ from argus_basilisk.scenario import KernelLoadError, Scenario
 from test_validation import p0_default_request
 window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
 vanished = KernelSet("x", (Path(sys.argv[1]) / "vanished.bsp",), window, {})
+configuration = p0_default_request().configuration
+del configuration.sensors[1:]  # The IMU; the other P0 kinds are not built yet.
 try:
-    Scenario(p0_default_request().configuration, vanished)
+    Scenario(configuration, vanished)
 except KernelLoadError:
     pass
 else:
@@ -296,3 +307,72 @@ def test_stale_message_is_internal_and_fails_the_run(service):
 
     stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
     assert stub.Step(step_request(0)).sim_time_ns == 0
+
+
+# --- The IMU (BSK-4) ---------------------------------------------------------------------
+
+
+@real_kernels
+def test_configure_run_with_an_imu_is_accepted(service):
+    _, stub = service
+    assert list(stub.ConfigureRun(imu_request()).configured_sensor_ids) == ["imu.main"]
+
+
+@real_kernels
+def test_noise_free_imu_reads_the_body_rate_and_free_fall(service):
+    _, stub = service
+    request = imu_request()
+    configuration = request.configuration
+    # Tumbling with unequal inertia, so the body rate changes every step.
+    set_vector(configuration.spacecraft.inertia_body_kg_m2.row1, (0.0, 3.0e-3, 0.0))
+    set_vector(configuration.spacecraft.initial_angular_velocity_body_rad_per_s, (0.05, -0.2, 0.1))
+    imu = configuration.sensors[0].imu
+    imu.gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
+    imu.gyroscope.resolution_rad_per_s = 0.0
+    imu.accelerometer.noise_density_m_per_s2_per_sqrt_hz = 0.0
+    imu.accelerometer.resolution_m_per_s2 = 0.0
+    # A quarter turn about body z: (x, y, z)_sensor = (y, -x, z)_body.
+    set_quaternion(configuration.sensors[0].definition.mount.sensor_to_body, (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)))
+    stub.ConfigureRun(request)
+    responses = [stub.Step(step_request(n)) for n in range(20)]
+
+    # The first firing has no data (README §9).
+    first = responses[0].sensor_samples
+    assert [(sample.sensor_id, sample.sample_time_ns) for sample in first] == [("imu.main", 0)]
+    assert first[0].WhichOneof("measurement") is None
+
+    rates = np.array([xyz(response.spacecraft.omega_bn_body_rad_per_s) for response in responses[1:]])
+    assert np.abs(np.diff(rates, axis=0)).min() > 1e-6
+    for response, rate in zip(responses[1:], rates):
+        (sample,) = response.sensor_samples
+        assert sample.sample_time_ns == response.sim_time_ns
+        expected = [rate[1], -rate[0], rate[2]]
+        assert np.allclose(xyz(sample.imu.angular_velocity_sensor_rad_per_s), expected, rtol=0.0, atol=1e-15)
+        assert np.abs(xyz(sample.imu.specific_force_sensor_m_per_s2)).max() < 1e-12
+
+
+@real_kernels
+def test_imu_samples_only_on_its_period(service):
+    _, stub = service
+    request = imu_request()
+    request.configuration.sensors[0].definition.sample_period_ns = 2 * STEP_NS
+    stub.ConfigureRun(request)
+    counts = [len(stub.Step(step_request(n)).sensor_samples) for n in range(6)]
+    assert counts == [1, 0, 1, 0, 1, 0]
+
+
+@real_kernels
+def test_imu_noise_repeats_bit_for_bit_after_reset(service):
+    _, stub = service
+    stub.ConfigureRun(imu_request())
+
+    def run():
+        return [stub.Step(step_request(n)) for n in range(100)]
+
+    first = run()
+    gyro = np.array([xyz(r.sensor_samples[0].imu.angular_velocity_sensor_rad_per_s) for r in first[1:]])
+    assert np.unique(gyro, axis=0).shape[0] > 1  # Noise is on.
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    second = run()
+    assert [r.SerializeToString(deterministic=True) for r in first] == [
+        r.SerializeToString(deterministic=True) for r in second]
