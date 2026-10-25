@@ -49,7 +49,7 @@ Run the service tests with `uv run --frozen python -m pytest -q`. Tests that nee
 kernels are skipped until `kernels/` is filled.
 
 The service is built in steps ([Argus.Basilisk/README.md §12](Argus.Basilisk/README.md#12-build-order)).
-It runs the IMU. Until the magnetometer and light sensors exist, a run that configures them,
+It runs the IMU and the magnetometer. Until the light sensors exist, a run that configures them,
 such as the host's P0 run below, is rejected with UNIMPLEMENTED.
 
 ## Build and test the headless core

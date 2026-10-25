@@ -11,9 +11,8 @@ import math
 import re
 from typing import Protocol
 
-# SensorConfiguration.profile oneof cases the service can build. BSK-5 (#18) adds "magnetometer"
-# and BSK-6 (#19) "light_sensor".
-SUPPORTED_SENSOR_KINDS: frozenset[str] = frozenset({"imu"})
+# SensorConfiguration.profile oneof cases the service can build. BSK-6 (#19) adds "light_sensor".
+SUPPORTED_SENSOR_KINDS: frozenset[str] = frozenset({"imu", "magnetometer"})
 
 # Core ClassicalOrbitElements: periapsis above the equator also catches an altitude entered as a.
 EARTH_EQUATORIAL_RADIUS_M = 6_378_137.0

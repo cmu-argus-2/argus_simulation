@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 and 2 (§12): spacecraft, SPICE, eclipse and the IMU; the magnetometer, light sensors, pacing and non-zero commands are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 3 (§12): spacecraft, SPICE, eclipse, the IMU and the magnetometer; the light sensors, pacing and non-zero commands are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -26,7 +26,7 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
 Code layout: `argus_basilisk/servicer.py` (the three RPCs and the lifecycle, §3) calls
 `validation.py` (§3), `kernels.py` (§8) and `scenario.py` (§4 to §8), which builds the
 spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensors that `sensors.py` (§9) builds
-with seeds from `seeds.py` (§10); the IMU is built (BSK-4, #17). `scripts/fetch_kernels.py` is the SPICE team's
+with seeds from `seeds.py` (§10); the IMU (BSK-4, #17) and the magnetometer (BSK-5, #18) are built. `scripts/fetch_kernels.py` is the SPICE team's
 fetch/verify tool (§8).
 
 ## 2. Install and run
@@ -113,7 +113,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
-   `SUPPORTED_SENSOR_KINDS` holds `"imu"` (BSK-4, #17); BSK-5 (#18) and BSK-6 (#19) add theirs; pacing,
+   `SUPPORTED_SENSOR_KINDS` holds `"imu"` (BSK-4, #17) and `"magnetometer"` (BSK-5, #18); BSK-6 (#19) adds `"light_sensor"`; pacing,
    magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22)
    and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
@@ -390,6 +390,12 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 - `stateInMsg` from `scStateOutMsg`; `magInMsg` from `MagneticFieldWMM.envOutMsgs[k]`, set up
   with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
   `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses WMM2025 only.
+- The scenario builds one `MagneticFieldWMM` in the dynamics task, after eclipse, only when a
+  magnetometer is configured, and asserts freshness on `envOutMsgs[0]` at every step. A kernel
+  set without `WMM2025.COF` cannot serve a magnetometer: ConfigureRun returns
+  FAILED_PRECONDITION before SPICE loads anything.
+- The magnetometer measures on its first firing, at t = 0, since the field is written earlier in
+  the same t_n: `tam_S = scale (C_SB C_BN B_N + bias)`, clipped to ±range.
 - `WMM2025.COF` is not in the `bsk` wheel (its `supportData` is pruned, and
   `dataFetcher.get_path` downloads it on first use). It is pinned like the kernels, as a
   `support_files` entry of `argus-2026-10-20` checked before the build, and never downloaded
@@ -421,7 +427,7 @@ with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the sh
 |---|---|
 | INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof |
 | NOT_FOUND | No manifest for `kernel_set_id` |
-| FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; run FAILED |
+| FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
 | UNIMPLEMENTED | A non-zero command; a sensor kind or magnetometer noise not built yet; `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |

@@ -1,8 +1,8 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order steps 1 and 2 (README §12): spacecraft, SPICE, eclipse and the IMU. The magnetometer
-and light sensors (§9), pacing (§5) and actuators (G1) are rejected by validation before a
-Scenario is built.
+Build order steps 1 to 3 (README §12): spacecraft, SPICE, eclipse, the IMU, and the magnetometer
+with MagneticFieldWMM. The light sensors (§9), pacing (§5) and actuators (G1) are rejected by
+validation before a Scenario is built.
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
 pass. Each Scenario owns a fresh SimBaseClass and fresh modules; Reset builds a new one.
@@ -14,9 +14,9 @@ import math
 import numpy as np
 
 from Basilisk import __version__ as BASILISK_VERSION
-from Basilisk.architecture import astroConstants
+from Basilisk.architecture import astroConstants, messaging
 from Basilisk.architecture.bskLogging import BasiliskError
-from Basilisk.simulation import eclipse, gravityEffector, spacecraft, spiceInterface
+from Basilisk.simulation import eclipse, gravityEffector, magneticFieldWMM, spacecraft, spiceInterface
 from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
@@ -48,10 +48,15 @@ SENSOR_TASK_PRIORITY = 100
 SPICE_PRIORITY = 300
 SPACECRAFT_PRIORITY = 200
 ECLIPSE_PRIORITY = 100
+MAGNETIC_FIELD_PRIORITY = 90
+
+# The kernel-set support file MagneticFieldWMM reads (§8, §9).
+WMM_FILE = "WMM2025.COF"
 
 
 class KernelLoadError(Exception):
-    """SPICE rejected a verified kernel during InitializeSimulation (FAILED_PRECONDITION)."""
+    """A verified kernel set cannot serve the run (FAILED_PRECONDITION): SPICE rejected a kernel
+    during InitializeSimulation, or a support file the run needs is not in the set."""
 
 
 class StaleMessageError(Exception):
@@ -115,8 +120,27 @@ class Scenario:
         self.eclipse.addSpacecraftToModel(self.spacecraft.scStateOutMsg)
         self.sim.AddModelToTask(TASK_NAME, self.eclipse, ECLIPSE_PRIORITY)
 
+        # Magnetic field (§9), built only for a magnetometer: WMM2025 from the kernel set's
+        # verified support file, with the run epoch and the SPICE Earth. Nothing is downloaded.
+        self.magnetic_field = None
+        magnetic_field_msg = None
+        if any(sensor.WhichOneof("profile") == "magnetometer" for sensor in configuration.sensors):
+            wmm_path = kernel_set.support_files.get(WMM_FILE)
+            if wmm_path is None:
+                raise KernelLoadError(
+                    f"kernel set {kernel_set.kernel_set_id!r} has no {WMM_FILE}, which a magnetometer needs")
+            self.magnetic_field = magneticFieldWMM.MagneticFieldWMM()
+            self.magnetic_field.ModelTag = "magneticFieldWMM"
+            self.magnetic_field.configureWMMFile(str(wmm_path))
+            self._epoch_msg = _epoch_msg(configuration.epoch_utc)
+            self.magnetic_field.epochInMsg.subscribeTo(self._epoch_msg)
+            self.magnetic_field.planetPosInMsg.subscribeTo(self.spice.planetStateOutMsgs[EARTH_INDEX])
+            self.magnetic_field.addSpacecraftToModel(self.spacecraft.scStateOutMsg)
+            self.sim.AddModelToTask(TASK_NAME, self.magnetic_field, MAGNETIC_FIELD_PRIORITY)
+            magnetic_field_msg = self.magnetic_field.envOutMsgs[0]
+
         # Sensors (§9), each on the task for its sample period, after dynamics.
-        self.sensors = build_sensors(configuration, self.spacecraft.scStateOutMsg)
+        self.sensors = build_sensors(configuration, self.spacecraft.scStateOutMsg, magnetic_field_msg)
         for period_ns in sorted({sensor.sample_period_ns for sensor in self.sensors}):
             process.addTask(self.sim.CreateNewTask(f"sensors_{period_ns}", period_ns), SENSOR_TASK_PRIORITY)
         for sensor in self.sensors:
@@ -132,6 +156,8 @@ class Scenario:
                 self.spice.planetStateOutMsgs[SUN_INDEX].addSubscriber(),
             "eclipse.eclipseOutMsgs[0]": self.eclipse.eclipseOutMsgs[0].addSubscriber(),
         }
+        if magnetic_field_msg is not None:
+            self.readers["magneticFieldWMM.envOutMsgs[0]"] = magnetic_field_msg.addSubscriber()
 
         try:
             self.sim.InitializeSimulation()
@@ -201,6 +227,19 @@ class Scenario:
             _check_finite_fields(measurement, sensor.sensor_id)
             getattr(sample, sensor.kind).CopyFrom(measurement)
         return sample
+
+
+def _epoch_msg(timestamp) -> messaging.EpochMsg:
+    """The run epoch as an EpochMsg for MagneticFieldWMM (§4: the same epoch as SPICE)."""
+    whole = datetime.fromtimestamp(timestamp.seconds, tz=timezone.utc)
+    payload = messaging.EpochMsgPayload()
+    payload.year = whole.year
+    payload.month = whole.month
+    payload.day = whole.day
+    payload.hours = whole.hour
+    payload.minutes = whole.minute
+    payload.seconds = whole.second + timestamp.nanos / 1e9
+    return messaging.EpochMsg().write(payload)
 
 
 def _gravity_body(name: str, planet_state_msg) -> gravityEffector.GravBodyData:

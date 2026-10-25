@@ -158,17 +158,17 @@ def test_p0_default_fails_only_with_unimplemented_sensor_kinds():
     request = p0_default_request()
     problems = configure_run_problems(request, coverage_utc=COVERAGE)
 
-    # The IMU is built (BSK-4); the magnetometer and the six light sensors are not.
-    assert [problem.code for problem in problems] == ["UNIMPLEMENTED"] * 7
-    kinds = ["magnetometer"] + ["light_sensor"] * 6
-    for index, (problem, kind) in enumerate(zip(problems, kinds), start=1):
+    # The IMU (BSK-4) and the magnetometer (BSK-5) are built; the six light sensors are not.
+    assert [problem.code for problem in problems] == ["UNIMPLEMENTED"] * 6
+    kinds = ["light_sensor"] * 6
+    for index, (problem, kind) in enumerate(zip(problems, kinds), start=2):
         assert problem.details.startswith(f"configuration.sensors[{index}].{kind}: sensor kind {kind!r}")
         assert request.configuration.sensors[index].definition.sensor_id in problem.details
 
     with pytest.raises(ValidationError) as error:
         validate_configure_run(request, coverage_utc=COVERAGE)
     assert error.value.code == "UNIMPLEMENTED"
-    assert error.value.details.count("is not built yet") == 7
+    assert error.value.details.count("is not built yet") == 6
 
 
 def test_p0_default_passes_once_every_kind_is_built():
