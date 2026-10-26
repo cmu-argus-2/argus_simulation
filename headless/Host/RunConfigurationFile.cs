@@ -143,7 +143,7 @@ namespace Argus.Simulation.Host
             Fields(
                 element,
                 path,
-                new[] { "sensorId", "modelName", "frameId", "samplePeriodSeconds", "source", "mount" },
+                new[] { "sensorId", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount" },
                 new[] { "imu", "magnetometer", "lightSensor" });
 
             JsonElement mount = Field(element, "mount", path);
@@ -160,7 +160,8 @@ namespace Argus.Simulation.Host
                 Text(element, "frameId", path),
                 Number(element, "samplePeriodSeconds", path),
                 Text(element, "source", path),
-                sensorMount);
+                sensorMount,
+                Boolean(element, "controllerVisible", path));
             Check(definition.IsValid, path, "needs non-blank sensorId, modelName, frameId and source, and samplePeriodSeconds > 0");
 
             SensorConfiguration configuration;
@@ -331,6 +332,17 @@ namespace Argus.Simulation.Host
             }
 
             return result;
+        }
+
+        private static bool Boolean(JsonElement element, string name, string path)
+        {
+            JsonElement value = Field(element, name, path);
+            if (value.ValueKind != JsonValueKind.True && value.ValueKind != JsonValueKind.False)
+            {
+                throw Error(Join(path, name), "must be true or false");
+            }
+
+            return value.GetBoolean();
         }
 
         private static string Text(JsonElement element, string name, string path)

@@ -81,7 +81,7 @@ namespace Argus.Simulation.Tests
                 "run-1",
                 "test-backend",
                 state,
-                ActuatorCommandSet.None(sequence, time),
+                appliedCommands: null,
                 sensorMeasurements: measurements);
             return new SensorSampleContext("run-1", simulationState);
         }

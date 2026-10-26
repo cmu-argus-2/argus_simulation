@@ -28,6 +28,7 @@
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
         "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
@@ -59,6 +60,7 @@
       "frameId": "mag_main",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
         "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
@@ -76,6 +78,7 @@
       "frameId": "light_px",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.05, 0.0, 0.0],
         "sensorToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": 0.5 }
@@ -94,6 +97,7 @@
       "frameId": "light_mx",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [-0.05, 0.0, 0.0],
         "sensorToBody": { "x": -0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
@@ -112,6 +116,7 @@
       "frameId": "light_py",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.05, 0.0],
         "sensorToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
@@ -130,6 +135,7 @@
       "frameId": "light_my",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, -0.05, 0.0],
         "sensorToBody": { "x": -0.5, "y": -0.5, "z": 0.5, "w": -0.5 }
@@ -148,6 +154,7 @@
       "frameId": "light_pz",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.05675],
         "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
@@ -166,6 +173,7 @@
       "frameId": "light_mz",
       "samplePeriodSeconds": 0.1,
       "source": "basilisk",
+      "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, -0.05675],
         "sensorToBody": { "x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0 }

@@ -25,6 +25,10 @@ message SensorDefinition {
   // Core SamplePeriodSeconds x 1e9, exact; a positive multiple of fixed_step_ns.
   uint64 sample_period_ns = 2;
   SensorMount mount = 3;
+  // Core SensorDefinition.IsControllerVisible: false for ground-truth sensors, whose frames the
+  // gateway never forwards to a controller (D7). Unset means visible, so senders that predate the
+  // field keep every sensor visible. The Basilisk service does not read it.
+  optional bool controller_visible = 4;
 }
 
 // imuSensor rate channel. Basilisk 2.11.1 keeps one Gauss-Markov state per axis, so noise density

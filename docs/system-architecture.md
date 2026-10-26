@@ -49,7 +49,7 @@ flowchart TB
     ctrl["Controllers<br/>tests (planned: flight software SIL, flight computer HIL)"]
 
     subgraph CORE["Headless C# — Argus.Simulation.Core + headless/Host"]
-        gate["Simulation Gateway<br/>(planned: observations, command log)"]
+        gate["Simulation Gateway<br/>observations (planned: command log)"]
         subgraph ENG["ISimulationEngine"]
             beng["BasiliskEngine (headless/Host)<br/>gRPC client"]
             ana["Analytic engine<br/>development and test fixture"]

@@ -59,17 +59,21 @@ namespace Argus.Simulation.Core
                 _phaseDegrees);
         }
 
-        public void Reset()
+        public bool TryReset(out SimulationState state)
         {
             if (!_configuration.IsValid)
             {
                 _orbit = null;
-                return;
+                state = default;
+                return false;
             }
 
             Initialize(_configuration);
+            return TrySample(0, 0.0, out state);
         }
 
+        // Command k acts over [t_k, t_k+1) and is recorded in the state at t_k+1; it does not
+        // perturb the orbit.
         public bool TryStep(SimulationStepInput input, out SimulationState state)
         {
             if (_orbit == null || !input.IsValid)
@@ -78,12 +82,34 @@ namespace Argus.Simulation.Core
                 return false;
             }
 
-            SpacecraftState spacecraft = _orbit.Sample(input.Sequence, input.SimulationTimeSeconds);
+            long sequence = input.Sequence + 1;
             state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
-                spacecraft,
+                _orbit.Sample(sequence, sequence * _configuration.FixedStepSeconds),
                 input.Commands);
+            return state.IsValid;
+        }
+
+        // The state at any step, with no applied command: Unity's analytic state source and orbit
+        // trail predict states directly instead of stepping a run.
+        public bool TrySample(long sequence, double simulationTimeSeconds, out SimulationState state)
+        {
+            if (_orbit == null ||
+                sequence < 0 ||
+                simulationTimeSeconds < 0.0 ||
+                double.IsNaN(simulationTimeSeconds) ||
+                double.IsInfinity(simulationTimeSeconds))
+            {
+                state = default;
+                return false;
+            }
+
+            state = new SimulationState(
+                _configuration.RunId,
+                BackendName,
+                _orbit.Sample(sequence, simulationTimeSeconds),
+                appliedCommands: null);
             return state.IsValid;
         }
     }
