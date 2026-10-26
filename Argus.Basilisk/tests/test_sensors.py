@@ -7,7 +7,8 @@ import pytest
 
 pytest.importorskip("Basilisk")
 
-from Basilisk.simulation import spacecraft  # noqa: E402
+from Basilisk.architecture import astroConstants  # noqa: E402
+from Basilisk.simulation import extForceTorque, gravityEffector, spacecraft  # noqa: E402
 from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
@@ -151,6 +152,61 @@ def test_noise_free_imu_reads_the_body_rate_in_sensor_axes():
     assert np.abs(np.diff(truth, axis=0)).min() > 1e-6
     # Specific force at the centre of mass in free fall.
     assert np.abs(measured[:, 1]).max() < 1e-12
+
+
+def test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity():
+    """Port of accel_truth_test (dynamics/basilisk/experiments, PR #6): in Earth orbit with a
+    constant body force, AccelPlatform is F / m in sensor axes, and gravity is not sensed."""
+    configuration = imu_configuration()
+    profile = configuration.sensors[0].imu
+    profile.gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
+    profile.accelerometer.noise_density_m_per_s2_per_sqrt_hz = 0.0
+    profile.accelerometer.resolution_m_per_s2 = 0.0
+    set_vector(configuration.sensors[0].definition.mount.position_body_m, (0.0, 0.0, 0.0))
+
+    hub = make_hub()
+    hub.hub.omega_BN_BInit = [[0.0], [0.0], [0.0]]
+    earth = gravityEffector.GravBodyData()
+    earth.planetName = "earth_planet_data"
+    earth.mu = astroConstants.MU_EARTH * 1e9
+    earth.radEquator = astroConstants.REQ_EARTH * 1e3
+    earth.isCentralBody = True
+    hub.gravField.setGravBodies(gravityEffector.GravBodyVector([earth]))
+    radius = 6.878e6
+    hub.hub.r_CN_NInit = [[radius], [0.0], [0.0]]
+    hub.hub.v_CN_NInit = [[0.0], [math.sqrt(earth.mu / radius)], [0.0]]
+    force_body_n = np.array([0.5, -0.2, 0.1])
+    force = extForceTorque.ExtForceTorque()
+    force.extForce_B = force_body_n.reshape(3, 1).tolist()
+    hub.addDynamicEffector(force)
+    imu = Imu(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg)
+
+    sim = SimulationBaseClass.SimBaseClass()
+    process = sim.CreateNewProcess("dynamics")
+    process.addTask(sim.CreateNewTask("dynamics", STEP_NS), 200)
+    process.addTask(sim.CreateNewTask("sensors", STEP_NS), 100)
+    sim.AddModelToTask("dynamics", force, 110)
+    sim.AddModelToTask("dynamics", hub, 100)
+    for module in imu.modules:
+        sim.AddModelToTask("sensors", module)
+    state = hub.scStateOutMsg.addSubscriber()
+    sim.InitializeSimulation()
+
+    measured, velocities = [], []
+    for n in range(6):
+        sim.ConfigureStopTime(n * STEP_NS)
+        sim.ExecuteSimulation()
+        value = imu.measurement().specific_force_sensor_m_per_s2
+        measured.append([value.x, value.y, value.z])
+        velocities.append(list(state().v_BN_N))
+
+    # Sensor axes through the quarter turn about z: (x, y, z)_sensor = (y, -x, z)_body.
+    specific_force_body = force_body_n / hub.hub.mHub
+    expected = specific_force_body[[1, 0, 2]] * [1.0, -1.0, 1.0]
+    assert np.allclose(measured[1:], expected, rtol=0.0, atol=1e-10)
+    # The hub really accelerates under gravity (about 8.4 m/s^2), yet the reading holds only F / m.
+    inertial_acceleration = np.diff(velocities, axis=0) / (STEP_NS * 1e-9)
+    assert np.linalg.norm(inertial_acceleration, axis=1).min() > 8.0
 
 
 def test_first_firing_has_no_data_and_later_firings_do():
