@@ -60,7 +60,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `IStepDrivenStateSource` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
-| Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
+| Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
@@ -69,7 +69,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
-| Unity camera system | `CubeSatCameraRig` |
+| Unity camera system | `CubeSatCameraRig`, `NadirTilePriority` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
 | Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer` |

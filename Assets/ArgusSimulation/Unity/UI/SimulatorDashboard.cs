@@ -35,6 +35,7 @@ namespace Argus.Simulation.Unity
         private CesiumSpacecraftPoseDriver _poseDriver;
         private SimulationSensorRuntime _sensorRuntime;
         private CubeSatCameraRig _cameraRig;
+        private NadirTilePriority _nadirPriority;
         private NavigationEpisodeExporter _episodeExporter;
         private Camera _mainCamera;
         private Font _font;
@@ -138,6 +139,13 @@ namespace Argus.Simulation.Unity
                     _cameraRig = spacecraft.AddComponent<CubeSatCameraRig>();
                 }
                 _cameraRig.BuildIfNeeded();
+
+                _nadirPriority = spacecraft.GetComponent<NadirTilePriority>();
+                if (_nadirPriority == null)
+                {
+                    _nadirPriority = spacecraft.AddComponent<NadirTilePriority>();
+                }
+                _nadirPriority.Configure(_runner);
             }
 
             OrbitTrailRenderer trail = FindAnyObjectByType<OrbitTrailRenderer>();
@@ -653,6 +661,10 @@ namespace Argus.Simulation.Unity
             _statusText.color = _runner.IsRunning
                 ? new Color(0.3f, 1f, 0.58f)
                 : new Color(1f, 0.72f, 0.24f);
+            if (_nadirPriority != null && _nadirPriority.IsWarmingUp)
+            {
+                _statusText.text = $"● LOADING NADIR {_nadirPriority.WarmUpProgress:0}%";
+            }
             _pauseButtonText.text = _runner.IsRunning ? "PAUSE" : "RESUME";
 
             SpacecraftState state = _runner.LastState.Spacecraft;
@@ -752,6 +764,7 @@ namespace Argus.Simulation.Unity
             _orbitSource.PhaseDegrees += phaseDeltaDegrees;
             _orbitSource.AltitudeMeters += altitudeDeltaMeters;
             ProduceManualState();
+            _nadirPriority?.RequestWarmUp();
         }
 
         private void NudgeAttitude(Vector3 deltaDegrees)
@@ -775,6 +788,7 @@ namespace Argus.Simulation.Unity
 
             _poseDriver?.ResetManualAttitude();
             ProduceManualState();
+            _nadirPriority?.RequestWarmUp();
         }
 
         private void ProduceManualState()
@@ -829,6 +843,7 @@ namespace Argus.Simulation.Unity
             {
                 _runner.ResetSimulation();
                 _runner.StepOnce();
+                _nadirPriority?.RequestWarmUp();
             }
         }
 
