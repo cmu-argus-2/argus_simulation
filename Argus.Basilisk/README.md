@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build step 1 (§12): spacecraft, SPICE and eclipse; every sensor kind, pacing and non-zero commands are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 and 2 (§12): spacecraft, SPICE, eclipse and the IMU; the magnetometer, light sensors, pacing and non-zero commands are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -25,8 +25,8 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
 
 Code layout: `argus_basilisk/servicer.py` (the three RPCs and the lifecycle, §3) calls
 `validation.py` (§3), `kernels.py` (§8) and `scenario.py` (§4 to §8), which builds the
-spacecraft, SPICE and eclipse (BSK-3, #16). `sensors.py` (§9) and `seeds.py` (§10) remain
-placeholders. `scripts/fetch_kernels.py` is the SPICE team's
+spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensors that `sensors.py` (§9) builds
+with seeds from `seeds.py` (§10); the IMU is built (BSK-4, #17). `scripts/fetch_kernels.py` is the SPICE team's
 fetch/verify tool (§8).
 
 ## 2. Install and run
@@ -113,7 +113,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
-   `SUPPORTED_SENSOR_KINDS` starts empty and BSK-4 (#17) to BSK-6 (#19) add theirs; pacing,
+   `SUPPORTED_SENSOR_KINDS` holds `"imu"` (BSK-4, #17); BSK-5 (#18) and BSK-6 (#19) add theirs; pacing,
    magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22)
    and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
@@ -371,9 +371,15 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 - Profile fields map as the comments in `sensors.proto` state (`PMatrix*`, `setAMatrix*`,
   `setWalkBounds*`, `senRotBias`/`senTransBias`, `gyroScale`/`accelScale`,
   `senRotMax`/`senTransMax`, `setLSBs(accelerometer, gyroscope)`). Never call
-  `setErrorBounds*`: it is the same Gauss-Markov bound.
-- The first firing writes an empty message (`NominalReady` is false); send it with the
-  measurement unset, which Argus reports as Unavailable.
+  `setErrorBounds*`: it is the same Gauss-Markov bound. A walk bound of 0 leaves the walk
+  unbounded, as the module default of −1 does.
+- `sensors.Imu` builds the two modules. The channel a module does not report gets P = 0 and
+  A = 0, so the gyroscope module's accelerometer and the accelerometer module's gyroscope are
+  noise-free; the response takes `AngVelPlatform` from the gyroscope module and
+  `AccelPlatform` from the accelerometer module.
+- The first firing writes a zero-filled message at t = 0 (`NominalReady` is false until the
+  module has run once); send it with the measurement unset, which Argus reports as
+  Unavailable.
 - `AccelPlatform` includes the lever-arm terms dω/dt × r + ω × (ω × r): in free fall it is
   zero at the centre of mass, or anywhere on a non-rotating body.
 
