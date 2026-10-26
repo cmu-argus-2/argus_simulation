@@ -178,8 +178,9 @@ observation k with no actuation delay:
   rejected.
 
 `scenario` is the run configuration of G5, `SimulationConfiguration` (`headless/Host` reads it
-from a run configuration file). `seed` replaces the scenario's `RandomSeed`, so one scenario
-reruns with different noise. The same seed and scenario give the same observations.
+from a run configuration file). `seed` is non-negative and always replaces the scenario's
+`RandomSeed`; the run starts from that copy, so one scenario reruns with different noise. The
+same seed and scenario give the same observations.
 
 On the unchanged v1 Basilisk wire, the `StepRequest.command` of `Step(n)` acts over
 [t_n-1, t_n): the service writes it before running to t_n, and `Step(0)` carries a zero command
@@ -187,7 +188,7 @@ On the unchanged v1 Basilisk wire, the `StepRequest.command` of `Step(n)` acts o
 
 | Gateway | v1 Basilisk calls | Returns |
 |---|---|---|
-| `Reset(seed, scenario)` | `ConfigureRun` with the scenario and seed (or `Reset` when both are unchanged), then `Step(0)` with a zero command | observation 0 from the t_0 state |
+| `Reset(seed, scenario)` | `ConfigureRun` with the scenario carrying the seed, every time, then `Step(0)` with a zero command | observation 0 from the t_0 state |
 | `Step(command k)` | `Step(k + 1)` carrying command k | observation k+1 from the t_k+1 state |
 
 An observation holds only what a controller can see (D7):
