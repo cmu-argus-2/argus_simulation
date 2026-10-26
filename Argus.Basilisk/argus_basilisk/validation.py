@@ -160,13 +160,54 @@ def configure_run_problems(
     return problems.ranked()
 
 
-def validate_step_command(command, path: str = "command") -> None:
+def validate_step_request(request, fixed_step_ns: int) -> None:
+    """Raise for a StepRequest whose command is unset, non-finite, for the wrong step, or
+    non-zero (README §3 Step 3). The caller has checked run_id, sequence and sim_time_ns."""
+    _raise_first(step_request_problems(request, fixed_step_ns))
+
+
+def step_request_problems(request, fixed_step_ns: int) -> list[ValidationError]:
+    """Return every problem with a StepRequest's command, INVALID_ARGUMENT first.
+
+    Step(n) carries command n-1, which acts over [t_n-1, t_n) (target-architecture §4), so
+    command_sequence and command_time_ns must name step n-1. Step(0) follows no command: both
+    are unset and the command is zero.
+    """
+    problems = _Problems()
+    sequence = request.sequence
+    names = ("command_sequence", "command_time_ns")
+    if sequence == 0:
+        for name in names:
+            if request.HasField(name):
+                problems.invalid(name, "must be unset in Step(0), which follows no command", getattr(request, name))
+    else:
+        expected = {"command_sequence": sequence - 1, "command_time_ns": (sequence - 1) * fixed_step_ns}
+        for name in names:
+            if not request.HasField(name):
+                problems.unset(name)
+            elif getattr(request, name) != expected[name]:
+                problems.invalid(
+                    name, f"expected {expected[name]}, since Step({sequence}) carries command {sequence - 1}",
+                    getattr(request, name))
+
+    if not request.HasField("command"):
+        problems.unset("command")
+    else:
+        problems.extend(step_command_problems(request.command, first_step=sequence == 0))
+    return problems.ranked()
+
+
+def validate_step_command(command, path: str = "command", *, first_step: bool = False) -> None:
     """Raise for a Step ActuatorCommand that is unset, non-finite or non-zero (README §3 Step 3)."""
-    _raise_first(step_command_problems(command, path))
+    _raise_first(step_command_problems(command, path, first_step=first_step))
 
 
-def step_command_problems(command, path: str = "command") -> list[ValidationError]:
-    """Return every problem with a Step ActuatorCommand, INVALID_ARGUMENT first."""
+def step_command_problems(command, path: str = "command", *, first_step: bool = False) -> list[ValidationError]:
+    """Return every problem with a Step ActuatorCommand, INVALID_ARGUMENT first.
+
+    first_step: the command of Step(0), which acts over no interval, so a non-zero value is
+    INVALID_ARGUMENT rather than UNIMPLEMENTED.
+    """
     problems = _Problems()
     non_zero = []
     for name in ("reaction_wheel_torque_body_n_m", "magnetorquer_dipole_body_a_m2", "thruster_force_body_n"):
@@ -177,11 +218,16 @@ def step_command_problems(command, path: str = "command") -> list[ValidationErro
         if _check_finite_vector(problems, vector, f"{path}.{name}") and _components(vector) != (0.0, 0.0, 0.0):
             non_zero.append(name)
 
-    # Lifted by BSK-8 (#21) when actuators exist (G1).
     for name in non_zero:
-        problems.unimplemented(
-            f"{path}.{name}", "non-zero actuator commands are not built yet",
-            _components(getattr(command, name)))
+        if first_step:
+            problems.invalid(
+                f"{path}.{name}", "must be zero in Step(0), since no interval ends at t = 0",
+                _components(getattr(command, name)))
+        else:
+            # Lifted by BSK-8 (#21) when actuators exist (G1).
+            problems.unimplemented(
+                f"{path}.{name}", "non-zero actuator commands are not built yet",
+                _components(getattr(command, name)))
     return problems.ranked()
 
 

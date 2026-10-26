@@ -152,8 +152,9 @@ class Scenario:
             StaleMessageError: a returned message was stale or non-finite.
         """
         t_n = sequence * self.fixed_step_ns
-        # Step 5: for n > 0, write command n into the actuator inputs before running, so it acts
-        # over [t_n-1, t_n). It starts with actuators (G1); every command is zero until then.
+        # Step 5: for n > 0, write the request's command (command n-1) into the actuator inputs
+        # before running, so it acts over [t_n-1, t_n). It starts with actuators (G1); every
+        # command is zero until then.
         # A sensor that has not run before t_n runs without data at t_n (imuSensor's first firing).
         was_ready = [sensor.ready for sensor in self.sensors]
         self.sim.ConfigureStopTime(t_n)

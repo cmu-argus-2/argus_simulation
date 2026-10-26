@@ -182,14 +182,19 @@ from a run configuration file). `seed` is non-negative and always replaces the s
 `RandomSeed`; the run starts from that copy, so one scenario reruns with different noise. The
 same seed and scenario give the same observations.
 
-On the unchanged v1 Basilisk wire, the `StepRequest.command` of `Step(n)` acts over
-[t_n-1, t_n): the service writes it before running to t_n, and `Step(0)` carries a zero command
-(`Argus.Basilisk/README.md` §3):
+On the v1 Basilisk wire, the `StepRequest.command` of `Step(n)` is command n-1 and acts over
+[t_n-1, t_n): the service writes it before running to t_n. `command_sequence` and
+`command_time_ns` name step n-1, and the service rejects any other value, so a command sent in
+the wrong request is an error, never a silent one-step shift. `Step(0)` carries a zero command
+and neither field (`Argus.Basilisk/README.md` §3):
 
 | Gateway | v1 Basilisk calls | Returns |
 |---|---|---|
 | `Reset(seed, scenario)` | `ConfigureRun` with the scenario carrying the seed, every time, then `Step(0)` with a zero command | observation 0 from the t_0 state |
 | `Step(command k)` | `Step(k + 1)` carrying command k | observation k+1 from the t_k+1 state |
+
+Truth follows the same order: the state at t_k+1 records command k as its `AppliedCommands`,
+the command that produced it, and the state at t_0 records none (CORE-4, #40).
 
 An observation holds only what a controller can see (D7):
 

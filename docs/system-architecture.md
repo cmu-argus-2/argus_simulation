@@ -109,7 +109,8 @@ flowchart TB
 
 1. The controller calls `Reset(seed, scenario)`.
 2. The gateway returns the initial observation.
-3. The controller submits an actuator command for the next sequence/time.
+3. The controller submits command k, computed from observation k and carrying its
+   sequence k and time t_k; it acts over [t_k, t_k+1).
 4. The core validates the command and advances a fixed interval.
 5. Sensor models sample the resulting state.
 6. The gateway returns the next observation and termination/status information.

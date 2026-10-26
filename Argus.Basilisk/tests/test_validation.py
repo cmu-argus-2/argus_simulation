@@ -16,6 +16,7 @@ from argus_basilisk.validation import (
     check_utc_in_range,
     configure_run_problems,
     step_command_problems,
+    step_request_problems,
     timestamp_to_ns,
     validate_configure_run,
     validate_step_command,
@@ -438,6 +439,46 @@ def test_non_zero_step_command_is_unimplemented():
         validate_step_command(command)
     assert error.value.code == "UNIMPLEMENTED"
     assert error.value.details.startswith("command.reaction_wheel_torque_body_n_m")
+
+
+def step(sequence, command_sequence=None, command_time_ns=None):
+    request = service_pb.StepRequest(sequence=sequence, sim_time_ns=sequence * 100_000_000, command=zero_command())
+    if command_sequence is not None:
+        request.command_sequence = command_sequence
+    if command_time_ns is not None:
+        request.command_time_ns = command_time_ns
+    return request
+
+
+@pytest.mark.parametrize("request_, path", [
+    (step(0, 0, 0), "command_sequence: must be unset in Step(0)"),
+    (step(3), "command_sequence: required field is not set"),
+    # Command 3 sent in Step(3) would act a step late.
+    (step(3, 3, 200_000_000), "command_sequence: expected 2"),
+    (step(3, 2, 300_000_000), "command_time_ns: expected 200000000"),
+])
+def test_step_n_must_carry_command_n_minus_1(request_, path):
+    problems = step_request_problems(request_, 100_000_000)
+    assert {problem.code for problem in problems} == {"INVALID_ARGUMENT"}
+    assert problems[0].details.startswith(path)
+
+
+def test_step_command_timing_and_zero_step_zero():
+    assert step_request_problems(step(0), 100_000_000) == []
+    assert step_request_problems(step(3, 2, 200_000_000), 100_000_000) == []
+
+    first = step(0)
+    first.command.thruster_force_body_n.x = 1.0
+    assert [problem.code for problem in step_request_problems(first, 100_000_000)] == ["INVALID_ARGUMENT"]
+
+    later = step(3, 2, 200_000_000)
+    later.command.thruster_force_body_n.x = 1.0
+    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == ["UNIMPLEMENTED"]
+
+    # A command for the wrong step outranks the non-zero command it carries.
+    later.command_sequence = 3
+    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == [
+        "INVALID_ARGUMENT", "UNIMPLEMENTED"]
 
 
 def test_validation_never_imports_basilisk():
