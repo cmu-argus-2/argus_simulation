@@ -139,13 +139,16 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    the expected value.
 2. `sim_time_ns == n × fixed_step_ns`; otherwise INVALID_ARGUMENT.
 3. `command` has all three vectors and they are finite; otherwise INVALID_ARGUMENT. A
-   non-zero command is UNIMPLEMENTED until actuators exist (G1).
+   non-zero command is UNIMPLEMENTED until actuators exist (G1); from then, a non-zero
+   command in Step(0) is INVALID_ARGUMENT, since no interval ends at t = 0.
 4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
    otherwise OUT_OF_RANGE, checked before executing.
-5. Run to t_n: for n = 0, `ConfigureStopTime(0)` then `ExecuteSimulation()` (the t = 0
+5. For n > 0, write command n into the actuator input messages before running, so it acts
+   over [t_n-1, t_n): the gateway's command k, computed from the observation at t_k, arrives
+   as Step(k + 1) and shapes the returned state at t_k+1 with no actuation delay
+   (target-architecture §4). Never write it after running, or it would act one step late.
+6. Run to t_n: for n = 0, `ConfigureStopTime(0)` then `ExecuteSimulation()` (the t = 0
    pass); otherwise `ConfigureStopTime(n × fixed_step_ns)` then `ExecuteSimulation()`.
-6. Only after running to t_n, write command n into the actuator input messages, so it acts
-   over [t_n, t_n+1). Never write it before, or it would act one step early.
 7. Read every returned message through the reader subscribed at build time (§6) and assert
    `isWritten()` and `timeWritten() == t_n`, and that all values are finite. A failure is
    INTERNAL and the run becomes FAILED.

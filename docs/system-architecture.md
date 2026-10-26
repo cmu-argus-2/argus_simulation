@@ -119,8 +119,9 @@ This mode can run faster or slower than real time and is the default for SIL and
 On `main`, `SimulationGateway` exposes `Reset()` and `Step(commands)` and returns truth
 `SimulationState`s; `Reset(seed, scenario)`, observation returns (D7) and the decimated
 Unity stream (G2) are planned ([target-architecture.md §4](target-architecture.md#4-run-modes)).
-Computing command k from observation k, as steps 2-3 assume, needs an `ISimulationEngine`
-and gateway change (target-architecture §11).
+The step ordering that lets command k be computed from observation k, and what `scenario`
+and an observation hold, are decided in target-architecture §4; `ISimulationEngine` and the
+gateway change to match in CORE-4 (#40).
 
 ### 5.2 Hardware-in-the-loop mode
 

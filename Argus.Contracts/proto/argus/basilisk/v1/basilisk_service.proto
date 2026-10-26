@@ -25,8 +25,9 @@ service BasiliskSimulationService {
   // sequence 0, and frames repeat bit for bit.
   rpc Reset(ResetRequest) returns (ResetResponse);
   // ISimulationEngine.TryStep. Advances to t_n = sequence x fixed_step_ns (Step(0) runs the t = 0
-  // pass) and returns the state there; the request command applies over [t_n, t_n+1). With
-  // real_time_factor > 0, clockSynch paces it.
+  // pass) and returns the state there; the request command applies over [t_n-1, t_n), so it is
+  // written before running and Step(0) carries a zero command. With real_time_factor > 0,
+  // clockSynch paces it.
   rpc Step(StepRequest) returns (StepResponse);
 }
 
@@ -66,7 +67,7 @@ message StepRequest {
   uint64 sequence = 2;
   // n x fixed_step_ns.
   uint64 sim_time_ns = 3;
-  // Applies over [t_n, t_n+1); non-zero is UNIMPLEMENTED until G1.
+  // Applies over [t_n-1, t_n); zero in Step(0). Non-zero is UNIMPLEMENTED until G1.
   argus.sim.v1.ActuatorCommand command = 4;
 }
 

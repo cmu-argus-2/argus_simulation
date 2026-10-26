@@ -138,10 +138,10 @@ class Scenario:
             StaleMessageError: a returned message was stale or non-finite.
         """
         t_n = sequence * self.fixed_step_ns
+        # Step 5 (write command n into the actuator inputs before running, so it acts over
+        # [t_n-1, t_n)) starts with actuators (G1); every command is zero until then.
         self.sim.ConfigureStopTime(t_n)
         self.sim.ExecuteSimulation()
-        # Step 6 (write command n into the actuator inputs) starts with actuators (G1); every
-        # command is zero until then.
 
         if self.sim.TotalSim.CurrentNanos != t_n:
             raise StaleMessageError(f"CurrentSimNanos is {self.sim.TotalSim.CurrentNanos}, not t_n = {t_n}")

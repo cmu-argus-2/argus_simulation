@@ -7,7 +7,8 @@ namespace Argus.Simulation.Core
     // Reset(seed, scenario), a command log for the recorder (D6), actuator-limit validation,
     // authority and heartbeat. Serving it to HIL and external controllers is headless/Host
     // GatewayServer.
-    // Also open: letting command k be computed from observation k (target-architecture §11).
+    // Planned order: Reset(seed, scenario) returns observation 0 and Step(command k) returns
+    // observation k+1 (target-architecture §4).
     public sealed class SimulationGateway
     {
         private readonly ISimulationEngine _engine;
