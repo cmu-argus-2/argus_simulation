@@ -134,6 +134,26 @@ namespace Argus.Simulation.Core
 
         public void RecordState(SimulationState state) => Enqueue(new StateItem(state), 1, 0);
 
+        // Never dropped, even when the queue is full: the manifest must say why a run ended.
+        public void RecordTermination(Observation terminal)
+        {
+            if (terminal == null || !terminal.IsTerminal)
+            {
+                throw new ArgumentException("A terminal observation is required.", nameof(terminal));
+            }
+
+            lock (_gate)
+            {
+                ThrowIfClosing();
+                if (!_hasRun)
+                {
+                    throw new InvalidOperationException("Call BeginRun before recording a run.");
+                }
+
+                Push(new TerminationItem(terminal));
+            }
+        }
+
         public void RecordSensorOutput(SensorOutputSet output)
         {
             if (output == null)
@@ -289,6 +309,9 @@ namespace Argus.Simulation.Core
                 case OutputItem output:
                     _current.Write(output.Output);
                     break;
+                case TerminationItem termination:
+                    _current.Termination = termination.Observation;
+                    break;
                 case DropItem drop:
                     _current.DroppedStates += drop.States;
                     _current.DroppedFrames += drop.Frames;
@@ -402,6 +425,16 @@ namespace Argus.Simulation.Core
             public SensorOutputSet Output { get; }
         }
 
+        private sealed class TerminationItem : Item
+        {
+            public TerminationItem(Observation observation)
+            {
+                Observation = observation;
+            }
+
+            public Observation Observation { get; }
+        }
+
         private sealed class DropItem : Item
         {
             public long States;
@@ -436,6 +469,7 @@ namespace Argus.Simulation.Core
 
             public long DroppedStates { get; set; }
             public long DroppedFrames { get; set; }
+            public Observation Termination { get; set; }
 
             public void Write(RunRecorder recorder, SimulationState state)
             {
@@ -657,6 +691,9 @@ namespace Argus.Simulation.Core
                     .Key("segment").Value(_begin.Segment)
                     .Key("created_utc").Utc(_begin.CreatedUtc)
                     .Key("complete").Value(complete)
+                    .Key("termination");
+                WriteTermination(json, Termination);
+                json
                     .Key("writer").BeginObject()
                         .Key("process").Value(recorder._process)
                         .Key("argus_simulation_commit").Value(recorder._commit)
@@ -736,6 +773,24 @@ namespace Argus.Simulation.Core
                     .Key("inertia_body_kg_m2").Value(body.InertiaBodyKilogramSquareMeters)
                     .Key("initial_body_to_j2000_xyzw").Value(body.InitialBodyToJ2000)
                     .Key("initial_angular_velocity_body_rad_s").Value(body.InitialAngularVelocityBodyRadiansPerSecond)
+                    .EndObject();
+            }
+
+            // The gateway's terminal observation: the last step that exists and why the run ended.
+            private static void WriteTermination(DatasetJsonWriter json, Observation terminal)
+            {
+                if (terminal == null)
+                {
+                    json.Null();
+                    return;
+                }
+
+                json.BeginObject()
+                    .Key("status").Value(terminal.Status.ToString())
+                    .Key("last_sequence").Value(terminal.Sequence)
+                    .Key("last_simulation_time_s").Value(terminal.SimulationTimeSeconds)
+                    .Key("last_timestamp_utc").Utc(terminal.TimestampUtc)
+                    .Key("reason").Value(terminal.TerminationReason)
                     .EndObject();
             }
 

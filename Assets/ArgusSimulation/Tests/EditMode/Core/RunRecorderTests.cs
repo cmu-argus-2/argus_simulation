@@ -57,6 +57,7 @@ namespace Argus.Simulation.Tests
             Assert.That(File.ReadAllLines(Path.Combine(run, "sensors.jsonl")).Length, Is.EqualTo(steps + 1));
             string manifest = File.ReadAllText(Path.Combine(run, "manifest.json"));
             Assert.That(Field(manifest, "complete"), Is.EqualTo("true"));
+            Assert.That(Field(manifest, "termination"), Is.EqualTo("null"));
             Assert.That(Field(manifest, "random_seed"), Is.EqualTo("3"));
             Assert.That(Field(manifest, "dropped_states"), Is.EqualTo("0"));
         }
@@ -94,20 +95,54 @@ namespace Argus.Simulation.Tests
             Assert.That(File.ReadAllLines(Path.Combine(run, "states.jsonl")).Length + dropped, Is.EqualTo(steps + 1));
         }
 
+        [Test]
+        public void ARunEndedByTheGatewayRecordsWhyAndWhere()
+        {
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                AnalyticSimulationEngine analytic = Analytic();
+                FailingEngine engine = new FailingEngine(analytic, failAtStep: 3, new InvalidOperationException("Basilisk Step failed: Unavailable"));
+                SimulationGateway gateway = RecordedGateway(recorder, engine, analytic.Orbit);
+                gateway.Reset(0, Scenario(0.25));
+                gateway.Step();
+                gateway.Step();
+                Assert.That(gateway.Step().IsTerminal, Is.True);
+                recorder.Close();
+            }
+
+            string run = Path.Combine(_root, "test-run_0");
+            Assert.That(File.ReadAllLines(Path.Combine(run, "states.jsonl")).Length, Is.EqualTo(3));
+            string manifest = File.ReadAllText(Path.Combine(run, "manifest.json"));
+            // The recorder closed cleanly, and the manifest says the run died at step 3, not that it was cut short.
+            Assert.That(Field(manifest, "complete"), Is.EqualTo("true"));
+            Assert.That(Field(manifest, "status"), Is.EqualTo("\"BackendFailed\""));
+            Assert.That(Field(manifest, "last_sequence"), Is.EqualTo("2"));
+            Assert.That(Field(manifest, "last_simulation_time_s"), Is.EqualTo("0.5"));
+            Assert.That(Field(manifest, "reason"), Is.EqualTo("\"Step 3 failed: Basilisk Step failed: Unavailable\""));
+        }
+
+        private static AnalyticSimulationEngine Analytic() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
+
         // The analytic engine with one ideal body-rate sensor, recorded through the gateway's events
         // as headless/Host does.
         private static SimulationGateway RecordedGateway(RunRecorder recorder)
         {
-            AnalyticSimulationEngine engine = new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
+            AnalyticSimulationEngine engine = Analytic();
+            return RecordedGateway(recorder, engine, engine.Orbit);
+        }
+
+        private static SimulationGateway RecordedGateway(RunRecorder recorder, ISimulationEngine engine, AnalyticOrbit orbit)
+        {
             SimulationGateway gateway = new SimulationGateway(
                 engine,
                 sensor => new IdealBodyRateSensorModel(
                     sensor.Definition.SensorId,
                     sensor.Definition.FrameId,
                     sensor.Definition.SamplePeriodSeconds));
-            gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, analyticOrbit: engine.Orbit);
+            gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, analyticOrbit: orbit);
             gateway.StateProduced += recorder.RecordState;
             gateway.SensorOutputProduced += recorder.RecordSensorOutput;
+            gateway.RunTerminated += recorder.RecordTermination;
             return gateway;
         }
 

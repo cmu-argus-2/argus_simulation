@@ -22,6 +22,9 @@ namespace Argus.Simulation.Core
         // Every frame of the step, controller-visible or not.
         void RecordSensorOutput(SensorOutputSet output);
 
+        // Why the gateway ended the run (SimulationGateway.RunTerminated); the manifest's termination.
+        void RecordTermination(Observation terminal);
+
         // Writes everything queued and the final manifest; throws if writing failed. Dispose also
         // closes, but leaves a failure to the manifest, which then stays "complete": false.
         void Close();

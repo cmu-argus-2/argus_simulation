@@ -78,6 +78,7 @@ writes it, and CORE-7 (#43) adds `commands.jsonl`.
 | `segment` | int | recorder | 0 for a run's first directory, then +1 after each gateway `Reset` that keeps the `run_id` (see Join keys). |
 | `created_utc` | string | recorder | When recording started. |
 | `complete` | bool | recorder | `true` only once the recorder closed cleanly. |
+| `termination` | object or `null` | `SimulationGateway.RunTerminated` | Set when the gateway ended the run: `status` (`BackendFailed`), `last_sequence`, `last_simulation_time_s` and `last_timestamp_utc` (the last step that exists, as in `states.jsonl`), and `reason` (names the step that failed). `null` when the run ended any other way, for example when the host reached its duration. With `complete: true`, it tells a run that died at a step from one that was cut short. Added before any v1 dataset was written, so the schema stays at version 1. |
 | `writer` | object | recorder | `process` (`headless-host` or `unity`), `argus_simulation_commit` (the full 40-character hash, or `null` when unknown, for example in a Unity player build), `recorder_version` (string). |
 | `dynamics_backend` | object | `SimulationState.DynamicsBackend`, `BasiliskEngine.BasiliskVersion` | `name` (the `DynamicsBackend` string) and `version` (`BasiliskVersion` in Basilisk runs, `null` in analytic runs). |
 | `earth_fixed_frame` | string | `SpacecraftState.EarthFixedFrame` | `Itrf93` or `AnalyticEarthFixed`. |
