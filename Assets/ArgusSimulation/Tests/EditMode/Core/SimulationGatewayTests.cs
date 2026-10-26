@@ -92,6 +92,31 @@ namespace Argus.Simulation.Tests
             Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(4, 0.4)));
         }
 
+        [Test]
+        public void BackendFailureEndsTheRunAndKeepsTheCause()
+        {
+            InvalidOperationException cause = new InvalidOperationException("Basilisk Step failed: Unavailable");
+            SimulationGateway gateway = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, cause));
+            List<Observation> terminated = new List<Observation>();
+            gateway.RunTerminated += terminated.Add;
+            gateway.Reset(0, Scenario(0.5));
+
+            Observation failed = gateway.Step();
+
+            // The observation describes the last step that exists; the reason names the one that failed.
+            Assert.That((failed.Status, failed.Sequence, failed.Frames.Count), Is.EqualTo((ObservationStatus.BackendFailed, 0L, 0)));
+            Assert.That(failed.TerminationReason, Is.EqualTo("Step 1 failed: Basilisk Step failed: Unavailable"));
+            Assert.That(gateway.Failure, Is.SameAs(cause));
+            Assert.That(terminated, Is.EqualTo(new[] { failed }));
+            Assert.That((gateway.IsRunning, gateway.NextSequence), Is.EqualTo((false, 0L)));
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+
+            // Anything else is a bug, not a backend failure, and propagates.
+            SimulationGateway buggy = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new ArgumentException("bug")));
+            buggy.Reset(0, Scenario(0.5));
+            Assert.Throws<ArgumentException>(() => buggy.Step());
+        }
+
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params SensorConfiguration[] sensors) =>
@@ -107,6 +132,36 @@ namespace Argus.Simulation.Tests
                 new ImuProfile(
                     new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
                     new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
+        }
+
+        // The analytic engine, throwing the given exception from TryStep at one step.
+        private sealed class FailingEngine : ISimulationEngine
+        {
+            private readonly ISimulationEngine _inner;
+            private readonly long _failAtStep;
+            private readonly Exception _failure;
+
+            public FailingEngine(ISimulationEngine inner, long failAtStep, Exception failure)
+            {
+                _inner = inner;
+                _failAtStep = failAtStep;
+                _failure = failure;
+            }
+
+            public string BackendName => _inner.BackendName;
+            public bool IsInitialized => _inner.IsInitialized;
+            public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
+            public bool TryReset(out SimulationState state) => _inner.TryReset(out state);
+
+            public bool TryStep(SimulationStepInput input, out SimulationState state)
+            {
+                if (input.Sequence + 1 == _failAtStep)
+                {
+                    throw _failure;
+                }
+
+                return _inner.TryStep(input, out state);
+            }
         }
     }
 }

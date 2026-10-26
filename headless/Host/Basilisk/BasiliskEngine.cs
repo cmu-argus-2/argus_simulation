@@ -114,7 +114,9 @@ namespace Argus.Simulation.Host
             IsInitialized = true;
         }
 
-        // ConfigureRun leaves the service READY; after any step, Reset rebuilds it first. Then
+        // ConfigureRun leaves the service READY; after any step, Reset rebuilds it first. The
+        // gateway always calls Initialize before TryReset, so it never needs the Reset RPC; a
+        // direct engine user that reruns without Initialize does (ISimulationEngine.TryReset). Then
         // Step(0) runs the t = 0 pass with a zero command, since a Step(n) command acts over
         // [t_n-1, t_n) (target-architecture §4).
         public bool TryReset(out SimulationState state)
@@ -167,6 +169,14 @@ namespace Argus.Simulation.Host
                 // TODO(G1): the service rejects non-zero commands until Basilisk actuators exist.
                 Command = BasiliskProtoMapper.ToProto(command)
             };
+            // Step(n) carries command n-1 and names its step, so the service rejects a command sent
+            // in the wrong request; Step(0) follows no command and names none.
+            if (appliedCommands.HasValue)
+            {
+                request.CommandSequence = checked((ulong)appliedCommands.Value.Sequence);
+                request.CommandTimeNs = checked((ulong)BasiliskTime.ToNanoseconds(appliedCommands.Value.ApplyAtSimulationTimeSeconds));
+            }
+
             PbBasilisk.StepResponse response = Call("Step", options => _client.Step(request, options), StepDeadline());
             Expect(response.RunId == _configuration.RunId, "Step", "run_id");
             Expect(response.Sequence == request.Sequence, "Step", "sequence");

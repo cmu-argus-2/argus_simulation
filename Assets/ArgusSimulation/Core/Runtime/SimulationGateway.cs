@@ -19,6 +19,7 @@ namespace Argus.Simulation.Core
         private HashSet<string> _controllerVisibleSensorIds;
         private long _nextSequence;
         private double _nextSimulationTimeSeconds;
+        private SpacecraftState _lastSpacecraft;
         private bool _isRunning;
 
         // sensorFactory builds the run's sensors from the scenario; SensorFactory.Create by default.
@@ -37,6 +38,12 @@ namespace Argus.Simulation.Core
 
         // Every sensor frame sampled at a step, controller-visible or not.
         public event Action<SensorOutputSet> SensorOutputProduced;
+
+        // The terminal observation when the run ends, so the recorder knows why (D6).
+        public event Action<Observation> RunTerminated;
+
+        // The backend exception that ended the run, for logs; never shown to a controller.
+        public Exception Failure { get; private set; }
 
         // True from a successful Reset until the run terminates.
         public bool IsRunning => _isRunning;
@@ -61,6 +68,7 @@ namespace Argus.Simulation.Core
             }
 
             _isRunning = false;
+            Failure = null;
             _engine.Initialize(run);
             _scenario = run;
             _sensors = BuildSensors(run);
@@ -72,11 +80,14 @@ namespace Argus.Simulation.Core
                     $"Simulation backend '{_engine.BackendName}' failed to produce a valid state at t_0.");
             }
 
+            // The recorder starts its dataset directory before the state at t_0 (D6); the run is
+            // committed only once that state and its frames are published.
+            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
+            Observation observation = Publish(state);
             _nextSequence = 0;
             _nextSimulationTimeSeconds = 0.0;
             _isRunning = true;
-            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
-            return Publish(state);
+            return observation;
         }
 
         // A zero command for the next step.
@@ -86,7 +97,7 @@ namespace Argus.Simulation.Core
         }
 
         // Applies command k over [t_k, t_k+1) and returns observation k+1. A backend failure ends
-        // the run with a BackendFailed observation instead of throwing.
+        // the run with a BackendFailed observation instead of throwing; Failure keeps the cause.
         public Observation Step(ActuatorCommandSet command)
         {
             if (!_isRunning)
@@ -106,57 +117,87 @@ namespace Argus.Simulation.Core
             long sequence = _nextSequence + 1;
             double simulationTimeSeconds = sequence * _scenario.FixedStepSeconds;
             SimulationState state;
-            string failure;
             try
             {
-                failure = _engine.TryStep(new SimulationStepInput(_nextSequence, _nextSimulationTimeSeconds, command), out state) &&
-                    IsExpectedState(state, sequence, simulationTimeSeconds, command)
-                        ? null
-                        : $"Simulation backend '{_engine.BackendName}' failed to produce a valid state at step {sequence}.";
+                if (!_engine.TryStep(new SimulationStepInput(_nextSequence, _nextSimulationTimeSeconds, command), out state) ||
+                    !IsExpectedState(state, sequence, simulationTimeSeconds, command))
+                {
+                    return Terminate(new InvalidOperationException(
+                        $"Simulation backend '{_engine.BackendName}' failed to produce a valid state at step {sequence}."));
+                }
             }
-            catch (Exception exception)
+            catch (InvalidOperationException exception)
             {
-                state = default;
-                failure = exception.Message;
+                // A backend failure, such as BasiliskEngine's wrapped RpcException. Any other
+                // exception is a bug and propagates with its stack trace.
+                return Terminate(exception);
             }
 
-            if (failure != null)
-            {
-                _isRunning = false;
-                return new Observation(
-                    _scenario.RunId,
-                    sequence,
-                    simulationTimeSeconds,
-                    _scenario.EpochUtc + TimeSpan.FromTicks((long)Math.Round(simulationTimeSeconds * TimeSpan.TicksPerSecond)),
-                    _engine.BackendName,
-                    Array.Empty<ISensorFrame>(),
-                    ObservationStatus.BackendFailed,
-                    failure);
-            }
-
+            Observation observation = Publish(state);
             _nextSequence = sequence;
             _nextSimulationTimeSeconds = simulationTimeSeconds;
-            return Publish(state);
+            return observation;
         }
 
-        // Publishes truth and every frame, and returns the controller-visible frames.
+        // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
+        // backend's own; the reason names the step that failed.
+        private Observation Terminate(Exception failure)
+        {
+            _isRunning = false;
+            Failure = failure;
+            Observation observation = new Observation(
+                _scenario.RunId,
+                _lastSpacecraft.Sequence,
+                _lastSpacecraft.SimulationTimeSeconds,
+                _lastSpacecraft.TimestampUtc,
+                _engine.BackendName,
+                Array.Empty<ISensorFrame>(),
+                ObservationStatus.BackendFailed,
+                $"Step {_lastSpacecraft.Sequence + 1} failed: {failure.Message}");
+            RunTerminated?.Invoke(observation);
+            return observation;
+        }
+
+        // Publishes truth and every frame, and returns the controller-visible frames. A sensor or
+        // subscriber that throws ends the run, so the gateway never advances past a step whose
+        // frames were not all published.
         private Observation Publish(SimulationState state)
         {
-            StateProduced?.Invoke(state);
-            SensorOutputSet output = _sensors.Sample(new SensorSampleContext(_scenario.RunId, state));
-            SensorOutputProduced?.Invoke(output);
+            SensorOutputSet output;
+            try
+            {
+                StateProduced?.Invoke(state);
+                output = _sensors.Sample(new SensorSampleContext(_scenario.RunId, state));
+                SensorOutputProduced?.Invoke(output);
+            }
+            catch
+            {
+                _isRunning = false;
+                throw;
+            }
 
-            List<ISensorFrame> visible = new List<ISensorFrame>(output.Frames.Count);
+            int visibleCount = 0;
             foreach (ISensorFrame frame in output.Frames)
             {
                 if (_controllerVisibleSensorIds.Contains(frame.SensorId))
                 {
-                    visible.Add(frame);
+                    visibleCount++;
+                }
+            }
+
+            ISensorFrame[] visible = new ISensorFrame[visibleCount];
+            int index = 0;
+            foreach (ISensorFrame frame in output.Frames)
+            {
+                if (_controllerVisibleSensorIds.Contains(frame.SensorId))
+                {
+                    visible[index++] = frame;
                 }
             }
 
             SpacecraftState spacecraft = state.Spacecraft;
-            return new Observation(
+            _lastSpacecraft = spacecraft;
+            return Observation.Owning(
                 state.RunId,
                 spacecraft.Sequence,
                 spacecraft.SimulationTimeSeconds,
