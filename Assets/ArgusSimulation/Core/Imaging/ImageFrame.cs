@@ -10,54 +10,61 @@ namespace Argus.Simulation.Core
         Png = 3
     }
 
+    // One rendered exposure: the pixels plus the RenderRequest they were rendered for. Every pose,
+    // calibration and timing field comes from the request, so the camera model, not the renderer,
+    // owns them (D5).
     public readonly struct ImageFrame
     {
         public ImageFrame(
-            string cameraId,
-            long sequence,
-            double simulationTimeSeconds,
-            DateTimeOffset timestampUtc,
-            CameraIntrinsics intrinsics,
-            Vector3d cameraPositionEcefMeters,
-            Quaterniond cameraToEcef,
+            RenderRequest request,
             ImageEncoding encoding,
             byte[] data,
             string renderer)
         {
-            CameraId = cameraId;
-            Sequence = sequence;
-            SimulationTimeSeconds = simulationTimeSeconds;
-            TimestampUtc = timestampUtc.ToUniversalTime();
-            Intrinsics = intrinsics;
-            CameraPositionEcefMeters = cameraPositionEcefMeters;
-            CameraToEcef = cameraToEcef;
+            Request = request;
             Encoding = encoding;
             Data = data;
             Renderer = renderer;
         }
 
-        public string CameraId { get; }
-        public long Sequence { get; }
-        public double SimulationTimeSeconds { get; }
-        public DateTimeOffset TimestampUtc { get; }
-        public CameraIntrinsics Intrinsics { get; }
-        public Vector3d CameraPositionEcefMeters { get; }
-        public Quaterniond CameraToEcef { get; }
+        public RenderRequest Request { get; }
         public ImageEncoding Encoding { get; }
         public byte[] Data { get; }
         public string Renderer { get; }
 
+        public string CameraId => Request.CameraId;
+        public long Sequence => Request.Sequence;
+        public long StateSequence => Request.StateSequence;
+        public double SimulationTimeSeconds => Request.ExposureStartSimulationTimeSeconds;
+        public DateTimeOffset TimestampUtc => Request.ExposureStartUtc;
+        public double ExposureDurationSeconds => Request.ExposureDurationSeconds;
+        public CameraIntrinsics Intrinsics => Request.Intrinsics;
+        public Vector3d CameraPositionEcefMeters => Request.CameraPositionEcefMeters;
+        public Quaterniond CameraToEcef => Request.CameraToEcef;
+
         public bool IsValid =>
-            !string.IsNullOrWhiteSpace(CameraId) &&
-            Sequence >= 0 &&
-            SimulationTimeSeconds >= 0.0 &&
-            !double.IsNaN(SimulationTimeSeconds) &&
-            !double.IsInfinity(SimulationTimeSeconds) &&
-            Intrinsics.IsValid &&
-            CameraPositionEcefMeters.IsFinite &&
-            CameraToEcef.IsUnit &&
+            Request.IsValid &&
             Data != null &&
             Data.Length > 0 &&
+            HasExpectedRawLength &&
             !string.IsNullOrWhiteSpace(Renderer);
+
+        // Raw encodings hold exactly width x height pixels; compressed ones are not checked.
+        private bool HasExpectedRawLength
+        {
+            get
+            {
+                long pixels = (long)Intrinsics.WidthPixels * Intrinsics.HeightPixels;
+                switch (Encoding)
+                {
+                    case ImageEncoding.Rgb8:
+                        return Data.LongLength == pixels * 3;
+                    case ImageEncoding.Rgba8:
+                        return Data.LongLength == pixels * 4;
+                    default:
+                        return true;
+                }
+            }
+        }
     }
 }

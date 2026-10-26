@@ -64,8 +64,8 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
-| Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
-| Implemented sensor models | `IdealBodyRateSensorModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
+| Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorSlot`, `SensorManager`, `SensorFrame<TPayload>` |
+| Implemented sensor models | `IdealBodyRateSensorModel`; camera base `CameraModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
@@ -118,8 +118,7 @@ Core/Sensors/
 ├── GnssSensor.cs, SunSensor.cs, StarTrackerSensor.cs     # Upcoming sensors (TODO(sensors))
 ├── PowerTelemetrySensor.cs, ThermalSensor.cs
 ├── RadioLinkSensor.cs, RadiationSensor.cs
-└── Camera/CameraModel.cs                                # TODO(D5, G3)
-    Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
+└── Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
     Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
 Core/Recording/RunRecorder.cs                            # TODO(D6)
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
