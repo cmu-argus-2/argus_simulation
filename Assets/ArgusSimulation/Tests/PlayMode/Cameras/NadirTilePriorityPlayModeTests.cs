@@ -12,75 +12,127 @@ namespace Argus.Simulation.Tests
         [UnityTest]
         public IEnumerator WarmUpLoadsOnlyNadirViewsThenRestoresEveryView()
         {
-            GameObject geospatialWorld = new GameObject("Geospatial World");
-            geospatialWorld.AddComponent<CesiumGeoreference>();
-            CesiumCameraManager cameraManager = geospatialWorld.AddComponent<CesiumCameraManager>();
-
-            GameObject mainCameraObject = new GameObject("Globe Observer");
-            mainCameraObject.tag = "MainCamera";
-            mainCameraObject.AddComponent<Camera>();
-
-            GameObject simulation = new GameObject("Simulation");
-            AnalyticStateSource source = simulation.AddComponent<AnalyticStateSource>();
-            SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
-            runner.Configure(source);
-            runner.IsRunning = true;
-
-            GameObject spacecraft = new GameObject("CubeSat Truth Pose");
-            spacecraft.transform.SetParent(geospatialWorld.transform, false);
-            CesiumGlobeAnchor anchor = spacecraft.AddComponent<CesiumGlobeAnchor>();
-            spacecraft.AddComponent<CesiumSpacecraftPoseDriver>().Configure(runner, anchor);
-            CubeSatCameraRig cameraRig = spacecraft.AddComponent<CubeSatCameraRig>();
-            NadirTilePriority priority = spacecraft.AddComponent<NadirTilePriority>();
-            priority.Configure(runner);
+            NadirScene scene = new NadirScene();
 
             // One frame for Start, one for both cameras to sync their poses.
             yield return null;
             yield return null;
 
-            Camera groundTruth = cameraRig.GroundTruthCamera;
-            Assert.That(priority.IsWarmingUp, Is.True);
-            Assert.That(runner.IsRunning, Is.False);
-            Assert.That(runner.HasState, Is.True);
-            Assert.That(cameraManager.useMainCamera, Is.False);
-            Assert.That(cameraManager.additionalCameras, Has.Member(groundTruth));
-            Assert.That(cameraManager.additionalCameras, Has.Member(priority.LookaheadCamera));
-            Assert.That(priority.LookaheadCamera.enabled, Is.False);
-            foreach (Camera camera in cameraRig.Cameras)
+            Camera groundTruth = scene.CameraRig.GroundTruthCamera;
+            Assert.That(scene.Priority.IsWarmingUp, Is.True);
+            Assert.That(scene.Runner.IsRunning, Is.False);
+            Assert.That(scene.Runner.HasState, Is.True);
+            Assert.That(scene.CameraManager.useMainCamera, Is.False);
+            Assert.That(scene.CameraManager.additionalCameras, Has.Member(groundTruth));
+            Assert.That(scene.CameraManager.additionalCameras, Has.Member(scene.Priority.LookaheadCamera));
+            Assert.That(scene.Priority.LookaheadCamera.enabled, Is.False);
+            foreach (Camera camera in scene.CameraRig.Cameras)
             {
                 if (camera != groundTruth)
                 {
-                    Assert.That(cameraManager.additionalCameras, Has.No.Member(camera));
+                    Assert.That(scene.CameraManager.additionalCameras, Has.No.Member(camera));
                 }
             }
 
             // Four wall-clock seconds at 1x is roughly 30 km along the ground track.
             float leadMeters = Vector3.Distance(
-                priority.LookaheadCamera.transform.position,
+                scene.Priority.LookaheadCamera.transform.position,
                 groundTruth.transform.position);
             Assert.That(leadMeters, Is.InRange(20_000f, 40_000f));
 
             // With no tilesets in the scene, loading is complete and the gate opens.
-            for (int frame = 0; frame < 60 && priority.IsWarmingUp; frame++)
+            for (int frame = 0; frame < 60 && scene.Priority.IsWarmingUp; frame++)
             {
                 yield return null;
             }
 
-            Assert.That(priority.IsWarmingUp, Is.False);
-            Assert.That(runner.IsRunning, Is.True);
-            Assert.That(cameraManager.useMainCamera, Is.True);
-            foreach (Camera camera in cameraRig.Cameras)
-            {
-                Assert.That(cameraManager.additionalCameras, Has.Member(camera));
-            }
+            Assert.That(scene.Priority.IsWarmingUp, Is.False);
+            Assert.That(scene.Runner.IsRunning, Is.True);
+            scene.AssertEveryViewRestored();
 
-            Object.Destroy(spacecraft);
-            Object.Destroy(simulation);
-            Object.Destroy(mainCameraObject);
-            Object.Destroy(geospatialWorld);
+            yield return scene.Destroy();
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [UnityTest]
+        public IEnumerator ResumeDuringWarmUpSkipsTheWaitAndRestoresEveryView()
+        {
+            NadirScene scene = new NadirScene();
+            yield return null;
+            yield return null;
+            Assert.That(scene.Priority.IsWarmingUp, Is.True);
+            Assert.That(scene.CameraManager.useMainCamera, Is.False);
+
+            // What the dashboard's RESUME button does.
+            scene.Runner.IsRunning = true;
             yield return null;
 
+            // The gate needs 10 stable frames to open on its own, so ending one frame after RESUME
+            // means RESUME ended it.
+            Assert.That(scene.Priority.IsWarmingUp, Is.False);
+            Assert.That(scene.Runner.IsRunning, Is.True);
+            scene.AssertEveryViewRestored();
+
+            yield return scene.Destroy();
             LogAssert.NoUnexpectedReceived();
+        }
+
+        // A georeference with a camera manager, the main camera, an analytic runner set to run, and
+        // the spacecraft with its camera rig and NadirTilePriority. No tilesets.
+        private sealed class NadirScene
+        {
+            private readonly GameObject _geospatialWorld;
+            private readonly GameObject _mainCamera;
+            private readonly GameObject _simulation;
+            private readonly GameObject _spacecraft;
+
+            public NadirScene()
+            {
+                _geospatialWorld = new GameObject("Geospatial World");
+                _geospatialWorld.AddComponent<CesiumGeoreference>();
+                CameraManager = _geospatialWorld.AddComponent<CesiumCameraManager>();
+
+                _mainCamera = new GameObject("Globe Observer");
+                _mainCamera.tag = "MainCamera";
+                _mainCamera.AddComponent<Camera>();
+
+                _simulation = new GameObject("Simulation");
+                AnalyticStateSource source = _simulation.AddComponent<AnalyticStateSource>();
+                Runner = _simulation.AddComponent<SimulationRunner>();
+                Runner.Configure(source);
+                Runner.IsRunning = true;
+
+                _spacecraft = new GameObject("CubeSat Truth Pose");
+                _spacecraft.transform.SetParent(_geospatialWorld.transform, false);
+                CesiumGlobeAnchor anchor = _spacecraft.AddComponent<CesiumGlobeAnchor>();
+                _spacecraft.AddComponent<CesiumSpacecraftPoseDriver>().Configure(Runner, anchor);
+                CameraRig = _spacecraft.AddComponent<CubeSatCameraRig>();
+                Priority = _spacecraft.AddComponent<NadirTilePriority>();
+                Priority.Configure(Runner);
+            }
+
+            public CesiumCameraManager CameraManager { get; }
+            public SimulationRunner Runner { get; }
+            public CubeSatCameraRig CameraRig { get; }
+            public NadirTilePriority Priority { get; }
+
+            public void AssertEveryViewRestored()
+            {
+                Assert.That(CameraManager.useMainCamera, Is.True);
+                foreach (Camera camera in CameraRig.Cameras)
+                {
+                    Assert.That(CameraManager.additionalCameras, Has.Member(camera));
+                }
+            }
+
+            public IEnumerator Destroy()
+            {
+                Object.Destroy(_spacecraft);
+                Object.Destroy(_simulation);
+                Object.Destroy(_mainCamera);
+                Object.Destroy(_geospatialWorld);
+                yield return null;
+            }
         }
     }
 }
