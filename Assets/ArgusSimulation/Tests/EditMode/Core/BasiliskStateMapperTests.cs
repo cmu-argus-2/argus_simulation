@@ -48,7 +48,7 @@ namespace Argus.Simulation.Tests
                 "run-1",
                 "basilisk",
                 state,
-                ActuatorCommandSet.None(0, 0.0),
+                appliedCommands: null,
                 environment: environment);
             Assert.That(simulationState.IsValid, Is.True);
         }

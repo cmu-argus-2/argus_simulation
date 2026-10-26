@@ -25,6 +25,7 @@ namespace Argus.Simulation.Host
 
         private SimulationConfiguration _configuration;
         private long _fixedStepNanoseconds;
+        private bool _hasStepped;
 
         // realTimeFactor 0 runs unpaced; above 0 the service paces Step with clockSynch.
         public BasiliskEngine(Uri serviceAddress, double realTimeFactor, CancellationToken cancellation)
@@ -109,22 +110,33 @@ namespace Argus.Simulation.Host
             _fixedStepNanoseconds = fixedStepNanoseconds;
             BasiliskVersion = response.BasiliskVersion;
             PacingOverrunCount = 0;
+            _hasStepped = false;
             IsInitialized = true;
         }
 
-        public void Reset()
+        // ConfigureRun leaves the service READY; after any step, Reset rebuilds it first. Then
+        // Step(0) runs the t = 0 pass with a zero command, since a Step(n) command acts over
+        // [t_n-1, t_n) (target-architecture §4).
+        public bool TryReset(out SimulationState state)
         {
             if (!IsInitialized)
             {
                 throw new InvalidOperationException("BasiliskEngine has not been initialized.");
             }
 
-            PbBasilisk.ResetRequest request = new PbBasilisk.ResetRequest { RunId = _configuration.RunId };
-            PbBasilisk.ResetResponse response = Call("Reset", options => _client.Reset(request, options), ResetDeadline);
-            Expect(response.RunId == _configuration.RunId, "Reset", "run_id");
-            PacingOverrunCount = 0;
+            if (_hasStepped)
+            {
+                PbBasilisk.ResetRequest request = new PbBasilisk.ResetRequest { RunId = _configuration.RunId };
+                PbBasilisk.ResetResponse response = Call("Reset", options => _client.Reset(request, options), ResetDeadline);
+                Expect(response.RunId == _configuration.RunId, "Reset", "run_id");
+                PacingOverrunCount = 0;
+            }
+
+            state = CallStep(0, ActuatorCommandSet.None(0, 0.0), appliedCommands: null);
+            return true;
         }
 
+        // Command k travels in Step(k + 1), whose command acts over [t_k, t_k+1).
         public bool TryStep(SimulationStepInput input, out SimulationState state)
         {
             state = default;
@@ -133,20 +145,27 @@ namespace Argus.Simulation.Host
                 return false;
             }
 
-            long simulationTimeNanoseconds = checked(input.Sequence * _fixedStepNanoseconds);
-            if (!SimulationTime.AreSame(BasiliskTime.ToSeconds(simulationTimeNanoseconds), input.SimulationTimeSeconds))
+            long commandTimeNanoseconds = checked(input.Sequence * _fixedStepNanoseconds);
+            if (!SimulationTime.AreSame(BasiliskTime.ToSeconds(commandTimeNanoseconds), input.SimulationTimeSeconds))
             {
                 throw new InvalidOperationException(
-                    $"Step {input.Sequence} at {input.SimulationTimeSeconds:R} s is off the {_fixedStepNanoseconds} ns grid.");
+                    $"Command {input.Sequence} at {input.SimulationTimeSeconds:R} s is off the {_fixedStepNanoseconds} ns grid.");
             }
 
+            state = CallStep(checked(input.Sequence + 1), input.Commands, input.Commands);
+            return true;
+        }
+
+        private SimulationState CallStep(long sequence, ActuatorCommandSet command, ActuatorCommandSet? appliedCommands)
+        {
+            _hasStepped = true;
             PbBasilisk.StepRequest request = new PbBasilisk.StepRequest
             {
                 RunId = _configuration.RunId,
-                Sequence = (ulong)input.Sequence,
-                SimTimeNs = (ulong)simulationTimeNanoseconds,
+                Sequence = (ulong)sequence,
+                SimTimeNs = (ulong)checked(sequence * _fixedStepNanoseconds),
                 // TODO(G1): the service rejects non-zero commands until Basilisk actuators exist.
-                Command = BasiliskProtoMapper.ToProto(input.Commands)
+                Command = BasiliskProtoMapper.ToProto(command)
             };
             PbBasilisk.StepResponse response = Call("Step", options => _client.Step(request, options), StepDeadline());
             Expect(response.RunId == _configuration.RunId, "Step", "run_id");
@@ -156,25 +175,25 @@ namespace Argus.Simulation.Host
             BasiliskStepState step = BasiliskProtoMapper.ToStepState(response);
             EnvironmentState environment = BasiliskStateMapper.MapEnvironment(step);
             SpacecraftState spacecraft = BasiliskStateMapper.MapSpacecraft(
-                input.Sequence,
+                sequence,
                 _configuration.EpochUtc,
                 step,
                 environment);
             SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Sensors);
-            state = new SimulationState(
+            SimulationState state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
                 spacecraft,
-                input.Commands,
+                appliedCommands,
                 environment: environment,
                 sensorMeasurements: measurements);
             PacingOverrunCount = response.PacingOverrunCount;
             if (!state.IsValid)
             {
-                throw new InvalidOperationException($"Basilisk step {input.Sequence} mapped to an invalid state.");
+                throw new InvalidOperationException($"Basilisk step {sequence} mapped to an invalid state.");
             }
 
-            return true;
+            return state;
         }
 
         public void Dispose()

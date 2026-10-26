@@ -95,6 +95,7 @@ namespace Argus.Simulation.Host
                 {
                     SensorId = definition.SensorId,
                     SamplePeriodNs = checked((ulong)BasiliskTime.ToNanoseconds(definition.SamplePeriodSeconds)),
+                    ControllerVisible = definition.IsControllerVisible,
                     Mount = new PbSim.SensorMount
                     {
                         PositionBodyM = ToProto(definition.Mount.PositionBodyMeters),
