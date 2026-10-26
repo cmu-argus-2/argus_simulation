@@ -1,7 +1,8 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order step 1 (README §12): spacecraft, SPICE and eclipse. Sensors (§9), pacing (§5) and
-actuators (G1) are rejected by validation before a Scenario is built.
+Build order steps 1 and 2 (README §12): spacecraft, SPICE, eclipse and the IMU. The magnetometer
+and light sensors (§9), pacing (§5) and actuators (G1) are rejected by validation before a
+Scenario is built.
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
 pass. Each Scenario owns a fresh SimBaseClass and fresh modules; Reset builds a new one.
@@ -21,6 +22,7 @@ from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
 from .contracts import service_pb, types_pb
 from .kernels import KernelSet
+from .sensors import build_sensors
 
 __all__ = ["BASILISK_VERSION", "KernelLoadError", "Scenario", "StaleMessageError", "format_epoch"]
 
@@ -38,6 +40,10 @@ SUN_INDEX = 1
 
 PROCESS_NAME = "dynamics"
 TASK_NAME = "dynamics"
+# §6: the dynamics task runs before every sensor task at the same t_n. One sensor task per
+# distinct sample period, named sensors_<ns>.
+DYNAMICS_TASK_PRIORITY = 200
+SENSOR_TASK_PRIORITY = 100
 # §6 tick order within the task: higher priority runs first.
 SPICE_PRIORITY = 300
 SPACECRAFT_PRIORITY = 200
@@ -73,7 +79,7 @@ class Scenario:
         self.fixed_step_ns = configuration.fixed_step_ns
         self.sim = SimulationBaseClass.SimBaseClass()
         process = self.sim.CreateNewProcess(PROCESS_NAME)
-        process.addTask(self.sim.CreateNewTask(TASK_NAME, self.fixed_step_ns))
+        process.addTask(self.sim.CreateNewTask(TASK_NAME, self.fixed_step_ns), DYNAMICS_TASK_PRIORITY)
 
         # SPICE (§8). auto_configure_kernels=False stops bsk 2.11.1 from fetching its default
         # kernels (de430 and others) through pooch when the module is constructed.
@@ -109,6 +115,14 @@ class Scenario:
         self.eclipse.addSpacecraftToModel(self.spacecraft.scStateOutMsg)
         self.sim.AddModelToTask(TASK_NAME, self.eclipse, ECLIPSE_PRIORITY)
 
+        # Sensors (§9), each on the task for its sample period, after dynamics.
+        self.sensors = build_sensors(configuration, self.spacecraft.scStateOutMsg)
+        for period_ns in sorted({sensor.sample_period_ns for sensor in self.sensors}):
+            process.addTask(self.sim.CreateNewTask(f"sensors_{period_ns}", period_ns), SENSOR_TASK_PRIORITY)
+        for sensor in self.sensors:
+            for module in sensor.modules:
+                self.sim.AddModelToTask(f"sensors_{sensor.sample_period_ns}", module)
+
         # Readers subscribed at build time (§6); only readers expose isWritten/timeWritten.
         self.readers = {
             "spacecraft.scStateOutMsg": self.spacecraft.scStateOutMsg.addSubscriber(),
@@ -138,18 +152,17 @@ class Scenario:
             StaleMessageError: a returned message was stale or non-finite.
         """
         t_n = sequence * self.fixed_step_ns
-        # Step 5 (write command n into the actuator inputs before running, so it acts over
-        # [t_n-1, t_n)) starts with actuators (G1); every command is zero until then.
+        # Step 5: for n > 0, write command n into the actuator inputs before running, so it acts
+        # over [t_n-1, t_n). It starts with actuators (G1); every command is zero until then.
+        # A sensor that has not run before t_n runs without data at t_n (imuSensor's first firing).
+        was_ready = [sensor.ready for sensor in self.sensors]
         self.sim.ConfigureStopTime(t_n)
         self.sim.ExecuteSimulation()
 
         if self.sim.TotalSim.CurrentNanos != t_n:
             raise StaleMessageError(f"CurrentSimNanos is {self.sim.TotalSim.CurrentNanos}, not t_n = {t_n}")
         for name, reader in self.readers.items():
-            if not reader.isWritten():
-                raise StaleMessageError(f"{name} was never written (t_n = {t_n} ns)")
-            if reader.timeWritten() != t_n:
-                raise StaleMessageError(f"{name} was written at {reader.timeWritten()} ns, not t_n = {t_n} ns")
+            _check_fresh(name, reader, t_n)
 
         state = self.readers["spacecraft.scStateOutMsg"]()
         earth = self.readers["spiceInterface.planetStateOutMsgs[earth]"]()
@@ -170,8 +183,24 @@ class Scenario:
             # field is the C name shadowFactor (1 sunlit, 0 umbra) and reads without a warning;
             # illuminationFactor is a Python alias that exists only on messaging.EclipseMsgPayload.
             spacecraft_shadow_factor=_finite(shadow.shadowFactor, "eclipseOutMsgs[0].shadowFactor"),
+            sensor_samples=[
+                self._sample(sensor, ready, t_n)
+                for sensor, ready in zip(self.sensors, was_ready)
+                if t_n % sensor.sample_period_ns == 0
+            ],
             pacing_overrun_count=0,
         )
+
+    def _sample(self, sensor, was_ready: bool, t_n: int) -> service_pb.BasiliskSensorSample:
+        """The sample of a sensor due at t_n (§7); its measurement is unset when it ran without data."""
+        for name, reader in sensor.readers.items():
+            _check_fresh(name, reader, t_n)
+        sample = service_pb.BasiliskSensorSample(sensor_id=sensor.sensor_id, sample_time_ns=t_n)
+        if was_ready:
+            measurement = sensor.measurement()
+            _check_finite_fields(measurement, sensor.sensor_id)
+            getattr(sample, sensor.kind).CopyFrom(measurement)
+        return sample
 
 
 def _gravity_body(name: str, planet_state_msg) -> gravityEffector.GravBodyData:
@@ -213,6 +242,22 @@ def _configure_hub(hub, configuration, mu: float) -> None:
     sigma = rbk.EP2MRP(np.array([quaternion.w, quaternion.x, quaternion.y, quaternion.z]))
     hub.sigma_BNInit = np.asarray(sigma).reshape(3, 1)
     hub.omega_BN_BInit = [[rate.x], [rate.y], [rate.z]]
+
+
+def _check_fresh(name: str, reader, t_n: int) -> None:
+    if not reader.isWritten():
+        raise StaleMessageError(f"{name} was never written (t_n = {t_n} ns)")
+    if reader.timeWritten() != t_n:
+        raise StaleMessageError(f"{name} was written at {reader.timeWritten()} ns, not t_n = {t_n} ns")
+
+
+def _check_finite_fields(message, name: str) -> None:
+    for field, value in message.ListFields():
+        path = f"{name}.{field.name}"
+        if field.message_type is not None:
+            _check_finite_fields(value, path)
+        else:
+            _finite(value, path)
 
 
 def _finite(value: float, name: str) -> float:
