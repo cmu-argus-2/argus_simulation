@@ -113,7 +113,7 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 - **RESET POSE** restores the initial analytic orbit position and removes all attitude offsets.
 - Toggle telemetry groups from the right-side sensor settings panel.
 - The lower camera strip shows the four body-mounted +X, -X, +Y, and -Y cameras plus a virtual north-up nadir ground-truth feed. The GT camera follows orbital position but ignores CubeSat attitude changes.
-- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` approximately follows the anti-solar side of the scene's fixed Sun light. The band is currently offset from the true night side and its part past the antimeridian does not draw; see the known issues in [the target architecture](docs/target-architecture.md#7-gaps).
+- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar side of the scene's fixed Sun light, including the part past the antimeridian. The Sun itself is still fixed; see the known issues in [the target architecture](docs/target-architecture.md#7-gaps).
 
 Captured images and `navigation_metadata.jsonl` are written to:
 

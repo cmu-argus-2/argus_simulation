@@ -232,13 +232,16 @@ thermal, radio, radiation: placeholders only, Basilisk or Argus source still ope
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe).
 
-**Known issues on `main`:**
+The Foundation tileset uses the project-owned `ArgusFourOverlayTileset` material,
+derived from Cesium for Unity 1.25.1's default shader with one additional raster
+slot. Its four overlay keys are `0` (Blue Marble), `1` (dated observation), `2`
+(west night rectangle), and `3` (east night rectangle). The controller retains
+independent GIBS requests. `FoundationSceneBuilder` assigns this material and the
+saved scene is rebuilt through that builder. See `Assets/ArgusSimulation/Materials/README.md`
+for provenance and the offline GPU validation command.
 
-- The east night-lights overlay uses material key `"3"`
-  (the east night overlay in `Unity/Cesium/NasaGibsRasterController.cs`), but the default Cesium tileset
-  material only has overlay slots `0`, `1` and `2`, so that overlay is never drawn. The part
-  of the night side past the antimeridian (about 180° to 165°W with the fixed Sun) shows no
-  city lights.
+**Known issues:**
+
 - The scene's Sun light is fixed.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
@@ -331,8 +334,7 @@ Argus.Hardware/            HIL adapters                                        p
 - [x] Internal Basilisk-to-Argus mapping with frame tests (G4).
 - [x] The runner publishes whole states through `ISimulationStateSource`
       (`ISpacecraftStateSource` removed; `AnalyticStateSource`).
-- [ ] The Unity Sun light and night side follow `EnvironmentState`. Fix the night-lights key
-      `"3"` separately.
+- [ ] The Unity Sun light and night side follow `EnvironmentState`.
 - [ ] Camera models with a late-frame policy, and a Unity `IImageRenderer` (D5, G3).
 - [ ] Run recorder v0, the gateway command log, and controller-visible observations
       (D6, D7).
