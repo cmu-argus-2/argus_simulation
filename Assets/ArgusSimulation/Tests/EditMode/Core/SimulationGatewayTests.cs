@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -7,77 +8,160 @@ namespace Argus.Simulation.Tests
     public sealed class SimulationGatewayTests
     {
         [Test]
-        public void Step_AdvancesAtConfiguredFixedInterval()
+        public void ResetReturnsObservationZeroAndStepCommandKReturnsObservationKPlusOne()
         {
-            SimulationGateway gateway = BuildGateway(0.25);
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<SimulationState> states = new List<SimulationState>();
+            gateway.StateProduced += states.Add;
 
-            SimulationState first = gateway.Step();
-            SimulationState second = gateway.Step();
-
-            Assert.That(first.Spacecraft.Sequence, Is.EqualTo(0));
-            Assert.That(first.Spacecraft.SimulationTimeSeconds, Is.EqualTo(0.0));
-            Assert.That(second.Spacecraft.Sequence, Is.EqualTo(1));
-            Assert.That(second.Spacecraft.SimulationTimeSeconds, Is.EqualTo(0.25));
-            Assert.That(gateway.NextSequence, Is.EqualTo(2));
-            Assert.That(gateway.NextSimulationTimeSeconds, Is.EqualTo(0.5));
-        }
-
-        [Test]
-        public void Step_PreservesAppliedControllerCommandInState()
-        {
-            SimulationGateway gateway = BuildGateway(0.1);
-            ActuatorCommandSet commands = new ActuatorCommandSet(
+            Observation first = gateway.Reset(7, Scenario(0.25));
+            ActuatorCommandSet command = new ActuatorCommandSet(
                 0,
                 0.0,
                 new Vector3d(0.001, -0.002, 0.003),
                 new Vector3d(0.02, 0.0, -0.01),
                 new Vector3d(0.0, 0.0, 0.0));
+            Observation second = gateway.Step(command);
 
-            SimulationState state = gateway.Step(commands);
+            Assert.That((first.Sequence, first.SimulationTimeSeconds, first.Status), Is.EqualTo((0L, 0.0, ObservationStatus.Ok)));
+            Assert.That((second.Sequence, second.SimulationTimeSeconds), Is.EqualTo((1L, 0.25)));
+            Assert.That(second.RunId, Is.EqualTo("test-run"));
+            Assert.That(second.Source, Is.EqualTo("analytic-circular-orbit"));
+            Assert.That(second.IsTerminal, Is.False);
+            Assert.That((gateway.NextSequence, gateway.NextSimulationTimeSeconds), Is.EqualTo((1L, 0.25)));
 
-            Assert.That(state.IsValid, Is.True);
-            Assert.That(
-                state.AppliedCommands.ReactionWheelTorqueBodyNewtonMeters,
-                Is.EqualTo(commands.ReactionWheelTorqueBodyNewtonMeters));
-            Assert.That(state.DynamicsBackend, Is.EqualTo("analytic-circular-orbit"));
+            // Truth reaches StateProduced, not the observation: state 0 has no command, and
+            // command 0 acted over [t_0, t_1) to produce state 1.
+            Assert.That(states.Count, Is.EqualTo(2));
+            Assert.That(states[0].HasAppliedCommands, Is.False);
+            Assert.That(states[1].Spacecraft.Sequence, Is.EqualTo(1));
+            Assert.That(states[1].AppliedCommands.Value.ReactionWheelTorqueBodyNewtonMeters,
+                Is.EqualTo(command.ReactionWheelTorqueBodyNewtonMeters));
+            Assert.That(second.TimestampUtc, Is.EqualTo(states[1].Spacecraft.TimestampUtc));
         }
 
         [Test]
-        public void Reset_RestartsSequenceAndTime()
+        public void ObservationsHoldOnlyControllerVisibleFrames()
         {
-            SimulationGateway gateway = BuildGateway(0.5);
-            gateway.Step();
-            gateway.Step();
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                sensor => new IdealBodyRateSensorModel(
+                    sensor.Definition.SensorId,
+                    sensor.Definition.FrameId,
+                    sensor.Definition.SamplePeriodSeconds));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            SimulationConfiguration scenario = Scenario(
+                0.1,
+                Rate("rate.visible", isControllerVisible: true),
+                Rate("rate.truth", isControllerVisible: false));
 
-            gateway.Reset();
-            SimulationState restarted = gateway.Step();
+            Observation[] observations = { gateway.Reset(1, scenario), gateway.Step() };
 
-            Assert.That(restarted.Spacecraft.Sequence, Is.EqualTo(0));
-            Assert.That(restarted.Spacecraft.SimulationTimeSeconds, Is.EqualTo(0.0));
+            for (int index = 0; index < observations.Length; index++)
+            {
+                Assert.That(observations[index].Frames.Count, Is.EqualTo(1));
+                Assert.That(observations[index].TryGetFrame("rate.visible", out SensorFrame<AngularRateMeasurement> frame), Is.True);
+                Assert.That(frame.Sequence, Is.EqualTo(observations[index].Sequence));
+                Assert.That(observations[index].TryGetFrame("rate.truth", out SensorFrame<AngularRateMeasurement> _), Is.False);
+                // The recorder still receives the ground-truth sensor's frame.
+                Assert.That(outputs[index].Frames.Count, Is.EqualTo(2));
+            }
         }
 
         [Test]
-        public void Step_RejectsCommandForWrongSequence()
+        public void ResetRestartsSequenceAndTime()
         {
-            SimulationGateway gateway = BuildGateway(0.1);
-            ActuatorCommandSet commands = ActuatorCommandSet.None(4, 0.4);
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            gateway.Reset(0, Scenario(0.5));
+            gateway.Step();
+            gateway.Step();
 
-            Assert.Throws<ArgumentException>(() => gateway.Step(commands));
+            Observation restarted = gateway.Reset(0, Scenario(0.5));
+
+            Assert.That((restarted.Sequence, restarted.SimulationTimeSeconds), Is.EqualTo((0L, 0.0)));
+            Assert.That(gateway.Step().Sequence, Is.EqualTo(1));
         }
 
-        private static SimulationGateway BuildGateway(double fixedStepSeconds)
+        [Test]
+        public void StepRejectsCommandForWrongSequence()
         {
-            AnalyticSimulationEngine engine = new AnalyticSimulationEngine(
-                500_000.0,
-                51.6,
-                0.0,
-                0.0);
-            SimulationGateway gateway = new SimulationGateway(engine);
-            gateway.Initialize(new SimulationConfiguration(
-                "test-run",
-                DateTimeOffset.UnixEpoch,
-                fixedStepSeconds));
-            return gateway;
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            gateway.Reset(0, Scenario(0.1));
+
+            Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(4, 0.4)));
+        }
+
+        [Test]
+        public void BackendFailureEndsTheRunAndKeepsTheCause()
+        {
+            InvalidOperationException cause = new InvalidOperationException("Basilisk Step failed: Unavailable");
+            SimulationGateway gateway = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, cause));
+            List<Observation> terminated = new List<Observation>();
+            gateway.RunTerminated += terminated.Add;
+            gateway.Reset(0, Scenario(0.5));
+
+            Observation failed = gateway.Step();
+
+            // The observation describes the last step that exists; the reason names the one that failed.
+            Assert.That((failed.Status, failed.Sequence, failed.Frames.Count), Is.EqualTo((ObservationStatus.BackendFailed, 0L, 0)));
+            Assert.That(failed.TerminationReason, Is.EqualTo("Step 1 failed: Basilisk Step failed: Unavailable"));
+            Assert.That(gateway.Failure, Is.SameAs(cause));
+            Assert.That(terminated, Is.EqualTo(new[] { failed }));
+            Assert.That((gateway.IsRunning, gateway.NextSequence), Is.EqualTo((false, 0L)));
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+
+            // Anything else is a bug, not a backend failure, and propagates.
+            SimulationGateway buggy = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new ArgumentException("bug")));
+            buggy.Reset(0, Scenario(0.5));
+            Assert.Throws<ArgumentException>(() => buggy.Step());
+        }
+
+        private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
+
+        private static SimulationConfiguration Scenario(double fixedStepSeconds, params SensorConfiguration[] sensors) =>
+            new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, sensors: sensors);
+
+        // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
+        private static SensorConfiguration Rate(string sensorId, bool isControllerVisible)
+        {
+            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
+            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
+            return SensorConfiguration.ForImu(
+                new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, "test", SensorMount.Identity, isControllerVisible),
+                new ImuProfile(
+                    new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
+                    new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
+        }
+
+        // The analytic engine, throwing the given exception from TryStep at one step.
+        private sealed class FailingEngine : ISimulationEngine
+        {
+            private readonly ISimulationEngine _inner;
+            private readonly long _failAtStep;
+            private readonly Exception _failure;
+
+            public FailingEngine(ISimulationEngine inner, long failAtStep, Exception failure)
+            {
+                _inner = inner;
+                _failAtStep = failAtStep;
+                _failure = failure;
+            }
+
+            public string BackendName => _inner.BackendName;
+            public bool IsInitialized => _inner.IsInitialized;
+            public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
+            public bool TryReset(out SimulationState state) => _inner.TryReset(out state);
+
+            public bool TryStep(SimulationStepInput input, out SimulationState state)
+            {
+                if (input.Sequence + 1 == _failAtStep)
+                {
+                    throw _failure;
+                }
+
+                return _inner.TryStep(input, out state);
+            }
         }
     }
 }

@@ -39,7 +39,7 @@ flowchart TB
     subgraph CORE["Headless C# — Argus.Simulation.Core + headless/Host"]
         dyn["Dynamics<br/>ISimulationEngine → SimulationState<br/>+ EnvironmentState (Basilisk runs)"]
         smod["Sensor models<br/>SensorManager, SensorModel&lt;T&gt;<br/>(planned: CameraModel)"]
-        gate["Simulation gateway<br/>Reset / Step over ISimulationEngine<br/>(planned: observations, command log)"]
+        gate["Simulation gateway<br/>Reset / Step over ISimulationEngine<br/>returns observations (planned: command log)"]
         beng["BasiliskEngine (headless/Host)<br/>gRPC client over Core/Basilisk mapping"]
         rec["Run recorder<br/>single export route for run data"]
     end
@@ -102,7 +102,7 @@ flowchart TB
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | UNITY-9 (#63) retires it once its reader moves to dataset v1 (D6, #69) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a `SimulationState` with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
-| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | Reset/Step over `ISimulationEngine`, forwarding commands; returns truth states; used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for HIL flight computers and other external controllers: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; observations planned) |
+| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` and `Step(command k)` over `ISimulationEngine` in the DATA-5 order; returns controller-visible observations, and truth only through `StateProduced`; owns the run's `SensorManager`; used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for HIL flight computers and other external controllers: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; command log planned) |
 | BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; unverified against a real service, which is a skeleton | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (client; service planned) |
 | Run recorder | `Core/Recording/` | — | The single export route for run data: states, every `SensorFrame`, the gateway command log | planned |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |

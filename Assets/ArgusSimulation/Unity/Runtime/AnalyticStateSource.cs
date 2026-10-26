@@ -82,11 +82,7 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            SimulationStepInput input = new SimulationStepInput(
-                sequence,
-                simulationTimeSeconds,
-                ActuatorCommandSet.None(sequence, simulationTimeSeconds));
-            return _engine.TryStep(input, out state) && state.IsValid;
+            return _engine.TrySample(sequence, simulationTimeSeconds, out state);
         }
 
         private bool TryBuildEngine()

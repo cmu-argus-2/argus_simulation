@@ -76,8 +76,10 @@ own.
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
 - **Sensors:** each entry holds the `SensorDefinition` fields (`sensorId`, `modelName`,
-  `frameId`, `samplePeriodSeconds`, `source`, `mount`) and exactly one profile, named by
-  its kind: `imu`, `magnetometer` or `lightSensor`. The list may hold any subset of the
+  `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`, `mount`) and exactly one
+  profile, named by its kind: `imu`, `magnetometer` or `lightSensor`. `controllerVisible` is
+  `false` for a ground-truth sensor: the gateway never returns its frames to a controller,
+  though the recorder still receives them (D7). The list may hold any subset of the
   sensors, including none, so a staged run against a partly built service needs only a
   different file.
 - **Validation:** every field is required and unknown fields are rejected. Each part is

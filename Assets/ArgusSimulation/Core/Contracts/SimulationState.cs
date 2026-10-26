@@ -13,7 +13,7 @@ namespace Argus.Simulation.Core
             string runId,
             string dynamicsBackend,
             SpacecraftState spacecraft,
-            ActuatorCommandSet appliedCommands,
+            ActuatorCommandSet? appliedCommands,
             EnvironmentState? environment = null,
             SensorMeasurementSet sensorMeasurements = null)
         {
@@ -29,9 +29,10 @@ namespace Argus.Simulation.Core
         public string DynamicsBackend { get; }
         public SpacecraftState Spacecraft { get; }
 
-        // The command applied over [t_k, t_k+1). The state at t_k was produced under state k-1's
-        // command.
-        public ActuatorCommandSet AppliedCommands { get; }
+        // The command that acted over [t_k-1, t_k) and produced this state: command k-1 (DATA-5,
+        // target-architecture §4). None at t_0, and none from a source that applies no commands.
+        public ActuatorCommandSet? AppliedCommands { get; }
+        public bool HasAppliedCommands => AppliedCommands.HasValue;
 
         // Present exactly when the spacecraft state is in ITRF93, that is, when SPICE produced it.
         public EnvironmentState? Environment { get; }
@@ -44,8 +45,8 @@ namespace Argus.Simulation.Core
             !string.IsNullOrWhiteSpace(RunId) &&
             !string.IsNullOrWhiteSpace(DynamicsBackend) &&
             Spacecraft.IsValid &&
-            AppliedCommands.IsValid &&
-            Spacecraft.Sequence == AppliedCommands.Sequence &&
+            (!HasAppliedCommands ||
+                (AppliedCommands.Value.IsValid && AppliedCommands.Value.Sequence == Spacecraft.Sequence - 1)) &&
             Spacecraft.EarthFixedFrame != ReferenceFrame.Unspecified &&
             HasEnvironment == (Spacecraft.EarthFixedFrame == ReferenceFrame.Itrf93) &&
             (!HasEnvironment || Environment.Value.IsValid);

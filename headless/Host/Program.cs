@@ -63,38 +63,46 @@ namespace Argus.Simulation.Host
         {
             using BasiliskEngine engine = new BasiliskEngine(options.BasiliskAddress, options.RealTimeFactor, cancellation);
             SimulationGateway gateway = new SimulationGateway(engine);
-            gateway.Initialize(configuration);
+
+            // Truth and every sensor frame come from the gateway's events; observations hold only
+            // what a controller may see (D7).
+            SimulationState state = default;
+            long frameCount = 0;
+            gateway.StateProduced += produced => state = produced;
+            gateway.SensorOutputProduced += output => frameCount += output.Frames.Count;
+
+            Observation observation = gateway.Reset(configuration.RandomSeed, configuration);
             Console.WriteLine(
                 $"Basilisk {engine.BasiliskVersion}, kernel set {configuration.KernelSetId}, " +
                 $"{configuration.Sensors.Count} sensors, run {configuration.RunId}");
 
-            SensorManager sensors = new SensorManager();
-            foreach (SensorConfiguration sensor in configuration.Sensors)
-            {
-                sensors.Register(SensorFactory.Create(sensor));
-            }
-
-            sensors.Reset(new SensorResetContext(configuration.RunId, configuration.EpochUtc, configuration.RandomSeed));
-
             long lastSequence = (long)Math.Round(options.DurationSeconds / configuration.FixedStepSeconds);
             long stepsPerReport = Math.Max(1L, (long)Math.Round(1.0 / configuration.FixedStepSeconds));
-            long frameCount = 0;
-            for (long sequence = 0; sequence <= lastSequence; sequence++)
+            while (true)
             {
-                cancellation.ThrowIfCancellationRequested();
-                SimulationState simulationState = gateway.Step();
-                SensorOutputSet frames = sensors.Sample(new SensorSampleContext(configuration.RunId, simulationState));
-                frameCount += frames.Frames.Count;
-
-                if (sequence % stepsPerReport == 0)
+                if (observation.IsTerminal)
                 {
-                    SpacecraftState state = simulationState.Spacecraft;
+                    throw new InvalidOperationException(observation.TerminationReason, gateway.Failure);
+                }
+
+                if (observation.Sequence % stepsPerReport == 0)
+                {
+                    SpacecraftState spacecraft = state.Spacecraft;
                     Console.WriteLine(
-                        $"t={state.SimulationTimeSeconds,8:F1} s  seq={state.Sequence,6}  " +
-                        $"|r|={state.PositionEcefMeters.Magnitude / 1000.0,9:F3} km  " +
-                        $"shadow={simulationState.Environment.Value.SpacecraftShadowFactor:F3}  " +
+                        $"t={spacecraft.SimulationTimeSeconds,8:F1} s  seq={spacecraft.Sequence,6}  " +
+                        $"|r|={spacecraft.PositionEcefMeters.Magnitude / 1000.0,9:F3} km  " +
+                        $"shadow={state.Environment.Value.SpacecraftShadowFactor:F3}  " +
                         $"frames={frameCount}  overruns={engine.PacingOverrunCount}");
                 }
+
+                if (observation.Sequence >= lastSequence)
+                {
+                    return;
+                }
+
+                cancellation.ThrowIfCancellationRequested();
+                // TODO(G1): no controller is attached yet, so every command is zero.
+                observation = gateway.Step();
             }
         }
     }
