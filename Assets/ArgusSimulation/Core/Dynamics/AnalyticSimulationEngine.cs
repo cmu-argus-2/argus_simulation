@@ -33,6 +33,9 @@ namespace Argus.Simulation.Core
         }
 
         public string BackendName => "analytic-circular-orbit";
+
+        // The orbit every run starts from; the run recorder writes it to the manifest.
+        public AnalyticOrbit Orbit => new AnalyticOrbit(_altitudeMeters, _inclinationDegrees, _raanDegrees, _phaseDegrees);
         public bool IsInitialized => _orbit != null;
 
         public void Initialize(SimulationConfiguration configuration)

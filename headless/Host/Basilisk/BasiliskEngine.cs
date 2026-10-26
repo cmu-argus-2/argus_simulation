@@ -174,7 +174,7 @@ namespace Argus.Simulation.Host
             if (appliedCommands.HasValue)
             {
                 request.CommandSequence = checked((ulong)appliedCommands.Value.Sequence);
-                request.CommandTimeNs = checked((ulong)BasiliskTime.ToNanoseconds(appliedCommands.Value.ApplyAtSimulationTimeSeconds));
+                request.CommandTimeNs = CommandTimeNanoseconds(appliedCommands.Value.Sequence, _fixedStepNanoseconds);
             }
 
             PbBasilisk.StepResponse response = Call("Step", options => _client.Step(request, options), StepDeadline());
@@ -206,6 +206,12 @@ namespace Argus.Simulation.Host
             return state;
         }
 
+        // t_k in exact nanoseconds. TryStep has checked that the command's time is on this grid;
+        // converting its seconds back to nanoseconds instead fails once k x step picks up rounding
+        // (8192.300000000001 s at k = 81923 with a 0.1 s step).
+        internal static ulong CommandTimeNanoseconds(long commandSequence, long fixedStepNanoseconds) =>
+            checked((ulong)(commandSequence * fixedStepNanoseconds));
+
         public void Dispose()
         {
             _channel.Dispose();
@@ -227,6 +233,12 @@ namespace Argus.Simulation.Host
             try
             {
                 return call(new CallOptions(deadline: DateTime.UtcNow + deadline, cancellationToken: _cancellation));
+            }
+            catch (RpcException exception) when (_cancellation.IsCancellationRequested)
+            {
+                // Cancellation, not a backend failure: the gateway lets it through, and the host
+                // stops the run (SimulationGateway.Stop).
+                throw new OperationCanceledException($"Basilisk {rpc} was cancelled.", exception, _cancellation);
             }
             catch (RpcException exception)
             {

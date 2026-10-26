@@ -61,6 +61,11 @@ configured sensor, or `Unavailable` with no service), 2 on bad arguments or a ru
 configuration file that is unreadable or invalid. A bad file exits before the host connects
 to the service, and the message names the field.
 
+`--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
+into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
+including ground-truth sensors, from the gateway's events. It writes on its own thread, so a slow disk
+never delays a step, and `manifest.json` counts anything it had to drop.
+
 ## Run configuration files
 
 A run configuration file defines one run once (G5): epoch, fixed step, seed, kernel set,

@@ -29,6 +29,10 @@ namespace Argus.Simulation.Core
             _sensorFactory = sensorFactory ?? SensorFactory.Create;
         }
 
+        // Raised by each successful Reset, before that run's state at t_0, with the run as configured
+        // (the seed applied) and its sensors; the recorder starts a dataset directory here (D6).
+        public event Action<SimulationConfiguration, IReadOnlyList<SensorDefinition>> RunStarted;
+
         // Every truth state, starting with the state at t_0.
         public event Action<SimulationState> StateProduced;
 
@@ -76,6 +80,9 @@ namespace Argus.Simulation.Core
                     $"Simulation backend '{_engine.BackendName}' failed to produce a valid state at t_0.");
             }
 
+            // The recorder starts its dataset directory before the state at t_0 (D6); the run is
+            // committed only once that state and its frames are published.
+            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
             Observation observation = Publish(state);
             _nextSequence = 0;
             _nextSimulationTimeSeconds = 0.0;
@@ -132,12 +139,30 @@ namespace Argus.Simulation.Core
             return observation;
         }
 
+        // Ends a running run on the caller's behalf (Ctrl+C, a recorder failure), so subscribers such
+        // as the recorder learn why it ended. Returns the terminal observation, or null when no run
+        // is running.
+        public Observation Stop(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new ArgumentException("A reason is required.", nameof(reason));
+            }
+
+            return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
+        }
+
         // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
         // backend's own; the reason names the step that failed.
         private Observation Terminate(Exception failure)
         {
-            _isRunning = false;
             Failure = failure;
+            return End(ObservationStatus.BackendFailed, $"Step {_lastSpacecraft.Sequence + 1} failed: {failure.Message}");
+        }
+
+        private Observation End(ObservationStatus status, string reason)
+        {
+            _isRunning = false;
             Observation observation = new Observation(
                 _scenario.RunId,
                 _lastSpacecraft.Sequence,
@@ -145,8 +170,8 @@ namespace Argus.Simulation.Core
                 _lastSpacecraft.TimestampUtc,
                 _engine.BackendName,
                 Array.Empty<ISensorFrame>(),
-                ObservationStatus.BackendFailed,
-                $"Step {_lastSpacecraft.Sequence + 1} failed: {failure.Message}");
+                status,
+                reason);
             RunTerminated?.Invoke(observation);
             return observation;
         }
@@ -232,6 +257,17 @@ namespace Argus.Simulation.Core
 
             sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             return sensors;
+        }
+
+        private static SensorDefinition[] SensorDefinitions(SensorManager sensors)
+        {
+            SensorDefinition[] definitions = new SensorDefinition[sensors.Sensors.Count];
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                definitions[i] = sensors.Sensors[i].Definition;
+            }
+
+            return definitions;
         }
 
         private static HashSet<string> ControllerVisibleSensorIds(SimulationConfiguration run)

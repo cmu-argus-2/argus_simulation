@@ -17,7 +17,7 @@ Assets/ArgusSimulation/
 │   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
 │   ├── Math/                     # Double-precision vectors, quaternions, MRPs, 3x3 matrices
-│   ├── Recording/                # Run recorder, the single export route (placeholder)
+│   ├── Recording/                # Run recorder, the single export route (dataset v1)
 │   ├── Runtime/                  # Headless orchestration and gateway
 │   └── Sensors/                  # Standard sensor envelopes and models
 │       └── Camera/               # Camera sensor models (placeholders)
@@ -121,7 +121,6 @@ Core/Sensors/
 └── Camera/CameraModel.cs                                # TODO(D5, G3)
     Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
     Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
-Core/Recording/RunRecorder.cs                            # TODO(D6)
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)

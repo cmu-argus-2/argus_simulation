@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -117,6 +118,28 @@ namespace Argus.Simulation.Tests
             Assert.Throws<ArgumentException>(() => buggy.Step());
         }
 
+        [Test]
+        public void AThrowingRunStartedHandlerLeavesNoRunAndStopEndsOne()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            gateway.RunStarted += (run, sensors) => throw new IOException("recorder could not start");
+            Assert.Throws<IOException>(() => gateway.Reset(0, Scenario(0.5)));
+            Assert.That(gateway.IsRunning, Is.False);
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+
+            SimulationGateway stopped = new SimulationGateway(Engine());
+            List<Observation> terminated = new List<Observation>();
+            stopped.RunTerminated += terminated.Add;
+            stopped.Reset(0, Scenario(0.5));
+            stopped.Step();
+            Observation end = stopped.Stop("Cancelled (Ctrl+C)");
+
+            Assert.That((end.Status, end.Sequence, end.TerminationReason), Is.EqualTo((ObservationStatus.Stopped, 1L, "Cancelled (Ctrl+C)")));
+            Assert.That(terminated, Is.EqualTo(new[] { end }));
+            Assert.That(stopped.IsRunning, Is.False);
+            Assert.That(stopped.Stop("again"), Is.Null);
+        }
+
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params SensorConfiguration[] sensors) =>
@@ -132,36 +155,6 @@ namespace Argus.Simulation.Tests
                 new ImuProfile(
                     new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
                     new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
-        }
-
-        // The analytic engine, throwing the given exception from TryStep at one step.
-        private sealed class FailingEngine : ISimulationEngine
-        {
-            private readonly ISimulationEngine _inner;
-            private readonly long _failAtStep;
-            private readonly Exception _failure;
-
-            public FailingEngine(ISimulationEngine inner, long failAtStep, Exception failure)
-            {
-                _inner = inner;
-                _failAtStep = failAtStep;
-                _failure = failure;
-            }
-
-            public string BackendName => _inner.BackendName;
-            public bool IsInitialized => _inner.IsInitialized;
-            public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
-            public bool TryReset(out SimulationState state) => _inner.TryReset(out state);
-
-            public bool TryStep(SimulationStepInput input, out SimulationState state)
-            {
-                if (input.Sequence + 1 == _failAtStep)
-                {
-                    throw _failure;
-                }
-
-                return _inner.TryStep(input, out state);
-            }
         }
     }
 }
