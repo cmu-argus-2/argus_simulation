@@ -106,7 +106,7 @@ flowchart TB
 | BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; unverified against a real service, which is a skeleton | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (client; service planned) |
 | Run recorder | `Core/Recording/RunRecorder.cs` (`IRunRecorder`) | Writes dataset v1 (manifest, states, sensors, PNG images) off the step loop; `headless/Host --record` feeds it from the gateway's events | The single export route for run data: states, every `SensorFrame`, the gateway command log | main (v0; command log CORE-7, Unity capture UNITY-9) |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
-| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1); sensors, pacing and actuators UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | step 1 on main; Basilisk/SPICE team implements the rest |
+| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1) and the IMU (step 2); magnetometer, light sensors, pacing and actuators UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-2 on main; Basilisk/SPICE team implements the rest |
 | Flight computer (HIL) | `Argus.Hardware/` | README placeholder | HIL hardware adapters talking to the gateway | planned |
 | Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` from a run configuration file (placeholder P0 data) and records it with `--record` | Hosts the headless core process (G2): recorder, gateway server, Unity state stream | main (host skeleton) |
 
@@ -123,7 +123,7 @@ tiles. It is not run data and sits outside D6.
 | D4 | Environment data travels inside `SimulationState` as `EnvironmentState` (Sun vector, J2000 ↔ ITRF93 orientation, eclipse). There is no separate environment service. | It is per-step data produced together with the dynamics. | Lighting, camera models and the recorder read it through the state broadcast. |
 | D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. |
 | D6 | One export route for run data: the run recorder, fed by states, all `SensorManager` output, and the gateway's command log. | One dataset format with the same run ID, sequence and timestamps for truth and every sensor. | Decided in DATA-4 (#69) with the navigation owner: dataset v1 replaces the exporter output with no compatibility layer, and UNITY-9 (#63) retires `NavigationEpisodeExporter` once its one Python reader has moved to dataset v1. Until G2, the recorder runs in the process that owns the step loop, `headless/Host` in Basilisk runs and Unity in Unity-driven analytic runs (fed by the temporary sensor bridge); after G2 every run records in the headless core. Layout: `Core/Recording/README.md`. |
-| D7 | The gateway and the recorder are separate roles. The gateway never exposes truth. | The gateway is on the control loop's critical path; the recorder is a passive archive that must never block the loop. | The gateway forwards only controller-visible sensor frames (no ground-truth sensors) and returns observations, not `SimulationState`. The recorder receives everything, including the gateway's command log. |
+| D7 | The gateway and the recorder are separate roles. The gateway never exposes truth. | The gateway is on the control loop's critical path; the recorder is a passive archive that must never block the loop. | The gateway forwards only controller-visible sensor frames (no ground-truth sensors) and returns observations, not `SimulationState`: `Reset(seed, scenario)` returns observation 0 and `Step(command k)` returns observation k+1 (§4). The recorder receives everything, including the gateway's command log. |
 | D8 | Unity never sees Basilisk-specific types. | Keeps the backend replaceable. | All Basilisk data enters through `BasiliskEngine` as Argus contracts. |
 | D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. |
 | D10 | Sensors that Basilisk models (IMU, magnetometer, light sensor) keep their physics and cadence in Basilisk. | One implementation of each sensor's physics, timed by the clock that owns the run (D2). | `BasiliskEngine` maps each step's Basilisk sensor messages into `SimulationState.SensorMeasurements`; a `BackendSensorModel<T>` publishes a frame exactly when its sensor was sampled and never computes, holds or repeats a value. |
@@ -166,8 +166,46 @@ advances the engine by a fixed interval and returns observations. On `main`,
 `SimulationGateway` already exposes `Initialize`, `Reset()` and `Step(commands)` over the
 analytic engine in the tests and over `BasiliskEngine` in `headless/Host`, but it returns
 truth `SimulationState`s.
-`Reset(seed, scenario)` and observation-only returns are planned (§5, D7). Whether Basilisk
-also runs lockstep (faster than real time, paced by the caller) is an open question (§11).
+`Reset(seed, scenario)` and observation-only returns are planned (§5, D7; CORE-4, #40). Whether
+Basilisk also runs lockstep (faster than real time, paced by the caller) is an open question (§11).
+
+Step ordering (decided in DATA-5, #70), so the controller computes command k from
+observation k with no actuation delay:
+
+- `Reset(seed, scenario)` returns observation 0, at t_0 = 0.
+- `Step(command k)` applies command k over [t_k, t_k+1) and returns observation k+1, at
+  t_k+1 = (k + 1) × `FixedStepSeconds`. Command k carries sequence k and t_k; anything else is
+  rejected.
+
+`scenario` is the run configuration of G5, `SimulationConfiguration` (`headless/Host` reads it
+from a run configuration file). `seed` is non-negative and always replaces the scenario's
+`RandomSeed`; the run starts from that copy, so one scenario reruns with different noise. The
+same seed and scenario give the same observations.
+
+On the v1 Basilisk wire, the `StepRequest.command` of `Step(n)` is command n-1 and acts over
+[t_n-1, t_n): the service writes it before running to t_n. `command_sequence` and
+`command_time_ns` name step n-1, and the service rejects any other value, so a command sent in
+the wrong request is an error, never a silent one-step shift. `Step(0)` carries a zero command
+and neither field (`Argus.Basilisk/README.md` §3):
+
+| Gateway | v1 Basilisk calls | Returns |
+|---|---|---|
+| `Reset(seed, scenario)` | `ConfigureRun` with the scenario carrying the seed, every time, then `Step(0)` with a zero command | observation 0 from the t_0 state |
+| `Step(command k)` | `Step(k + 1)` carrying command k | observation k+1 from the t_k+1 state |
+
+Truth follows the same order: the state at t_k+1 records command k as its `AppliedCommands`,
+the command that produced it, and the state at t_0 records none (CORE-4, #40).
+
+An observation holds only what a controller can see (D7):
+
+- run ID, sequence, simulation time and UTC of the state it was sampled at;
+- the controller-visible `SensorFrame`s sampled at that time (no ground-truth sensors), each
+  with its own envelope: run ID, sensor ID, frame ID, sequence, simulation time, UTC, source
+  and status. A sensor that was not sampled at that step has no frame (D10);
+- the step's status, and termination: whether the run has ended, and why.
+
+It never carries a `SimulationState`, `SpacecraftState` or `EnvironmentState`; truth reaches the
+recorder and Unity through `StateProduced`.
 
 ### Analytic development run (what `main` does today)
 
@@ -197,7 +235,7 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Publishes the whole `SimulationState` | D2, D4 | done |
 | `ISpacecraftStateSource` | `Core/Abstractions/ISimulationStateSource.cs`, `IStepDrivenStateSource.cs` | Replaced by `ISimulationStateSource`, which carries the whole state; the analytic source is also `IStepDrivenStateSource` | D2, G2 | done (stream client planned) |
 | `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 | planned |
-| `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | Step returns observations (controller-visible frames), not `SimulationState`; command log; `Reset(seed, scenario)`; authority and heartbeat | D7, G1 | planned |
+| `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` (scenario = `SimulationConfiguration`) returns observation 0; `Step(command k)` returns observation k+1 (controller-visible frames, never `SimulationState`; §4); command log; authority and heartbeat | D7, G1 | planned (ordering decided) |
 | Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | An engine that applies them | G1 | planned |
 
 ## 6. Frames, units and time
@@ -226,8 +264,8 @@ also runs lockstep (faster than real time, paced by the caller) is an open quest
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. None of it has run against a real Basilisk service yet. |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). |
 
-**Not built yet:** the Basilisk service's sensors, pacing and actuators (only spacecraft, SPICE
-and eclipse are built, so `BasiliskEngine` is unverified against real Basilisk); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
+**Not built yet:** the Basilisk service's magnetometer, light sensors, pacing and actuators
+(only spacecraft, SPICE, eclipse and the IMU are built, so `BasiliskEngine` is unverified against real Basilisk); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe).
@@ -305,7 +343,7 @@ Assets/ArgusSimulation/
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
 headless/                  dotnet build of Core + EditMode tests; Host/        main
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
-Argus.Basilisk/            Basilisk service with SPICE                         build step 1 + brief
+Argus.Basilisk/            Basilisk service with SPICE                         build steps 1-2 + brief
 Argus.Hardware/            HIL adapters                                        planned (README)
 ```
 
@@ -343,8 +381,8 @@ Argus.Hardware/            HIL adapters                                        p
 - [ ] Follower runner: `StateStreamClient` implements `ISimulationStateSource`; build the
       orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
-- [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE and eclipse on main; the
-      Basilisk/SPICE team implements sensors, pacing and actuators).
+- [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse and the IMU on main;
+      the Basilisk/SPICE team implements the other sensors, pacing and actuators).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream
       (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
@@ -369,7 +407,8 @@ the gateway.
 - Where does the gRPC client for `BasiliskEngine` live? (D1) Answered on `main`:
   `headless/Host`, with internal generated code, over the internal `Core/Basilisk`
   mapping, so Core never references Protobuf or gRPC.
-- Gateway ordering: today `Step(k)` carries command k and returns state k, so command k
-  cannot be computed from observation k. The closed loop in system-architecture §5.1
-  (Reset → observation 0, Step(command k) → observation k+1) needs an `ISimulationEngine`
-  and gateway change; the v1 wire can stay as it is. (D7, G1)
+- Gateway ordering (D7, G1). Answered by DATA-5 (#70): `Reset(seed, scenario)` returns
+  observation 0 and `Step(command k)` returns observation k+1, with command k acting over
+  [t_k, t_k+1); `scenario` is `SimulationConfiguration`. The v1 Basilisk wire keeps its
+  messages, and `StepRequest.command` in `Step(n)` acts over [t_n-1, t_n) (§4). CORE-4 (#40)
+  changes `ISimulationEngine` and the gateway to match.
