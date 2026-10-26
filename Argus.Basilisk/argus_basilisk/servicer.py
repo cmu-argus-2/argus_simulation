@@ -19,7 +19,7 @@ from .validation import (
     configure_run_problems,
     timestamp_to_ns,
     validate_configure_run,
-    validate_step_command,
+    validate_step_request,
 )
 
 EMPTY = "EMPTY"
@@ -185,11 +185,9 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 "INVALID_ARGUMENT",
                 f"sim_time_ns: expected {t_n} (sequence x fixed_step_ns), got {request.sim_time_ns}")
 
-        # 3. Command.
-        if not request.HasField("command"):
-            raise _Abort("INVALID_ARGUMENT", "command: required message is unset")
+        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, and zero.
         try:
-            validate_step_command(request.command)
+            validate_step_request(request, configuration.fixed_step_ns)
             # 4. epoch + t_n inside coverage, before executing: CSPICE aborts the process outside it.
             has_magnetometer = any(
                 sensor.WhichOneof("profile") == "magnetometer" for sensor in configuration.sensors)

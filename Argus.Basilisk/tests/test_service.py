@@ -90,12 +90,17 @@ def imu_request():
 
 
 def step_request(sequence, run_id="p0-default", sim_time_ns=None):
-    return service_pb.StepRequest(
+    """Step(n) carrying the zero command n-1, which acts over [t_n-1, t_n)."""
+    request = service_pb.StepRequest(
         run_id=run_id,
         sequence=sequence,
         sim_time_ns=sequence * STEP_NS if sim_time_ns is None else sim_time_ns,
         command=zero_command(),
     )
+    if sequence > 0:
+        request.command_sequence = sequence - 1
+        request.command_time_ns = (sequence - 1) * STEP_NS
+    return request
 
 
 def status_of(call, request):
@@ -240,11 +245,26 @@ def test_step_checks_run_id_sequence_time_command_and_coverage(service):
     unset = step_request(0)
     unset.ClearField("command")
     assert status_of(stub.Step, unset)[0] == grpc.StatusCode.INVALID_ARGUMENT
+    # Step(0) follows no command, so a non-zero one is invalid even before actuators exist.
     pushing = step_request(0)
     pushing.command.thruster_force_body_n.x = 1.0
-    assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.UNIMPLEMENTED
+    assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.INVALID_ARGUMENT
     assert stub.Step(step_request(0)).sequence == 0
     assert servicer.state == servicer_module.RUNNING
+
+    # Step(1) carries command 0: a command for any other step is rejected, never applied a step off.
+    late = step_request(1)
+    late.command_sequence = 1
+    code, details = status_of(stub.Step, late)
+    assert code == grpc.StatusCode.INVALID_ARGUMENT
+    assert "command_sequence: expected 0" in details
+    unnamed = step_request(1)
+    unnamed.ClearField("command_time_ns")
+    assert status_of(stub.Step, unnamed)[0] == grpc.StatusCode.INVALID_ARGUMENT
+    pushing = step_request(1)
+    pushing.command.thruster_force_body_n.x = 1.0
+    assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.UNIMPLEMENTED
+    assert stub.Step(step_request(1)).sequence == 1
 
     # Configured 50 ms before coverage ends: Step(1) is outside it and must not execute, since
     # CSPICE aborts the process outside coverage.
