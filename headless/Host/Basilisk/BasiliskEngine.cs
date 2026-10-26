@@ -114,7 +114,9 @@ namespace Argus.Simulation.Host
             IsInitialized = true;
         }
 
-        // ConfigureRun leaves the service READY; after any step, Reset rebuilds it first. Then
+        // ConfigureRun leaves the service READY; after any step, Reset rebuilds it first. The
+        // gateway always calls Initialize before TryReset, so it never needs the Reset RPC; a
+        // direct engine user that reruns without Initialize does (ISimulationEngine.TryReset). Then
         // Step(0) runs the t = 0 pass with a zero command, since a Step(n) command acts over
         // [t_n-1, t_n) (target-architecture §4).
         public bool TryReset(out SimulationState state)

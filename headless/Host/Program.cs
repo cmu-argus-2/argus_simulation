@@ -82,7 +82,7 @@ namespace Argus.Simulation.Host
             {
                 if (observation.IsTerminal)
                 {
-                    throw new InvalidOperationException(observation.TerminationReason);
+                    throw new InvalidOperationException(observation.TerminationReason, gateway.Failure);
                 }
 
                 if (observation.Sequence % stepsPerReport == 0)

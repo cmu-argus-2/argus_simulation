@@ -28,16 +28,48 @@ namespace Argus.Simulation.Core
             IReadOnlyList<ISensorFrame> frames,
             ObservationStatus status,
             string terminationReason = null)
+            : this(runId, sequence, simulationTimeSeconds, timestampUtc, source, Copy(frames), status, terminationReason)
         {
+        }
+
+        private Observation(
+            string runId,
+            long sequence,
+            double simulationTimeSeconds,
+            DateTimeOffset timestampUtc,
+            string source,
+            ISensorFrame[] frames,
+            ObservationStatus status,
+            string terminationReason)
+        {
+            // Only a failure ends a run today, so the status and the reason always agree.
+            if ((status == ObservationStatus.BackendFailed) != (terminationReason != null))
+            {
+                throw new ArgumentException(
+                    "A BackendFailed observation needs a termination reason, and only it has one.",
+                    nameof(terminationReason));
+            }
+
             RunId = runId;
             Sequence = sequence;
             SimulationTimeSeconds = simulationTimeSeconds;
             TimestampUtc = timestampUtc.ToUniversalTime();
             Source = source;
-            _frames = Copy(frames);
+            _frames = frames;
             Status = status;
             TerminationReason = terminationReason;
         }
+
+        // For the gateway, which builds a fresh array per step: takes ownership instead of copying.
+        internal static Observation Owning(
+            string runId,
+            long sequence,
+            double simulationTimeSeconds,
+            DateTimeOffset timestampUtc,
+            string source,
+            ISensorFrame[] frames,
+            ObservationStatus status) =>
+            new Observation(runId, sequence, simulationTimeSeconds, timestampUtc, source, frames, status, null);
 
         public string RunId { get; }
         public long Sequence { get; }
