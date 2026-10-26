@@ -1,11 +1,12 @@
 using System;
+using System.IO;
 using System.Threading;
 using Argus.Simulation.Core;
 
 namespace Argus.Simulation.Host
 {
-    // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine.
-    // TODO(D6): feed every SimulationState and SensorOutputSet to Core RunRecorder.
+    // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine, recording
+    // dataset v1 with Core RunRecorder when --record is given (D6).
     // TODO(D7, G1): serve the gateway to HIL and external controllers through Gateway/GatewayServer.
     // TODO(G2): stream decimated states to Unity through Streaming/StateStreamServer.
     public static class Program
@@ -71,6 +72,17 @@ namespace Argus.Simulation.Host
             gateway.StateProduced += produced => state = produced;
             gateway.SensorOutputProduced += output => frameCount += output.Frames.Count;
 
+            // The recorder only queues on this thread, so a slow disk never delays a step.
+            using RunRecorder recorder = options.RecordDirectory == null
+                ? null
+                : new RunRecorder(options.RecordDirectory, "headless-host", RunRecorder.CommitOf(typeof(Program).Assembly));
+            if (recorder != null)
+            {
+                gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, engine.BasiliskVersion);
+                gateway.StateProduced += recorder.RecordState;
+                gateway.SensorOutputProduced += recorder.RecordSensorOutput;
+            }
+
             Observation observation = gateway.Reset(configuration.RandomSeed, configuration);
             Console.WriteLine(
                 $"Basilisk {engine.BasiliskVersion}, kernel set {configuration.KernelSetId}, " +
@@ -97,12 +109,18 @@ namespace Argus.Simulation.Host
 
                 if (observation.Sequence >= lastSequence)
                 {
-                    return;
+                    break;
                 }
 
                 cancellation.ThrowIfCancellationRequested();
                 // TODO(G1): no controller is attached yet, so every command is zero.
                 observation = gateway.Step();
+            }
+
+            if (recorder != null)
+            {
+                recorder.Close();
+                Console.WriteLine($"Recorded run {configuration.RunId} under {Path.GetFullPath(options.RecordDirectory)}");
             }
         }
     }

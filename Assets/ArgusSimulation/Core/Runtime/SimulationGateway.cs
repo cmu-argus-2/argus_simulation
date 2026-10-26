@@ -28,6 +28,10 @@ namespace Argus.Simulation.Core
             _sensorFactory = sensorFactory ?? SensorFactory.Create;
         }
 
+        // Raised by each successful Reset, before that run's state at t_0, with the run as configured
+        // (the seed applied) and its sensors; the recorder starts a dataset directory here (D6).
+        public event Action<SimulationConfiguration, IReadOnlyList<SensorDefinition>> RunStarted;
+
         // Every truth state, starting with the state at t_0.
         public event Action<SimulationState> StateProduced;
 
@@ -71,6 +75,7 @@ namespace Argus.Simulation.Core
             _nextSequence = 0;
             _nextSimulationTimeSeconds = 0.0;
             _isRunning = true;
+            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
             return Publish(state);
         }
 
@@ -193,6 +198,17 @@ namespace Argus.Simulation.Core
 
             sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             return sensors;
+        }
+
+        private static SensorDefinition[] SensorDefinitions(SensorManager sensors)
+        {
+            SensorDefinition[] definitions = new SensorDefinition[sensors.Sensors.Count];
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                definitions[i] = sensors.Sensors[i].Definition;
+            }
+
+            return definitions;
         }
 
         private static HashSet<string> ControllerVisibleSensorIds(SimulationConfiguration run)

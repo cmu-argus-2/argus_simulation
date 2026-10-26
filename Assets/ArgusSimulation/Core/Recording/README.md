@@ -1,10 +1,31 @@
-# Core/Recording — run recorder (planned)
+# Core/Recording — run recorder
 
-**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** placeholder `RunRecorder.cs` only (`TODO(D6)`)
+**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1 except `commands.jsonl` (CORE-7, #43) and the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
 
-The run recorder will be the single export route (decision D6 in
+The run recorder is the single export route (decision D6 in
 [target-architecture.md](../../../../docs/target-architecture.md)). It is a passive,
 write-only archive. It never feeds data back into the run and never blocks the step loop.
+
+## RunRecorder v0
+
+- **API:** `IRunRecorder` (`Core/Abstractions/`): `BeginRun` on every gateway `Reset`
+  (`SimulationGateway.RunStarted`), then `RecordState` (`StateProduced`) and `RecordSensorOutput`
+  (`SensorOutputProduced`), and `Close` at the end. `headless/Host` subscribes exactly these
+  three events; Unity-driven runs will call the same methods (UNITY-9, #63).
+- **Off the step loop:** the calls only queue. One writer thread formats the JSON, encodes PNGs
+  (`PngEncoder`, no Unity) and writes the files, so a stalled disk never delays
+  `SimulationGateway.Step` (`RunRecorderTests`).
+- **Overflow policy `drop-newest`:** the queue holds at most `capacity` states and sensor output
+  sets (65 536 by default). When it is full, the newest one is dropped, and the manifest's
+  `overflow` entry counts it: `policy`, `capacity`, `dropped_states` and `dropped_frames` (sensor
+  frames). Nothing is dropped silently. `BeginRun` is never dropped.
+- **Failures:** a write error, an unknown payload type or a `Jpeg` frame stops writing. The
+  manifest then stays `"complete": false`, and `Close` throws. Core has no JPEG decoder, so a
+  `Jpeg` `ImageFrame` cannot become the PNG dataset v1 requires. `Png` frames are written as given.
+  The recorder never overwrites a run directory that already exists.
+- **Not yet written:** `commands.jsonl` (CORE-7, #43), and `cameras` is `[]` until camera models
+  exist (CORE-6, #42). `exposure_start_simulation_time_s` and `exposure_duration_s` are `null`
+  until `ImageFrame` carries them.
 
 ## Inputs
 
@@ -60,11 +81,11 @@ writes it, and CORE-7 (#43) adds `commands.jsonl`.
 | `writer` | object | recorder | `process` (`headless-host` or `unity`), `argus_simulation_commit` (the full 40-character hash, or `null` when unknown, for example in a Unity player build), `recorder_version` (string). |
 | `dynamics_backend` | object | `SimulationState.DynamicsBackend`, `BasiliskEngine.BasiliskVersion` | `name` (the `DynamicsBackend` string) and `version` (`BasiliskVersion` in Basilisk runs, `null` in analytic runs). |
 | `earth_fixed_frame` | string | `SpacecraftState.EarthFixedFrame` | `Itrf93` or `AnalyticEarthFixed`. |
-| `configuration` | object | `SimulationConfiguration` (G5); `AnalyticSimulationEngine` for `analytic_orbit` | `epoch_utc`, `fixed_step_s`, `random_seed`, `kernel_set_id` (or `null`), `initial_orbit` (classical elements in J2000, or `null`), `spacecraft` (`mass_kg`, `inertia_body_kg_m2` as a 3×3 matrix, `initial_body_to_j2000_xyzw`, `initial_angular_velocity_body_rad_s`; or `null`), and `analytic_orbit`. `fixed_step_s` and `random_seed` are the values the run actually uses. In Unity-driven runs these are `SimulationRunner`'s step and `SimulationSensorRuntime`'s seed, not the 0.1 s and seed 0 that `AnalyticStateSource` passes to the engine (which ignores the seed). Analytic runs have no `initial_orbit` or `spacecraft`, because `AnalyticSimulationEngine` takes its orbit from its constructor and keeps it private, so CORE-5 must expose it. `analytic_orbit` (`altitude_m`, `inclination_deg`, `raan_deg`, `phase_deg`) is that orbit at the start of the run. Its angles are measured in the analytic fixture's own inertial frame, not J2000, so they cannot be compared with `initial_orbit`. The dashboard can change altitude and phase during a run, and `states.jsonl` records the result. `analytic_orbit` is `null` in Basilisk runs. |
-| `sensors` | array | `SensorManager.Sensors[].Definition`, plus `SensorConfiguration` where one exists | Every sensor that publishes frames: `sensor_id`, `model_name`, `frame_id`, `sample_period_s`, `source`, `mount` (`position_body_m`, `sensor_to_body_xyzw`), `controller_visible` (bool: whether the gateway may pass the sensor's frames to a controller; CORE-4 #40 adds this flag to `SensorDefinition`, and it is `null` until then), then `kind` and `profile` (that kind's profile fields). `kind` and `profile` are `null` for a sensor with no `SensorConfiguration`, such as the ideal body-rate sensor `imu.body_rate`. |
+| `configuration` | object | `SimulationConfiguration` (G5); `AnalyticSimulationEngine` for `analytic_orbit` | `epoch_utc`, `fixed_step_s`, `random_seed`, `kernel_set_id` (or `null`), `initial_orbit` (classical elements in J2000, or `null`), `spacecraft` (`mass_kg`, `inertia_body_kg_m2` as a 3×3 matrix, `initial_body_to_j2000_xyzw`, `initial_angular_velocity_body_rad_s`; or `null`), and `analytic_orbit`. `fixed_step_s` and `random_seed` are the values the run actually uses. In Unity-driven runs these are `SimulationRunner`'s step and `SimulationSensorRuntime`'s seed, not the 0.1 s and seed 0 that `AnalyticStateSource` passes to the engine (which ignores the seed). Analytic runs have no `initial_orbit` or `spacecraft`, because `AnalyticSimulationEngine` takes its orbit from its constructor; it exposes that orbit as `AnalyticSimulationEngine.Orbit`. `analytic_orbit` (`altitude_m`, `inclination_deg`, `raan_deg`, `phase_deg`) is that orbit at the start of the run. Its angles are measured in the analytic fixture's own inertial frame, not J2000, so they cannot be compared with `initial_orbit`. The dashboard can change altitude and phase during a run, and `states.jsonl` records the result. `analytic_orbit` is `null` in Basilisk runs. |
+| `sensors` | array | `SensorManager.Sensors[].Definition`, plus `SensorConfiguration` where one exists | Every sensor that publishes frames: `sensor_id`, `model_name`, `frame_id`, `sample_period_s`, `source`, `mount` (`position_body_m`, `sensor_to_body_xyzw`), `controller_visible` (bool: whether the gateway may pass the sensor's frames to a controller, `SensorDefinition.IsControllerVisible`), then `kind` and `profile` (that kind's profile fields). `kind` and `profile` are `null` for a sensor with no `SensorConfiguration`, such as the ideal body-rate sensor `imu.body_rate`. |
 | `cameras` | array | camera models (CORE-6) | Per camera: `sensor_id`, `profile_id`, `intrinsics` (`width_px`, `height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px`, `source`, `calibrated`), `distortion` (`model`, `coeffs`, `source`), `noise` (`source`), `extrinsics` (`source`, `origin`, `orientation_verified`), as in the DATA-6 profile (#71). When a calibration lands, `profile_id` changes and `calibrated` becomes `true`. |
 | `files` | object | recorder | `{}` until close. Then one entry per JSONL file, keyed by its path, for example `{"states.jsonl": {"lines": 1200}, "sensors.jsonl": {"lines": 5400}}`. Images and the manifest are not listed. |
-| `overflow` | object | recorder (CORE-5) | `policy` and `dropped_frames`. Nothing is dropped silently. |
+| `overflow` | object | recorder (CORE-5) | `policy` (`drop-newest`), `capacity`, `dropped_states` and `dropped_frames`; see RunRecorder v0 above. Nothing is dropped silently. |
 
 ### `states.jsonl`: one line per `SimulationState`
 
@@ -83,7 +104,7 @@ consumer that feeds an agent or controller uses only frames whose sensor has `co
 | `velocity_ecef_m_s` | [3] | `VelocityEcefMetersPerSecond`, relative to the Earth-fixed frame |
 | `body_to_ecef_xyzw` | [4] | `BodyToEcef` |
 | `angular_velocity_body_rad_s` | [3] | `AngularVelocityBodyRadiansPerSecond`: the body rate relative to inertial, in body axes. In analytic runs (`AnalyticEarthFixed`) it is the fixture's (0, n, 0) instead until CORE-2 (PR #83) lands, a known issue (`CircularOrbitModel` TODO; `target-architecture.md`). |
-| `applied_command` | object | `AppliedCommands`: `sequence`, `apply_at_simulation_time_s`, `reaction_wheel_torque_body_n_m`, `magnetorquer_dipole_body_a_m2`, `thruster_force_body_n`. It is the command applied over [t_k, t_k+1); the state at t_k was produced under the previous state's command (`SimulationState.AppliedCommands`). |
+| `producing_command` | object or `null` | `AppliedCommands`: `sequence`, `apply_at_simulation_time_s`, `reaction_wheel_torque_body_n_m`, `magnetorquer_dipole_body_a_m2`, `thruster_force_body_n`. The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0, and in runs that apply no commands (Unity's `AnalyticStateSource`). The command chosen from state k is the next line's `producing_command`, or, once CORE-7 (#43) lands, the `commands.jsonl` line with the same `sequence`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
 | `environment` | object or `null` | `EnvironmentState`: `sun_position_itrf93_m`, `j2000_to_itrf93_xyzw`, `earth_angular_velocity_itrf93_rad_s`, `spacecraft_shadow_factor` (Basilisk's illumination factor: 1 is fully sunlit, 0 is umbra). `null` in analytic runs (D9). |
 
 Backend sensor measurements (`SensorMeasurements`) are not repeated here. They appear in
@@ -127,7 +148,7 @@ Unity-driven runs bypass the gateway (G1), so they write no `commands.jsonl`.
 | `simulation_time_s` | number | `CommandRecord` |
 | `outcome` | string | `Applied`, `Clamped` or `Rejected` |
 | `reason` | string or `null` | why a command was clamped or rejected |
-| `requested` | object | the requested `ActuatorCommandSet`, with the same fields as `applied_command` above |
+| `requested` | object | the requested `ActuatorCommandSet`, with the same fields as `producing_command` above |
 | `applied` | object or `null` | the applied `ActuatorCommandSet`; `null` when rejected |
 
 ### `images/<sensorId>/<sequence>.png`
@@ -142,8 +163,8 @@ Unity-driven runs bypass the gateway (G1), so they write no `commands.jsonl`.
   rejects any other ID, because `SensorDefinition` only checks that an ID is not blank.
 - **Every image is an 8-bit sRGB PNG,** RGB (RGBA for an `Rgba8` frame), with the first row at the
   top of the image, whatever the frame's `ImageEncoding`. In `Rgb8` and `Rgba8` `ImageFrame.Data`, row
-  0 is the top row: the renderer flips Unity's bottom-up readback, and the recorder never flips. How
-  `Jpeg` frames are handled is left to CORE-5, since Core has no JPEG decoder.
+  0 is the top row: the renderer flips Unity's bottom-up readback, and the recorder never flips. A
+  `Jpeg` frame stops the recording (CORE-5), since Core has no JPEG decoder.
 
 ### Reader checks
 
