@@ -36,7 +36,18 @@ namespace Argus.Simulation.Core
         public DatasetJsonWriter Value(double value) =>
             double.IsNaN(value) || double.IsInfinity(value)
                 ? Null()
-                : Raw(value.ToString("R", CultureInfo.InvariantCulture));
+                : Raw(RoundTrip(value));
+
+        // "R" is the shortest round-trip form on .NET Core 3.0+, but older runtimes (Unity's Mono
+        // among them) can return a string that parses back to a neighbouring double; "G17" always
+        // round-trips.
+        private static string RoundTrip(double value)
+        {
+            string text = value.ToString("R", CultureInfo.InvariantCulture);
+            return double.Parse(text, CultureInfo.InvariantCulture) == value
+                ? text
+                : value.ToString("G17", CultureInfo.InvariantCulture);
+        }
 
         public DatasetJsonWriter Value(string value)
         {

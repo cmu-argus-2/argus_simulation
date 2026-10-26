@@ -121,6 +121,45 @@ namespace Argus.Simulation.Tests
             Assert.That(Field(manifest, "reason"), Is.EqualTo("\"Step 3 failed: Basilisk Step failed: Unavailable\""));
         }
 
+        [Test]
+        public void EachRunIdNumbersItsOwnSegmentsAndNeverReusesOneOnDisk()
+        {
+            // A segment an earlier process left behind.
+            Directory.CreateDirectory(Path.Combine(_root, "a_0"));
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                foreach (string runId in new[] { "a", "b", "a" })
+                {
+                    recorder.BeginRun(new SimulationConfiguration(runId, DateTimeOffset.UnixEpoch, 0.5), Array.Empty<SensorDefinition>());
+                    recorder.RecordState(State(runId));
+                }
+
+                recorder.Close();
+            }
+
+            Assert.That(File.Exists(Path.Combine(_root, "a_1", "manifest.json")), Is.True);
+            Assert.That(File.Exists(Path.Combine(_root, "b_0", "manifest.json")), Is.True);
+            Assert.That(Field(File.ReadAllText(Path.Combine(_root, "a_2", "manifest.json")), "segment"), Is.EqualTo("2"));
+            Assert.That(Directory.GetFileSystemEntries(Path.Combine(_root, "a_0")), Is.Empty);
+        }
+
+        [Test]
+        public void AnUnwritableRootFailsWhenTheRecorderIsCreated()
+        {
+            Directory.CreateDirectory(_root);
+            string blocker = Path.Combine(_root, "file");
+            File.WriteAllText(blocker, "");
+            Assert.Throws<IOException>(() => new RunRecorder(Path.Combine(blocker, "datasets"), "test"));
+        }
+
+        private static SimulationState State(string runId)
+        {
+            AnalyticSimulationEngine engine = Analytic();
+            engine.Initialize(new SimulationConfiguration(runId, DateTimeOffset.UnixEpoch, 0.5));
+            engine.TryReset(out SimulationState state);
+            return state;
+        }
+
         private static AnalyticSimulationEngine Analytic() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
         // The analytic engine with one ideal body-rate sensor, recorded through the gateway's events

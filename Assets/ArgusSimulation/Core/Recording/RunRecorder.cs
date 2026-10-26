@@ -18,6 +18,9 @@ namespace Argus.Simulation.Core
         public const string SchemaVersion = "argus-dataset/1";
         public const string RecorderVersion = "0.1.0";
         public const string OverflowPolicy = "drop-newest";
+        // TODO(#99): bound the queue by bytes as well as items before camera frames arrive. 65,536
+        // queued ~1 MB images is ~64 GB, and ImageFrame.Data is queued by reference, so a renderer
+        // that reuses its readback buffer would change frames already queued.
         public const int DefaultCapacity = 65536;
 
         private const string StatesFile = "states.jsonl";
@@ -40,12 +43,11 @@ namespace Argus.Simulation.Core
         private DropItem _openDrop;
         private bool _closing;
         private bool _hasRun;
-        private string _lastRunId;
-        private int _segment;
+        private readonly Dictionary<string, int> _lastSegments = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        // Writer thread only, then read after it has been joined.
+        // Writer thread only, then read after it has been joined; _failure is also read by Failure.
         private Segment _current;
-        private Exception _failure;
+        private volatile Exception _failure;
 
         // process is manifest.writer.process (headless-host or unity); commit is the full
         // argus_simulation hash, or null when unknown.
@@ -74,6 +76,7 @@ namespace Argus.Simulation.Core
             }
 
             _rootDirectory = Path.GetFullPath(rootDirectory);
+            ThrowUnlessWritable(_rootDirectory);
             _process = process;
             _commit = IsCommitHash(commit) ? commit : null;
             _capacity = capacity;
@@ -83,6 +86,50 @@ namespace Argus.Simulation.Core
         }
 
         public int Capacity => _capacity;
+
+        // Set once the writer has failed; everything queued after it is dropped. A caller that polls
+        // it between steps stops the run instead of running on with nothing written.
+        public Exception Failure => _failure;
+
+        // [a-z0-9][a-z0-9._-]*, not ending in '.', and not a Windows device name: the rule for run
+        // and sensor IDs, which become directory names on every OS (Recording/README.md).
+        public static bool IsPathSafeId(string id)
+        {
+            if (!SimulationConfiguration.IsLowercaseIdentifier(id) || id[id.Length - 1] == '.')
+            {
+                return false;
+            }
+
+            int dot = id.IndexOf('.');
+            string stem = dot < 0 ? id : id.Substring(0, dot);
+            switch (stem)
+            {
+                case "con":
+                case "prn":
+                case "aux":
+                case "nul":
+                    return false;
+                default:
+                    return !((stem.StartsWith("com", StringComparison.Ordinal) || stem.StartsWith("lpt", StringComparison.Ordinal)) &&
+                        stem.Length == 4 && stem[3] >= '0' && stem[3] <= '9');
+            }
+        }
+
+        // Fails here, before a run connects, rather than at Close after the run.
+        private static void ThrowUnlessWritable(string rootDirectory)
+        {
+            try
+            {
+                Directory.CreateDirectory(rootDirectory);
+                string probe = Path.Combine(rootDirectory, ".argus-write-probe-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllBytes(probe, Array.Empty<byte>());
+                File.Delete(probe);
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                throw new IOException($"Cannot write datasets under {rootDirectory}: {exception.Message}", exception);
+            }
+        }
 
         // The commit in an assembly's informational version ("1.0.0+<hash>", which the .NET SDK
         // adds from git), or null.
@@ -100,7 +147,7 @@ namespace Argus.Simulation.Core
             string dynamicsBackendVersion = null,
             AnalyticOrbit? analyticOrbit = null)
         {
-            if (!run.IsValid || !IsPathSafeRunId(run.RunId))
+            if (!run.IsValid || !IsPathSafeId(run.RunId))
             {
                 throw new ArgumentException("A valid run whose ID is usable as a directory name is required.", nameof(run));
             }
@@ -114,7 +161,7 @@ namespace Argus.Simulation.Core
             for (int i = 0; i < definitions.Length; i++)
             {
                 definitions[i] = sensors[i];
-                if (!IsPathSafeSensorId(definitions[i].SensorId))
+                if (!IsPathSafeId(definitions[i].SensorId))
                 {
                     throw new ArgumentException(
                         $"Sensor ID '{definitions[i].SensorId}' is not path-safe ([a-z0-9][a-z0-9._-]*, see Recording/README.md).",
@@ -125,10 +172,17 @@ namespace Argus.Simulation.Core
             lock (_gate)
             {
                 ThrowIfClosing();
-                _segment = _hasRun && _lastRunId == run.RunId ? _segment + 1 : 0;
-                _lastRunId = run.RunId;
+                // The next segment of this run ID, never one already on disk (from an earlier
+                // process, or an earlier run with the same ID): the recorder never overwrites.
+                int segment = _lastSegments.TryGetValue(run.RunId, out int last) ? last + 1 : 0;
+                while (Directory.Exists(Path.Combine(_rootDirectory, run.RunId + "_" + segment.ToString(CultureInfo.InvariantCulture))))
+                {
+                    segment++;
+                }
+
+                _lastSegments[run.RunId] = segment;
                 _hasRun = true;
-                Push(new BeginItem(run, definitions, dynamicsBackendVersion, analyticOrbit, _segment, DateTimeOffset.UtcNow));
+                Push(new BeginItem(run, definitions, dynamicsBackendVersion, analyticOrbit, segment, DateTimeOffset.UtcNow));
             }
         }
 
@@ -335,44 +389,6 @@ namespace Argus.Simulation.Core
             }
 
             return true;
-        }
-
-        private static bool IsPathSafeRunId(string runId) =>
-            runId != "." && runId != ".." && runId.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 &&
-            runId.IndexOf('/') < 0 && runId.IndexOf('\\') < 0;
-
-        // [a-z0-9][a-z0-9._-]*, not ending in '.', and not a Windows device name (Recording/README.md).
-        private static bool IsPathSafeSensorId(string sensorId)
-        {
-            if (string.IsNullOrEmpty(sensorId) || sensorId[sensorId.Length - 1] == '.')
-            {
-                return false;
-            }
-
-            for (int i = 0; i < sensorId.Length; i++)
-            {
-                char character = sensorId[i];
-                bool isLowerAlphanumeric = (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
-                bool isSeparator = character == '.' || character == '_' || character == '-';
-                if (!(isLowerAlphanumeric || (i > 0 && isSeparator)))
-                {
-                    return false;
-                }
-            }
-
-            int dot = sensorId.IndexOf('.');
-            string stem = dot < 0 ? sensorId : sensorId.Substring(0, dot);
-            switch (stem)
-            {
-                case "con":
-                case "prn":
-                case "aux":
-                case "nul":
-                    return false;
-                default:
-                    return !((stem.StartsWith("com", StringComparison.Ordinal) || stem.StartsWith("lpt", StringComparison.Ordinal)) &&
-                        stem.Length == 4 && stem[3] >= '0' && stem[3] <= '9');
-            }
         }
 
         private abstract class Item
@@ -648,7 +664,7 @@ namespace Argus.Simulation.Core
                     return null;
                 }
 
-                if (!IsPathSafeSensorId(frame.SensorId))
+                if (!IsPathSafeId(frame.SensorId))
                 {
                     throw new InvalidDataException($"Sensor ID '{frame.SensorId}' is not path-safe.");
                 }
@@ -737,7 +753,18 @@ namespace Argus.Simulation.Core
                         .Key("dropped_frames").Value(DroppedFrames)
                         .EndObject()
                     .EndObject();
-                File.WriteAllText(Path.Combine(_directory, ManifestFile), json + "\n", Utf8);
+                // Written beside it and swapped in, so a crash never leaves a half-written manifest.
+                string path = Path.Combine(_directory, ManifestFile);
+                string temporary = path + ".tmp";
+                File.WriteAllText(temporary, json + "\n", Utf8);
+                if (File.Exists(path))
+                {
+                    File.Replace(temporary, path, null);
+                }
+                else
+                {
+                    File.Move(temporary, path);
+                }
             }
 
             private static void WriteInitialOrbit(DatasetJsonWriter json, ClassicalOrbitElements? orbit)
@@ -825,18 +852,6 @@ namespace Argus.Simulation.Core
                 SensorDefinition sensor,
                 IReadOnlyList<SensorConfiguration> configurations)
             {
-                json.BeginObject()
-                    .Key("sensor_id").Value(sensor.SensorId)
-                    .Key("model_name").Value(sensor.ModelName)
-                    .Key("frame_id").Value(sensor.FrameId)
-                    .Key("sample_period_s").Value(sensor.SamplePeriodSeconds)
-                    .Key("source").Value(sensor.Source)
-                    .Key("mount").BeginObject()
-                        .Key("position_body_m").Value(sensor.Mount.PositionBodyMeters)
-                        .Key("sensor_to_body_xyzw").Value(sensor.Mount.SensorToBody)
-                        .EndObject()
-                    .Key("controller_visible").Value(sensor.IsControllerVisible);
-
                 SensorConfiguration? configuration = null;
                 foreach (SensorConfiguration candidate in configurations)
                 {
@@ -845,6 +860,21 @@ namespace Argus.Simulation.Core
                         configuration = candidate;
                     }
                 }
+
+                // The run configuration's definition, where there is one, since the gateway decides
+                // controller visibility from it; otherwise the model's own (an ideal sensor).
+                SensorDefinition definition = configuration.HasValue ? configuration.Value.Definition : sensor;
+                json.BeginObject()
+                    .Key("sensor_id").Value(definition.SensorId)
+                    .Key("model_name").Value(definition.ModelName)
+                    .Key("frame_id").Value(definition.FrameId)
+                    .Key("sample_period_s").Value(definition.SamplePeriodSeconds)
+                    .Key("source").Value(definition.Source)
+                    .Key("mount").BeginObject()
+                        .Key("position_body_m").Value(definition.Mount.PositionBodyMeters)
+                        .Key("sensor_to_body_xyzw").Value(definition.Mount.SensorToBody)
+                        .EndObject()
+                    .Key("controller_visible").Value(definition.IsControllerVisible);
 
                 if (!configuration.HasValue)
                 {

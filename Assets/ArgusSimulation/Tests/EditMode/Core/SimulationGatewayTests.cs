@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -115,6 +116,28 @@ namespace Argus.Simulation.Tests
             SimulationGateway buggy = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new ArgumentException("bug")));
             buggy.Reset(0, Scenario(0.5));
             Assert.Throws<ArgumentException>(() => buggy.Step());
+        }
+
+        [Test]
+        public void AThrowingRunStartedHandlerLeavesNoRunAndStopEndsOne()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            gateway.RunStarted += (run, sensors) => throw new IOException("recorder could not start");
+            Assert.Throws<IOException>(() => gateway.Reset(0, Scenario(0.5)));
+            Assert.That(gateway.IsRunning, Is.False);
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+
+            SimulationGateway stopped = new SimulationGateway(Engine());
+            List<Observation> terminated = new List<Observation>();
+            stopped.RunTerminated += terminated.Add;
+            stopped.Reset(0, Scenario(0.5));
+            stopped.Step();
+            Observation end = stopped.Stop("Cancelled (Ctrl+C)");
+
+            Assert.That((end.Status, end.Sequence, end.TerminationReason), Is.EqualTo((ObservationStatus.Stopped, 1L, "Cancelled (Ctrl+C)")));
+            Assert.That(terminated, Is.EqualTo(new[] { end }));
+            Assert.That(stopped.IsRunning, Is.False);
+            Assert.That(stopped.Stop("again"), Is.Null);
         }
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);

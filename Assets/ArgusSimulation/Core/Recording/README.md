@@ -75,10 +75,10 @@ writes it, and CORE-7 (#43) adds `commands.jsonl`.
 |---|---|---|---|
 | `schema_version` | string | — | `"argus-dataset/1"` |
 | `run_id` | string | `SimulationConfiguration.RunId` | |
-| `segment` | int | recorder | 0 for a run's first directory, then +1 after each gateway `Reset` that keeps the `run_id` (see Join keys). |
+| `segment` | int | recorder | 0 for a run's first directory, then +1 after each gateway `Reset` that keeps the `run_id` (see Join keys). The recorder skips any `<run_id>_<segment>` that already exists under its root (from an earlier process or run with the same `run_id`), so it never overwrites a dataset. |
 | `created_utc` | string | recorder | When recording started. |
 | `complete` | bool | recorder | `true` only once the recorder closed cleanly. |
-| `termination` | object or `null` | `SimulationGateway.RunTerminated` | Set when the gateway ended the run: `status` (`BackendFailed`), `last_sequence`, `last_simulation_time_s` and `last_timestamp_utc` (the last step that exists, as in `states.jsonl`), and `reason` (names the step that failed). `null` when the run ended any other way, for example when the host reached its duration. With `complete: true`, it tells a run that died at a step from one that was cut short. Added before any v1 dataset was written, so the schema stays at version 1. |
+| `termination` | object or `null` | `SimulationGateway.RunTerminated` | Set when the run ended early: `status` (`BackendFailed` when the backend failed, `Stopped` when the caller stopped it, for example on Ctrl+C or a recorder failure), `last_sequence`, `last_simulation_time_s` and `last_timestamp_utc` (the last step that exists, as in `states.jsonl`), and `reason` (for `BackendFailed`, names the step that failed). `null` when the run reached its end, for example the host's `--duration-s`. With `complete: true`, it tells a run that died at a step from one that was cut short. Added before any v1 dataset was written, so the schema stays at version 1. |
 | `writer` | object | recorder | `process` (`headless-host` or `unity`), `argus_simulation_commit` (the full 40-character hash, or `null` when unknown, for example in a Unity player build), `recorder_version` (string). |
 | `dynamics_backend` | object | `SimulationState.DynamicsBackend`, `BasiliskEngine.BasiliskVersion` | `name` (the `DynamicsBackend` string) and `version` (`BasiliskVersion` in Basilisk runs, `null` in analytic runs). |
 | `earth_fixed_frame` | string | `SpacecraftState.EarthFixedFrame` | `Itrf93` or `AnalyticEarthFixed`. |
@@ -157,11 +157,13 @@ Unity-driven runs bypass the gateway (G1), so they write no `commands.jsonl`.
 - **One PNG per camera frame that has pixels,** whatever its `status`, so a late frame marked
   `Stale` keeps its image. An `Unavailable` frame has no payload, so it has no PNG. The name is the frame's `sequence`, zero-padded to 8 digits, for example
   `images/cam_xp/00000042.png`. Readers take the path from `payload.image` and never rebuild it.
-- **Sensor IDs are path-safe:** a lowercase letter or digit, then lowercase letters, digits, `.`, `_`
+- **Run and sensor IDs are path-safe:** a lowercase letter or digit, then lowercase letters, digits, `.`, `_`
   or `-` (`[a-z0-9][a-z0-9._-]*`), not ending in `.` and not a Windows device name such as `con` or
   `nul`, as in `light.px` and `imu.body_rate`. The pattern is the kernel-set ID rule in
-  `SimulationConfiguration`; with it, `.`, `..` and IDs that differ only by case cannot occur. The recorder
-  rejects any other ID, because `SensorDefinition` only checks that an ID is not blank.
+  `SimulationConfiguration`; with it, `.`, `..` and IDs that differ only by case cannot occur, and a
+  directory name valid on one OS is valid on all. The recorder rejects any other ID
+  (`RunRecorder.IsPathSafeId`), because `SimulationConfiguration` and `SensorDefinition` only check
+  that an ID is not blank; `headless/Host` checks it before connecting when `--record` is given.
 - **Every image is an 8-bit sRGB PNG,** RGB (RGBA for an `Rgba8` frame), with the first row at the
   top of the image, whatever the frame's `ImageEncoding`. In `Rgb8` and `Rgba8` `ImageFrame.Data`, row
   0 is the top row: the renderer flips Unity's bottom-up readback, and the recorder never flips. A

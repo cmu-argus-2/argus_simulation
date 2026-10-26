@@ -25,6 +25,9 @@ namespace Argus.Simulation.Core
         // Why the gateway ended the run (SimulationGateway.RunTerminated); the manifest's termination.
         void RecordTermination(Observation terminal);
 
+        // Set once writing has failed; poll it between steps to stop instead of running on.
+        Exception Failure { get; }
+
         // Writes everything queued and the final manifest; throws if writing failed. Dispose also
         // closes, but leaves a failure to the manifest, which then stays "complete": false.
         void Close();

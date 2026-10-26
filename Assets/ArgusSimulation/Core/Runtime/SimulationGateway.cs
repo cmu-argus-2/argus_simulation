@@ -139,12 +139,30 @@ namespace Argus.Simulation.Core
             return observation;
         }
 
+        // Ends a running run on the caller's behalf (Ctrl+C, a recorder failure), so subscribers such
+        // as the recorder learn why it ended. Returns the terminal observation, or null when no run
+        // is running.
+        public Observation Stop(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new ArgumentException("A reason is required.", nameof(reason));
+            }
+
+            return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
+        }
+
         // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
         // backend's own; the reason names the step that failed.
         private Observation Terminate(Exception failure)
         {
-            _isRunning = false;
             Failure = failure;
+            return End(ObservationStatus.BackendFailed, $"Step {_lastSpacecraft.Sequence + 1} failed: {failure.Message}");
+        }
+
+        private Observation End(ObservationStatus status, string reason)
+        {
+            _isRunning = false;
             Observation observation = new Observation(
                 _scenario.RunId,
                 _lastSpacecraft.Sequence,
@@ -152,8 +170,8 @@ namespace Argus.Simulation.Core
                 _lastSpacecraft.TimestampUtc,
                 _engine.BackendName,
                 Array.Empty<ISensorFrame>(),
-                ObservationStatus.BackendFailed,
-                $"Step {_lastSpacecraft.Sequence + 1} failed: {failure.Message}");
+                status,
+                reason);
             RunTerminated?.Invoke(observation);
             return observation;
         }

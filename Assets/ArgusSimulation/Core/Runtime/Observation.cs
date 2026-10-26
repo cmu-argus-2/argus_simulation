@@ -9,7 +9,11 @@ namespace Argus.Simulation.Core
         Ok = 0,
 
         // The dynamics backend failed; the observation has no frames and the run has ended.
-        BackendFailed = 1
+        BackendFailed = 1,
+
+        // The caller stopped the run (SimulationGateway.Stop), for example on Ctrl+C or a recorder
+        // failure; the observation has no frames and the run has ended.
+        Stopped = 2
     }
 
     // What a controller sees after Reset (observation 0) or Step(command k) (observation k+1): the
@@ -42,11 +46,11 @@ namespace Argus.Simulation.Core
             ObservationStatus status,
             string terminationReason)
         {
-            // Only a failure ends a run today, so the status and the reason always agree.
-            if ((status == ObservationStatus.BackendFailed) != (terminationReason != null))
+            // A run ends only by failing or being stopped, so the status and the reason always agree.
+            if ((status != ObservationStatus.Ok) != (terminationReason != null))
             {
                 throw new ArgumentException(
-                    "A BackendFailed observation needs a termination reason, and only it has one.",
+                    "A terminal (BackendFailed or Stopped) observation needs a termination reason, and only it has one.",
                     nameof(terminationReason));
             }
 
