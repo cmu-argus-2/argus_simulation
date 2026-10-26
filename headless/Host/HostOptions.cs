@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 
 namespace Argus.Simulation.Host
 {
@@ -8,23 +9,30 @@ namespace Argus.Simulation.Host
         public const string EndpointVariable = "ARGUS_BASILISK_ENDPOINT";
         public const string DefaultEndpoint = "127.0.0.1:50051";
 
+        // The checked-in P0 run file, copied next to the host binary.
+        public static readonly string DefaultRunConfigurationPath =
+            Path.Combine(AppContext.BaseDirectory, "runs", "p0-default.json");
+
         public const string Usage =
             "Usage: Argus.Simulation.Host [--duration-s <seconds>] [--real-time-factor <factor>] " +
-            "[--basilisk-endpoint <host:port>]\n" +
+            "[--basilisk-endpoint <host:port>] [--run-config <path>]\n" +
             "  --duration-s         Simulated seconds to run (default 60).\n" +
             "  --real-time-factor   0 runs unpaced (default); above 0 Basilisk paces each step.\n" +
-            "  --basilisk-endpoint  Basilisk service (default $" + EndpointVariable + ", then " + DefaultEndpoint + ").";
+            "  --basilisk-endpoint  Basilisk service (default $" + EndpointVariable + ", then " + DefaultEndpoint + ").\n" +
+            "  --run-config         Run configuration file (default runs/p0-default.json).";
 
-        private HostOptions(double durationSeconds, double realTimeFactor, Uri basiliskAddress)
+        private HostOptions(double durationSeconds, double realTimeFactor, Uri basiliskAddress, string runConfigurationPath)
         {
             DurationSeconds = durationSeconds;
             RealTimeFactor = realTimeFactor;
             BasiliskAddress = basiliskAddress;
+            RunConfigurationPath = runConfigurationPath;
         }
 
         public double DurationSeconds { get; }
         public double RealTimeFactor { get; }
         public Uri BasiliskAddress { get; }
+        public string RunConfigurationPath { get; }
 
         // The endpoint comes from the flag, then the environment, then the default.
         public static bool TryParse(string[] args, out HostOptions options, out string error)
@@ -33,6 +41,7 @@ namespace Argus.Simulation.Host
             double durationSeconds = 60.0;
             double realTimeFactor = 0.0;
             string endpoint = null;
+            string runConfigurationPath = DefaultRunConfigurationPath;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -65,6 +74,15 @@ namespace Argus.Simulation.Host
                     case "--basilisk-endpoint":
                         endpoint = value;
                         break;
+                    case "--run-config":
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            error = "--run-config must be a file path.";
+                            return false;
+                        }
+
+                        runConfigurationPath = value;
+                        break;
                     default:
                         error = $"Unknown option {name}.";
                         return false;
@@ -91,7 +109,7 @@ namespace Argus.Simulation.Host
                 return false;
             }
 
-            options = new HostOptions(durationSeconds, realTimeFactor, address);
+            options = new HostOptions(durationSeconds, realTimeFactor, address, runConfigurationPath);
             error = null;
             return true;
         }

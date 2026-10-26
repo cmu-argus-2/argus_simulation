@@ -42,10 +42,12 @@ Assets/ArgusSimulation/
 
 headless/                         # dotnet build of Core and the EditMode tests (no Unity)
 ├── Core/, Tests/                 # csproj files that compile Core and Tests/EditMode
-└── Host/                         # Headless host: BasiliskEngine gRPC client, P0 scenario
-    ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
-    ├── Gateway/                  # GatewayServer (placeholder)
-    └── Streaming/                # StateStreamServer (placeholder)
+├── Host/                         # Headless host: BasiliskEngine gRPC client, run configuration files
+│   ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
+│   ├── Gateway/                  # GatewayServer (placeholder)
+│   ├── Streaming/                # StateStreamServer (placeholder)
+│   └── runs/                     # Run configuration files (p0-default.json: placeholder data)
+└── Host.Tests/                   # Host tests (NUnit)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
@@ -60,7 +62,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
 | Headless orchestration | `SimulationGateway` |
-| Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `HostScenario`, `Program` |
+| Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorManager`, `SensorFrame<TPayload>` |
 | Implemented sensor models | `IdealBodyRateSensorModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |

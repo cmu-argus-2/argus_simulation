@@ -29,4 +29,13 @@
     <ProjectReference Include="../Core/Argus.Simulation.Core.Headless.csproj" />
   </ItemGroup>
 
+  <!-- Run configuration files, copied next to the binary; the host reads runs/p0-default.json by default. -->
+  <ItemGroup>
+    <None Update="runs/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Argus.Simulation.Host.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,182 @@
+{
+  "epochUtc": "2025-01-15T00:00:00Z",
+  "fixedStepSeconds": 0.1,
+  "randomSeed": 1,
+  "kernelSetId": "argus-2026-10-20",
+  "initialOrbit": {
+    "semiMajorAxisMeters": 6878137.0,
+    "eccentricity": 0.0,
+    "inclinationDegrees": 51.6,
+    "raanDegrees": 0.0,
+    "argumentOfPeriapsisDegrees": 0.0,
+    "trueAnomalyDegrees": 0.0
+  },
+  "spacecraft": {
+    "massKilograms": 1.33,
+    "inertiaBodyKilogramSquareMeters": [
+      [2.536e-3, 0.0, 0.0],
+      [0.0, 2.536e-3, 0.0],
+      [0.0, 0.0, 2.217e-3]
+    ],
+    "initialBodyToJ2000": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+    "initialAngularVelocityBodyRadiansPerSecond": [0.0, 0.0, 0.0]
+  },
+  "sensors": [
+    {
+      "sensorId": "imu.main",
+      "modelName": "placeholder-mems-imu",
+      "frameId": "imu_main",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.0, 0.0],
+        "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+      },
+      "imu": {
+        "gyroscope": {
+          "noiseDensityRadiansPerSecondPerRootHertz": 1.2e-4,
+          "biasRandomWalkRadiansPerSecondPerRootSecond": 0.0,
+          "biasRandomWalkBoundRadiansPerSecond": 0.0,
+          "constantBiasSensorRadiansPerSecond": [0.0, 0.0, 0.0],
+          "scaleFactorPerAxis": [1.0, 1.0, 1.0],
+          "rangeRadiansPerSecond": 4.363,
+          "resolutionRadiansPerSecond": 1.33e-4
+        },
+        "accelerometer": {
+          "noiseDensityMetersPerSecondSquaredPerRootHertz": 1.8e-3,
+          "biasRandomWalkMetersPerSecondSquaredPerRootSecond": 0.0,
+          "biasRandomWalkBoundMetersPerSecondSquared": 0.0,
+          "constantBiasSensorMetersPerSecondSquared": [0.0, 0.0, 0.0],
+          "scaleFactorPerAxis": [1.0, 1.0, 1.0],
+          "rangeMetersPerSecondSquared": 19.61,
+          "resolutionMetersPerSecondSquared": 6.0e-4
+        }
+      }
+    },
+    {
+      "sensorId": "mag.main",
+      "modelName": "placeholder-magnetometer",
+      "frameId": "mag_main",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.0, 0.0],
+        "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+      },
+      "magnetometer": {
+        "noiseStdTesla": 0.0,
+        "constantBiasSensorTesla": [0.0, 0.0, 0.0],
+        "scaleFactor": 1.0,
+        "rangeTesla": 1.3e-3
+      }
+    },
+    {
+      "sensorId": "light.px",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_px",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.05, 0.0, 0.0],
+        "sensorToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": 0.5 }
+      },
+      "lightSensor": {
+        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
+        "scaleFactor": 1.0,
+        "noiseStdWattsPerSquareMeter": 1.0,
+        "biasWattsPerSquareMeter": 0.0,
+        "saturationWattsPerSquareMeter": 2000.0
+      }
+    },
+    {
+      "sensorId": "light.mx",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_mx",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [-0.05, 0.0, 0.0],
+        "sensorToBody": { "x": -0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
+      },
+      "lightSensor": {
+        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
+        "scaleFactor": 1.0,
+        "noiseStdWattsPerSquareMeter": 1.0,
+        "biasWattsPerSquareMeter": 0.0,
+        "saturationWattsPerSquareMeter": 2000.0
+      }
+    },
+    {
+      "sensorId": "light.py",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_py",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.05, 0.0],
+        "sensorToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
+      },
+      "lightSensor": {
+        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
+        "scaleFactor": 1.0,
+        "noiseStdWattsPerSquareMeter": 1.0,
+        "biasWattsPerSquareMeter": 0.0,
+        "saturationWattsPerSquareMeter": 2000.0
+      }
+    },
+    {
+      "sensorId": "light.my",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_my",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.0, -0.05, 0.0],
+        "sensorToBody": { "x": -0.5, "y": -0.5, "z": 0.5, "w": -0.5 }
+      },
+      "lightSensor": {
+        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
+        "scaleFactor": 1.0,
+        "noiseStdWattsPerSquareMeter": 1.0,
+        "biasWattsPerSquareMeter": 0.0,
+        "saturationWattsPerSquareMeter": 2000.0
+      }
+    },
+    {
+      "sensorId": "light.pz",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_pz",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.0, 0.05675],
+        "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+      },
+      "lightSensor": {
+        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
+        "scaleFactor": 1.0,
+        "noiseStdWattsPerSquareMeter": 1.0,
+        "biasWattsPerSquareMeter": 0.0,
+        "saturationWattsPerSquareMeter": 2000.0
+      }
+    },
+    {
+      "sensorId": "light.mz",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_mz",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.0, -0.05675],
+        "sensorToBody": { "x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0 }
+      },
+      "lightSensor": {
+        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
+        "scaleFactor": 1.0,
+        "noiseStdWattsPerSquareMeter": 1.0,
+        "biasWattsPerSquareMeter": 0.0,
+        "saturationWattsPerSquareMeter": 2000.0
+      }
+    }
+  ]
+}

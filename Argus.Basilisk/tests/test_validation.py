@@ -89,7 +89,7 @@ def light_sensor(sensor_id, position, sensor_x, sensor_y, sensor_z):
 
 
 def p0_default_request():
-    """headless/Host/HostScenario.CreateP0Default as BasiliskProtoMapper sends it."""
+    """headless/Host/runs/p0-default.json as BasiliskProtoMapper sends it."""
     configuration = run_configuration_pb2.RunConfiguration(
         run_id="p0-default",
         fixed_step_ns=100_000_000,
