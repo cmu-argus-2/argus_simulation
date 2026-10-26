@@ -247,9 +247,6 @@ for provenance and the offline GPU validation command.
   both poles.
 - Attitude nudges change what the cameras render but not the recorded `BodyToEcef`, so
   exported images can disagree with the exported attitude.
-- The analytic fixture's body rate is not `omega_BN_B` (§6): `CircularOrbitModel` reports
-  (0, n, 0), with n the mean motion, while its velocity-aligned body frame turns at about
-  (0, −n, yaw rate). The ideal body-rate sensor in development runs reports the fixture's value.
 
 ## 8. Teammate branches that diverge from these decisions
 
