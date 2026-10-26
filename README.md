@@ -49,8 +49,8 @@ Run the service tests with `uv run --frozen python -m pytest -q`. Tests that nee
 kernels are skipped until `kernels/` is filled.
 
 The service is built in steps ([Argus.Basilisk/README.md §12](Argus.Basilisk/README.md#12-build-order)).
-Until the sensors exist, a run that configures sensors, such as the host's P0 run below, is
-rejected with UNIMPLEMENTED.
+It runs the IMU. Until the magnetometer and light sensors exist, a run that configures them,
+such as the host's P0 run below, is rejected with UNIMPLEMENTED.
 
 ## Build and test the headless core
 
@@ -113,6 +113,10 @@ NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-0
 - **RESET POSE** restores the initial analytic orbit position and removes all attitude offsets.
 - Toggle telemetry groups from the right-side sensor settings panel.
 - The lower camera strip shows the four body-mounted +X, -X, +Y, and -Y cameras plus a virtual north-up nadir ground-truth feed. The GT camera follows orbital position but ignores CubeSat attitude changes.
+- The nadir GT feed loads first. On start, **RESET**, and orbit phase or altitude changes, the
+  toolbar shows **LOADING NADIR** and the simulation waits (up to 30 s) until Cesium has loaded
+  the nadir view; press **RESUME** to skip the wait. While running, a hidden look-ahead camera
+  preloads imagery about 4 wall-clock seconds ahead of the nadir camera at the current time speed.
 - Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar side of the scene's fixed Sun light, including the part past the antimeridian. The Sun itself is still fixed; see the known issues in [the target architecture](docs/target-architecture.md#7-gaps).
 
 Captured images and `navigation_metadata.jsonl` are written to:
