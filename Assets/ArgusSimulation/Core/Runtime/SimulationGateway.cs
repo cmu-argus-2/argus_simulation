@@ -149,10 +149,12 @@ namespace Argus.Simulation.Core
                 // A backend failure, such as BasiliskEngine's wrapped RpcException.
                 return Terminate(exception);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException exception)
             {
-                // Cancellation, such as Ctrl+C during a Basilisk RPC, is not a failure: the run stays
-                // running, so the caller's Stop records why it ended.
+                // Cancellation, such as Ctrl+C during a Basilisk RPC, is not a backend failure. The
+                // engine may or may not have run the step, so the run ends Stopped and a retry cannot
+                // log a second Applied record for it.
+                EndBeforeRethrow(() => End(ObservationStatus.Stopped, $"Step {sequence} was cancelled: {exception.Message}"));
                 throw;
             }
             catch (Exception exception)

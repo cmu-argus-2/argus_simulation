@@ -160,7 +160,8 @@ namespace Argus.Simulation.Host
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
-                // The manifest says the run was stopped, not that it reached its duration.
+                // The manifest says the run was stopped, not that it reached its duration. A Ctrl+C
+                // during a Step RPC has already ended it, with the cancelled step as the reason.
                 gateway.Stop("Cancelled (Ctrl+C)");
                 throw;
             }

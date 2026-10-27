@@ -149,11 +149,16 @@ namespace Argus.Simulation.Tests
             Assert.That(log.ConvertAll(record => (record.Outcome, record.Sequence)),
                 Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
 
-            // Cancellation is neither: the run stays running, so the caller's Stop says why it ended.
-            SimulationGateway cancelled = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new OperationCanceledException()));
+            // Cancellation is neither: it propagates and ends the run Stopped, not BackendFailed.
+            SimulationGateway cancelled = new SimulationGateway(
+                new FailingEngine(Engine(), failAtStep: 1, new OperationCanceledException("Basilisk Step was cancelled.")));
+            List<Observation> stopped = new List<Observation>();
+            cancelled.RunTerminated += stopped.Add;
             cancelled.Reset(0, Scenario(0.5));
             Assert.Throws<OperationCanceledException>(() => cancelled.Step());
-            Assert.That(cancelled.Stop("Cancelled (Ctrl+C)").Status, Is.EqualTo(ObservationStatus.Stopped));
+            Assert.That(stopped.ConvertAll(end => (end.Status, end.Sequence, end.TerminationReason)),
+                Is.EqualTo(new[] { (ObservationStatus.Stopped, 0L, "Step 1 was cancelled: Basilisk Step was cancelled.") }));
+            Assert.That((cancelled.IsRunning, cancelled.Failure), Is.EqualTo((false, (Exception)null)));
         }
 
         [Test]

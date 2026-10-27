@@ -236,8 +236,8 @@ namespace Argus.Simulation.Host
             }
             catch (RpcException exception) when (_cancellation.IsCancellationRequested)
             {
-                // Cancellation, not a backend failure: the gateway lets it through, and the host
-                // stops the run (SimulationGateway.Stop).
+                // Cancellation, not a backend failure: the gateway ends the run Stopped and lets it
+                // through, and the host exits as cancelled.
                 throw new OperationCanceledException($"Basilisk {rpc} was cancelled.", exception, _cancellation);
             }
             catch (RpcException exception)
