@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Argus.Simulation.Core
 {
@@ -7,9 +8,11 @@ namespace Argus.Simulation.Core
     // controller-visible observations (D7) in the DATA-5 order (target-architecture §4):
     // Reset(seed, scenario) returns observation 0, and Step(command k) applies command k over
     // [t_k, t_k+1) and returns observation k+1. Truth and every sensor frame, including ground
-    // truth, reach the recorder and Unity through StateProduced and SensorOutputProduced.
-    // TODO(D6, D7, G1): a command log for the recorder, actuator-limit validation, authority and
-    // heartbeat. Serving it to HIL and external controllers is headless/Host GatewayServer.
+    // truth, reach the recorder and Unity through StateProduced and SensorOutputProduced, and every
+    // command Step receives reaches it through CommandLogged.
+    // TODO(D7, G1): actuator-limit validation (CORE-10) and authority and heartbeat (CORE-9), which
+    // log their decisions through CommandLogged. Serving it to HIL and external controllers is
+    // headless/Host GatewayServer.
     public sealed class SimulationGateway
     {
         private readonly ISimulationEngine _engine;
@@ -21,6 +24,8 @@ namespace Argus.Simulation.Core
         private double _nextSimulationTimeSeconds;
         private SpacecraftState _lastSpacecraft;
         private bool _isRunning;
+        // RunStarted has fired for _scenario, so a command can be logged against that run.
+        private bool _hasStartedRun;
 
         // sensorFactory builds the run's sensors from the scenario; SensorFactory.Create by default.
         public SimulationGateway(ISimulationEngine engine, Func<SensorConfiguration, ISensor> sensorFactory = null)
@@ -41,6 +46,10 @@ namespace Argus.Simulation.Core
 
         // The terminal observation when the run ends, so the recorder knows why (D6).
         public event Action<Observation> RunTerminated;
+
+        // The command log (D6, D7): every command Step receives once a run has started, applied or
+        // rejected, raised before the engine runs it or Step throws.
+        public event Action<CommandRecord> CommandLogged;
 
         // The backend exception that ended the run, for logs; never shown to a controller.
         public Exception Failure { get; private set; }
@@ -68,6 +77,7 @@ namespace Argus.Simulation.Core
             }
 
             _isRunning = false;
+            _hasStartedRun = false;
             Failure = null;
             _engine.Initialize(run);
             _scenario = run;
@@ -82,12 +92,14 @@ namespace Argus.Simulation.Core
 
             // The recorder starts its dataset directory before the state at t_0 (D6); the run is
             // committed only once that state and its frames are published.
-            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
-            Observation observation = Publish(state);
             _nextSequence = 0;
             _nextSimulationTimeSeconds = 0.0;
+            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
+            _hasStartedRun = true;
+            // Running from here, so a subscriber that throws in Publish ends the run at t_0.
+            _lastSpacecraft = state.Spacecraft;
             _isRunning = true;
-            return observation;
+            return Publish(state);
         }
 
         // A zero command for the next step.
@@ -98,39 +110,65 @@ namespace Argus.Simulation.Core
 
         // Applies command k over [t_k, t_k+1) and returns observation k+1. A backend failure ends
         // the run with a BackendFailed observation instead of throwing; Failure keeps the cause.
+        // Every command is logged first (CommandLogged), including one Step then rejects.
         public Observation Step(ActuatorCommandSet command)
         {
             if (!_isRunning)
             {
-                throw new InvalidOperationException("The run has not started or has ended; call Reset.");
+                const string notRunning = "The run has not started or has ended; call Reset.";
+                if (_hasStartedRun)
+                {
+                    Log(Rejected(command, notRunning));
+                }
+
+                throw new InvalidOperationException(notRunning);
             }
 
-            if (!command.IsValid ||
-                command.Sequence != _nextSequence ||
-                !SimulationTime.AreSame(command.ApplyAtSimulationTimeSeconds, _nextSimulationTimeSeconds))
+            string rejection = Rejection(command);
+            if (rejection != null)
             {
-                throw new ArgumentException(
-                    "The command must carry the gateway's next sequence and simulation time.",
-                    nameof(command));
+                Log(Rejected(command, rejection));
+                throw new ArgumentException(rejection, nameof(command));
             }
+
+            ActuatorCommandSet applied = command;
+            Log(new CommandRecord(
+                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Applied, command, applied));
 
             long sequence = _nextSequence + 1;
             double simulationTimeSeconds = sequence * _scenario.FixedStepSeconds;
             SimulationState state;
+            bool produced;
             try
             {
-                if (!_engine.TryStep(new SimulationStepInput(_nextSequence, _nextSimulationTimeSeconds, command), out state) ||
-                    !IsExpectedState(state, sequence, simulationTimeSeconds, command))
-                {
-                    return Terminate(new InvalidOperationException(
-                        $"Simulation backend '{_engine.BackendName}' failed to produce a valid state at step {sequence}."));
-                }
+                produced = _engine.TryStep(new SimulationStepInput(_nextSequence, _nextSimulationTimeSeconds, applied), out state) &&
+                    IsExpectedState(state, sequence, simulationTimeSeconds, applied);
             }
             catch (InvalidOperationException exception)
             {
-                // A backend failure, such as BasiliskEngine's wrapped RpcException. Any other
-                // exception is a bug and propagates with its stack trace.
+                // A backend failure, such as BasiliskEngine's wrapped RpcException.
                 return Terminate(exception);
+            }
+            catch (OperationCanceledException exception)
+            {
+                // Cancellation, such as Ctrl+C during a Basilisk RPC, is not a backend failure. The
+                // engine may or may not have run the step, so the run ends Stopped and a retry cannot
+                // log a second Applied record for it.
+                EndBeforeRethrow(() => End(ObservationStatus.Stopped, $"Step {sequence} was cancelled: {exception.Message}"));
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // Any other exception is a bug and propagates with its stack trace. It still ends the
+                // run, so a retry cannot log a second Applied record for this step.
+                EndBeforeRethrow(() => Terminate(exception));
+                throw;
+            }
+
+            if (!produced)
+            {
+                return Terminate(new InvalidOperationException(
+                    $"Simulation backend '{_engine.BackendName}' failed to produce a valid state at step {sequence}."));
             }
 
             Observation observation = Publish(state);
@@ -176,6 +214,77 @@ namespace Argus.Simulation.Core
             return observation;
         }
 
+        // Ends a running run before an exception propagates, so RunTerminated still tells subscribers
+        // such as the recorder why. A RunTerminated subscriber that also throws is ignored here: the
+        // run has ended either way, and the caller sees the original exception.
+        private void EndBeforeRethrow(Func<Observation> end)
+        {
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            try
+            {
+                end();
+            }
+            catch
+            {
+            }
+        }
+
+        // Why Step refuses a command for step k, or null when it is valid and for k at t_k.
+        private string Rejection(ActuatorCommandSet command)
+        {
+            if (!command.IsValid)
+            {
+                return "The command is invalid: its sequence or time is negative, or a value is not finite.";
+            }
+
+            if (command.Sequence != _nextSequence)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "The command is for sequence {0}; the next step is {1}.",
+                    command.Sequence,
+                    _nextSequence);
+            }
+
+            if (!SimulationTime.AreSame(command.ApplyAtSimulationTimeSeconds, _nextSimulationTimeSeconds))
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "The command is for t = {0:R} s; step {1} is at t = {2:R} s.",
+                    command.ApplyAtSimulationTimeSeconds,
+                    _nextSequence,
+                    _nextSimulationTimeSeconds);
+            }
+
+            return null;
+        }
+
+        private CommandRecord Rejected(ActuatorCommandSet command, string reason) =>
+            new CommandRecord(
+                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Rejected, command, null, reason);
+
+        // A subscriber that throws ends the run, so the engine never runs a command the log missed,
+        // and the caller gets the subscriber's exception, even in place of a rejection: a log with a
+        // gap is not a log. Subscribers that already logged the record learn from RunTerminated that
+        // the run ended at this step.
+        private void Log(CommandRecord record)
+        {
+            try
+            {
+                CommandLogged?.Invoke(record);
+            }
+            catch (Exception exception)
+            {
+                EndBeforeRethrow(() => End(
+                    ObservationStatus.Stopped, $"Logging the command for step {record.Sequence} failed: {exception.Message}"));
+                throw;
+            }
+        }
+
         // Publishes truth and every frame, and returns the controller-visible frames. A sensor or
         // subscriber that throws ends the run, so the gateway never advances past a step whose
         // frames were not all published.
@@ -188,9 +297,10 @@ namespace Argus.Simulation.Core
                 output = _sensors.Sample(new SensorSampleContext(_scenario.RunId, state));
                 SensorOutputProduced?.Invoke(output);
             }
-            catch
+            catch (Exception exception)
             {
-                _isRunning = false;
+                EndBeforeRethrow(() => End(
+                    ObservationStatus.Stopped, $"Publishing step {state.Spacecraft.Sequence} failed: {exception.Message}"));
                 throw;
             }
 

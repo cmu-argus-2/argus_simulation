@@ -111,6 +111,7 @@ namespace Argus.Simulation.Host
                 gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, engine.BasiliskVersion);
                 gateway.StateProduced += recorder.RecordState;
                 gateway.SensorOutputProduced += recorder.RecordSensorOutput;
+                gateway.CommandLogged += recorder.RecordCommand;
                 gateway.RunTerminated += recorder.RecordTermination;
             }
 
@@ -159,7 +160,8 @@ namespace Argus.Simulation.Host
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
-                // The manifest says the run was stopped, not that it reached its duration.
+                // The manifest says the run was stopped, not that it reached its duration. A Ctrl+C
+                // during a Step RPC has already ended it, with the cancelled step as the reason.
                 gateway.Stop("Cancelled (Ctrl+C)");
                 throw;
             }

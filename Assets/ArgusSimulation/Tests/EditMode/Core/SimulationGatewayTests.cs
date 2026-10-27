@@ -85,12 +85,38 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
-        public void StepRejectsCommandForWrongSequence()
+        public void EveryCommandIsLoggedAppliedOrRejectedBeforeStepThrows()
         {
             SimulationGateway gateway = new SimulationGateway(Engine());
+            List<CommandRecord> log = new List<CommandRecord>();
+            gateway.CommandLogged += log.Add;
             gateway.Reset(0, Scenario(0.1));
 
+            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
+            ActuatorCommandSet notFinite = new ActuatorCommandSet(0, 0.0, new Vector3d(double.NaN, 0.0, 0.0), zero, zero);
+            Assert.Throws<ArgumentException>(() => gateway.Step(notFinite));
             Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(4, 0.4)));
+            Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(0, 0.05)));
+            ActuatorCommandSet command = new ActuatorCommandSet(0, 0.0, new Vector3d(0.001, 0.0, 0.0), zero, zero);
+            gateway.Step(command);
+
+            // Every record is for step 0, the gateway's next step, whatever the command claimed.
+            Assert.That(log.Count, Is.EqualTo(4));
+            for (int index = 0; index < 3; index++)
+            {
+                Assert.That((log[index].Outcome, log[index].Sequence, log[index].SimulationTimeSeconds, log[index].Applied.HasValue),
+                    Is.EqualTo((CommandOutcome.Rejected, 0L, 0.0, false)));
+            }
+
+            Assert.That(log[0].Reason, Does.Contain("not finite"));
+            Assert.That(log[0].Requested.ReactionWheelTorqueBodyNewtonMeters.X, Is.NaN);
+            Assert.That(log[1].Reason, Is.EqualTo("The command is for sequence 4; the next step is 0."));
+            Assert.That(log[1].Requested.Sequence, Is.EqualTo(4));
+            Assert.That(log[2].Reason, Is.EqualTo("The command is for t = 0.05 s; step 0 is at t = 0 s."));
+
+            Assert.That((log[3].Outcome, log[3].Reason, log[3].RunId), Is.EqualTo((CommandOutcome.Applied, (string)null, "test-run")));
+            Assert.That(log[3].Applied.Value.ReactionWheelTorqueBodyNewtonMeters, Is.EqualTo(command.ReactionWheelTorqueBodyNewtonMeters));
+            Assert.That(gateway.NextSequence, Is.EqualTo(1));
         }
 
         [Test]
@@ -112,10 +138,61 @@ namespace Argus.Simulation.Tests
             Assert.That((gateway.IsRunning, gateway.NextSequence), Is.EqualTo((false, 0L)));
             Assert.Throws<InvalidOperationException>(() => gateway.Step());
 
-            // Anything else is a bug, not a backend failure, and propagates.
+            // Anything else is a bug, not a backend failure, and propagates. It still ends the run, so
+            // a retry is rejected instead of logging a second Applied record for step 0.
             SimulationGateway buggy = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new ArgumentException("bug")));
+            List<CommandRecord> log = new List<CommandRecord>();
+            buggy.CommandLogged += log.Add;
             buggy.Reset(0, Scenario(0.5));
             Assert.Throws<ArgumentException>(() => buggy.Step());
+            Assert.Throws<InvalidOperationException>(() => buggy.Step());
+            Assert.That(log.ConvertAll(record => (record.Outcome, record.Sequence)),
+                Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
+
+            // Cancellation is neither: it propagates and ends the run Stopped, not BackendFailed.
+            SimulationGateway cancelled = new SimulationGateway(
+                new FailingEngine(Engine(), failAtStep: 1, new OperationCanceledException("Basilisk Step was cancelled.")));
+            List<Observation> stopped = new List<Observation>();
+            cancelled.RunTerminated += stopped.Add;
+            cancelled.Reset(0, Scenario(0.5));
+            Assert.Throws<OperationCanceledException>(() => cancelled.Step());
+            Assert.That(stopped.ConvertAll(end => (end.Status, end.Sequence, end.TerminationReason)),
+                Is.EqualTo(new[] { (ObservationStatus.Stopped, 0L, "Step 1 was cancelled: Basilisk Step was cancelled.") }));
+            Assert.That((cancelled.IsRunning, cancelled.Failure), Is.EqualTo((false, (Exception)null)));
+        }
+
+        [Test]
+        public void AThrowingCommandLoggedSubscriberEndsTheRunAndSaysWhy()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<CommandRecord> log = new List<CommandRecord>();
+            List<Observation> terminated = new List<Observation>();
+            bool fail = true;
+            gateway.CommandLogged += log.Add;
+            gateway.CommandLogged += record =>
+            {
+                if (fail)
+                {
+                    fail = false;
+                    throw new IOException("disk full");
+                }
+            };
+            gateway.RunTerminated += terminated.Add;
+
+            // No run has started, so nothing is logged.
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+            Assert.That(log, Is.Empty);
+
+            gateway.Reset(0, Scenario(0.5));
+            Assert.Throws<IOException>(() => gateway.Step());
+
+            Assert.That(gateway.IsRunning, Is.False);
+            Assert.That(terminated.Count, Is.EqualTo(1));
+            Assert.That((terminated[0].Status, terminated[0].Sequence, terminated[0].TerminationReason),
+                Is.EqualTo((ObservationStatus.Stopped, 0L, "Logging the command for step 0 failed: disk full")));
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+            Assert.That(log.ConvertAll(record => (record.Outcome, record.Sequence)),
+                Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
         }
 
         [Test]
