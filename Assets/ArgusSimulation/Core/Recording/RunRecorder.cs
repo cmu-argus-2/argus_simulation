@@ -11,9 +11,11 @@ namespace Argus.Simulation.Core
     // Writes dataset v1 (README.md in this folder) from every SimulationState, SensorOutputSet and
     // gateway CommandRecord (D6). The calls only queue the data; one writer thread formats, encodes
     // PNGs and writes files, so a slow or stalled disk never delays the step loop. The queue holds at
-    // most Capacity states, sensor output sets and command records. When it is full the newest one is
-    // dropped, and the manifest's overflow entry counts every dropped state, frame and command. Each
-    // BeginRun opens <root>/<run_id>_<segment>.
+    // most Capacity states, sensor output sets and Applied or Clamped command records, and separately
+    // at most Capacity Rejected records, so a stream of steps never crowds out the only record of a
+    // refused command. When either budget is full the newest item is dropped, and the manifest's
+    // overflow entry counts every dropped state, frame and command. Each BeginRun opens
+    // <root>/<run_id>_<segment>.
     public sealed class RunRecorder : IRunRecorder
     {
         public const string SchemaVersion = "argus-dataset/1";
@@ -42,6 +44,7 @@ namespace Argus.Simulation.Core
 
         // Guarded by _gate.
         private int _queuedData;
+        private int _queuedRejections;
         private DropItem _openDrop;
         private bool _closing;
         private bool _hasRun;
@@ -197,7 +200,7 @@ namespace Argus.Simulation.Core
                 throw new ArgumentNullException(nameof(record));
             }
 
-            Enqueue(new CommandItem(record), 0, 0, 1);
+            Enqueue(new CommandItem(record), 0, 0, 1, record.Outcome == CommandOutcome.Rejected);
         }
 
         // Never dropped, even when the queue is full: the manifest must say why a run ended.
@@ -257,7 +260,7 @@ namespace Argus.Simulation.Core
             }
         }
 
-        private void Enqueue(Item item, int states, int frames, int commands)
+        private void Enqueue(Item item, int states, int frames, int commands, bool isRejection = false)
         {
             lock (_gate)
             {
@@ -267,7 +270,7 @@ namespace Argus.Simulation.Core
                     throw new InvalidOperationException("Call BeginRun before recording a run.");
                 }
 
-                if (_queuedData >= _capacity)
+                if ((isRejection ? _queuedRejections : _queuedData) >= _capacity)
                 {
                     if (_openDrop == null)
                     {
@@ -280,7 +283,15 @@ namespace Argus.Simulation.Core
                     return;
                 }
 
-                _queuedData++;
+                if (isRejection)
+                {
+                    _queuedRejections++;
+                }
+                else
+                {
+                    _queuedData++;
+                }
+
                 Push(item);
             }
         }
@@ -324,7 +335,11 @@ namespace Argus.Simulation.Core
                         _openDrop = null;
                     }
 
-                    if (item is StateItem || item is OutputItem || item is CommandItem)
+                    if (item is CommandItem command && command.Record.Outcome == CommandOutcome.Rejected)
+                    {
+                        _queuedRejections--;
+                    }
+                    else if (item is StateItem || item is OutputItem || item is CommandItem)
                     {
                         _queuedData--;
                     }

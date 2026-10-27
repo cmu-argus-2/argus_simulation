@@ -96,6 +96,8 @@ namespace Argus.Simulation.Tests
             }
 
             stopwatch.Stop();
+            // The queue is full of steps, but a refused command still has room.
+            Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(0, 0.0)));
             bool stillStalled = !release.IsSet;
             release.Set();
             recorder.Close();
@@ -111,7 +113,9 @@ namespace Argus.Simulation.Tests
             Assert.That(dropped, Is.GreaterThan(0));
             Assert.That(File.ReadAllLines(Path.Combine(run, "states.jsonl")).Length + dropped, Is.EqualTo(steps + 1));
             long droppedCommands = long.Parse(Field(manifest, "dropped_commands"), CultureInfo.InvariantCulture);
-            Assert.That(File.ReadAllLines(Path.Combine(run, "commands.jsonl")).Length + droppedCommands, Is.EqualTo(steps));
+            string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
+            Assert.That(commands.Length + droppedCommands, Is.EqualTo(steps + 1));
+            Assert.That(Field(commands[commands.Length - 1], "outcome"), Is.EqualTo("\"Rejected\""));
         }
 
         [Test]
@@ -131,6 +135,10 @@ namespace Argus.Simulation.Tests
 
             string run = Path.Combine(_root, "test-run_0");
             Assert.That(File.ReadAllLines(Path.Combine(run, "states.jsonl")).Length, Is.EqualTo(3));
+            // Command 2 was accepted, but the backend failed running it: its line is the termination's step.
+            string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
+            Assert.That(commands.Length, Is.EqualTo(3));
+            Assert.That((Field(commands[2], "sequence"), Field(commands[2], "outcome")), Is.EqualTo(("2", "\"Applied\"")));
             string manifest = File.ReadAllText(Path.Combine(run, "manifest.json"));
             // The recorder closed cleanly, and the manifest says the run died at step 3, not that it was cut short.
             Assert.That(Field(manifest, "complete"), Is.EqualTo("true"));

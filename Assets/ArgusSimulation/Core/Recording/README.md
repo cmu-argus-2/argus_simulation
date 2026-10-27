@@ -17,10 +17,12 @@ write-only archive. It never feeds data back into the run and never blocks the s
   (`PngEncoder`, no Unity) and writes the files, so a stalled disk never delays
   `SimulationGateway.Step` (`RunRecorderTests`).
 - **Overflow policy `drop-newest`:** the queue holds at most `capacity` states, sensor output
-  sets and command records (65 536 by default). When it is full, the newest one is dropped, and
-  the manifest's `overflow` entry counts it: `policy`, `capacity`, `dropped_states`,
-  `dropped_frames` (sensor frames) and `dropped_commands`. Nothing is dropped silently.
-  `BeginRun` and `RecordTermination` are never dropped.
+  sets and `Applied` or `Clamped` command records (65 536 by default), and separately at most
+  `capacity` `Rejected` records, so a stalled disk drops steps before it drops the only record
+  of a refused command. When a budget is full, the newest item is dropped, and the manifest's
+  `overflow` entry counts it: `policy`, `capacity`, `dropped_states`, `dropped_frames` (sensor
+  frames) and `dropped_commands`. Nothing is dropped silently. `BeginRun` and
+  `RecordTermination` are never dropped.
 - **Failures:** a write error, an unknown payload type or a `Jpeg` frame stops writing. The
   manifest then stays `"complete": false`, and `Close` throws. Core has no JPEG decoder, so a
   `Jpeg` `ImageFrame` cannot become the PNG dataset v1 requires. `Png` frames are written as given.
@@ -80,7 +82,7 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 | `segment` | int | recorder | 0 for a run's first directory, then +1 after each gateway `Reset` that keeps the `run_id` (see Join keys). The recorder skips any `<run_id>_<segment>` that already exists under its root (from an earlier process or run with the same `run_id`), so it never overwrites a dataset. |
 | `created_utc` | string | recorder | When recording started. |
 | `complete` | bool | recorder | `true` only once the recorder closed cleanly. |
-| `termination` | object or `null` | `SimulationGateway.RunTerminated` | Set when the run ended early: `status` (`BackendFailed` when the backend failed, `Stopped` when the caller stopped it, for example on Ctrl+C or a recorder failure), `last_sequence`, `last_simulation_time_s` and `last_timestamp_utc` (the last step that exists, as in `states.jsonl`), and `reason` (for `BackendFailed`, names the step that failed). `null` when the run reached its end, for example the host's `--duration-s`. With `complete: true`, it tells a run that died at a step from one that was cut short. Added before any v1 dataset was written, so the schema stays at version 1. |
+| `termination` | object or `null` | `SimulationGateway.RunTerminated` | Set when the run ended early: `status` (`BackendFailed` when the backend failed, `Stopped` when the caller stopped it, for example on Ctrl+C or a recorder failure, or a subscriber of the gateway's events threw), `last_sequence`, `last_simulation_time_s` and `last_timestamp_utc` (the last step that exists, as in `states.jsonl`), and `reason` (for `BackendFailed`, names the step that failed). `null` when the run reached its end, for example the host's `--duration-s`. With `complete: true`, it tells a run that died at a step from one that was cut short. Added before any v1 dataset was written, so the schema stays at version 1. |
 | `writer` | object | recorder | `process` (`headless-host` or `unity`), `argus_simulation_commit` (the full 40-character hash, or `null` when unknown, for example in a Unity player build), `recorder_version` (string). |
 | `dynamics_backend` | object | `SimulationState.DynamicsBackend`, `BasiliskEngine.BasiliskVersion` | `name` (the `DynamicsBackend` string) and `version` (`BasiliskVersion` in Basilisk runs, `null` in analytic runs). |
 | `earth_fixed_frame` | string | `SpacecraftState.EarthFixedFrame` | `Itrf93` or `AnalyticEarthFixed`. |
@@ -144,15 +146,16 @@ A sensor added later brings its own `payload_type`. That is an added payload typ
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
 every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
 an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
-reason. `Applied` means the gateway passed the command to the engine; if the backend then fails,
-the manifest's `termination` says so. `Clamped` arrives with actuator limits (CORE-10, #46). The file
+reason. `Applied` means the gateway accepted the command for the engine. If the run ended at that
+step (the manifest's `termination` has that `last_sequence`), the engine may not have run it; state
+k+1's `producing_command` is the confirmation that it did. `Clamped` arrives with actuator limits (CORE-10, #46). The file
 is created in every run directory, so it is empty when no command was received, as in
 Unity-driven runs, which bypass the gateway (G1).
 
 | field | type | source |
 |---|---|---|
 | `run_id` | string | `CommandRecord.RunId` |
-| `sequence` | int | `CommandRecord.Sequence`: the gateway's next step k when the command arrived, whatever the command claimed, so every line joins to state k |
+| `sequence` | int | `CommandRecord.Sequence`: the gateway's next step k when the command arrived, whatever the command claimed, so every line joins to state k; after the run ended, the termination's `last_sequence` |
 | `simulation_time_s` | number | `CommandRecord.SimulationTimeSeconds`: t_k |
 | `outcome` | string | `Applied`, `Clamped` or `Rejected` |
 | `reason` | string or `null` | why a command was clamped or rejected; `null` when `Applied` |

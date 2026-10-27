@@ -35,10 +35,14 @@ namespace Argus.Simulation.Core
                 throw new ArgumentException("A run ID is required.", nameof(runId));
             }
 
-            if (sequence < 0 || double.IsNaN(simulationTimeSeconds) || double.IsInfinity(simulationTimeSeconds) ||
-                simulationTimeSeconds < 0.0)
+            if (sequence < 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(sequence), "The step must have a sequence and time >= 0.");
+                throw new ArgumentOutOfRangeException(nameof(sequence), "The sequence must be >= 0.");
+            }
+
+            if (double.IsNaN(simulationTimeSeconds) || double.IsInfinity(simulationTimeSeconds) || simulationTimeSeconds < 0.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(simulationTimeSeconds), "The time must be finite and >= 0.");
             }
 
             // Applied has no reason; Clamped and Rejected say why. Only Rejected passes nothing on.

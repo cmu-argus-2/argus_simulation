@@ -138,10 +138,50 @@ namespace Argus.Simulation.Tests
             Assert.That((gateway.IsRunning, gateway.NextSequence), Is.EqualTo((false, 0L)));
             Assert.Throws<InvalidOperationException>(() => gateway.Step());
 
-            // Anything else is a bug, not a backend failure, and propagates.
+            // Anything else is a bug, not a backend failure, and propagates. It still ends the run, so
+            // a retry is rejected instead of logging a second Applied record for step 0.
             SimulationGateway buggy = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new ArgumentException("bug")));
+            List<CommandRecord> log = new List<CommandRecord>();
+            buggy.CommandLogged += log.Add;
             buggy.Reset(0, Scenario(0.5));
             Assert.Throws<ArgumentException>(() => buggy.Step());
+            Assert.Throws<InvalidOperationException>(() => buggy.Step());
+            Assert.That(log.ConvertAll(record => (record.Outcome, record.Sequence)),
+                Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
+        }
+
+        [Test]
+        public void AThrowingCommandLoggedSubscriberEndsTheRunAndSaysWhy()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<CommandRecord> log = new List<CommandRecord>();
+            List<Observation> terminated = new List<Observation>();
+            bool fail = true;
+            gateway.CommandLogged += log.Add;
+            gateway.CommandLogged += record =>
+            {
+                if (fail)
+                {
+                    fail = false;
+                    throw new IOException("disk full");
+                }
+            };
+            gateway.RunTerminated += terminated.Add;
+
+            // No run has started, so nothing is logged.
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+            Assert.That(log, Is.Empty);
+
+            gateway.Reset(0, Scenario(0.5));
+            Assert.Throws<IOException>(() => gateway.Step());
+
+            Assert.That(gateway.IsRunning, Is.False);
+            Assert.That(terminated.Count, Is.EqualTo(1));
+            Assert.That((terminated[0].Status, terminated[0].Sequence, terminated[0].TerminationReason),
+                Is.EqualTo((ObservationStatus.Stopped, 0L, "Logging the command for step 0 failed: disk full")));
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+            Assert.That(log.ConvertAll(record => (record.Outcome, record.Sequence)),
+                Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
         }
 
         [Test]

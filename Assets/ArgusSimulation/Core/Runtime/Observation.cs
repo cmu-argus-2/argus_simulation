@@ -12,7 +12,8 @@ namespace Argus.Simulation.Core
         BackendFailed = 1,
 
         // The caller stopped the run (SimulationGateway.Stop), for example on Ctrl+C or a recorder
-        // failure; the observation has no frames and the run has ended.
+        // failure, or a subscriber of the gateway's events threw; the observation has no frames and
+        // the run has ended.
         Stopped = 2
     }
 
