@@ -37,9 +37,15 @@ types directly.
 
 ## v1 rules
 
-- Additive only: new messages, fields, RPCs and oneof members, with new field numbers.
-- Never change a field's number, type, name, unit, frame or meaning. A deleted field
-  becomes `reserved`. A breaking change goes to `v2`.
+- **Until the first end-to-end run, v1 may change incompatibly.** Nothing yet runs the
+  host against the service end to end with the P0 scenario, so no two deployed revisions
+  depend on each other. Until HOST-5 (#29) marks the Basilisk path verified, a v1 change
+  may rename a field or change its meaning, provided the client, the service and their
+  tests change in the same PR (or in PRs merged together). The change to
+  `StepRequest.command`'s interval (DATA-5, #70) is one.
+- From then on, additive only: new messages, fields, RPCs and oneof members, with new
+  field numbers. Never change a field's number, type, name, unit, frame or meaning. A
+  deleted field becomes `reserved`. A breaking change goes to `v2`.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the

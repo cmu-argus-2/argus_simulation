@@ -80,9 +80,14 @@ namespace Argus.Simulation.Core
         }
 
         // The service turns the ID into a file name, so only [a-z0-9][a-z0-9._-]* is accepted.
-        private static bool IsKernelSetId(string value)
+        private static bool IsKernelSetId(string value) =>
+            value.Length <= MaximumKernelSetIdLength && IsLowercaseIdentifier(value);
+
+        // [a-z0-9][a-z0-9._-]*: the kernel-set ID rule, which the run recorder also applies to the
+        // run and sensor IDs it turns into directory names.
+        internal static bool IsLowercaseIdentifier(string value)
         {
-            if (value.Length == 0 || value.Length > MaximumKernelSetIdLength)
+            if (string.IsNullOrEmpty(value))
             {
                 return false;
             }

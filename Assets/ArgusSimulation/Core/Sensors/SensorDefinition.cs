@@ -31,7 +31,8 @@ namespace Argus.Simulation.Core
             string frameId,
             double samplePeriodSeconds,
             string source,
-            SensorMount mount)
+            SensorMount mount,
+            bool isControllerVisible = true)
         {
             SensorId = sensorId;
             ModelName = modelName;
@@ -39,6 +40,7 @@ namespace Argus.Simulation.Core
             SamplePeriodSeconds = samplePeriodSeconds;
             Source = source;
             Mount = mount;
+            IsControllerVisible = isControllerVisible;
         }
 
         public string SensorId { get; }
@@ -48,8 +50,9 @@ namespace Argus.Simulation.Core
         public string Source { get; }
         public SensorMount Mount { get; }
 
-        // TODO(D7): mark ground-truth sensors (for example the nadir camera) as not
-        // controller-visible, so the gateway never forwards them.
+        // False for ground-truth sensors (for example the nadir camera): the gateway never forwards
+        // their frames to a controller, while the recorder still receives them (D7).
+        public bool IsControllerVisible { get; }
 
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(SensorId) &&

@@ -49,7 +49,7 @@ flowchart TB
     ctrl["Controllers<br/>tests (planned: flight software SIL, flight computer HIL)"]
 
     subgraph CORE["Headless C# — Argus.Simulation.Core + headless/Host"]
-        gate["Simulation Gateway<br/>(planned: observations, command log)"]
+        gate["Simulation Gateway<br/>observations (planned: command log)"]
         subgraph ENG["ISimulationEngine"]
             beng["BasiliskEngine (headless/Host)<br/>gRPC client"]
             ana["Analytic engine<br/>development and test fixture"]
@@ -109,7 +109,8 @@ flowchart TB
 
 1. The controller calls `Reset(seed, scenario)`.
 2. The gateway returns the initial observation.
-3. The controller submits an actuator command for the next sequence/time.
+3. The controller submits command k, computed from observation k and carrying its
+   sequence k and time t_k; it acts over [t_k, t_k+1).
 4. The core validates the command and advances a fixed interval.
 5. Sensor models sample the resulting state.
 6. The gateway returns the next observation and termination/status information.
@@ -119,8 +120,9 @@ This mode can run faster or slower than real time and is the default for SIL and
 On `main`, `SimulationGateway` exposes `Reset()` and `Step(commands)` and returns truth
 `SimulationState`s; `Reset(seed, scenario)`, observation returns (D7) and the decimated
 Unity stream (G2) are planned ([target-architecture.md §4](target-architecture.md#4-run-modes)).
-Computing command k from observation k, as steps 2-3 assume, needs an `ISimulationEngine`
-and gateway change (target-architecture §11).
+The step ordering that lets command k be computed from observation k, and what `scenario`
+and an observation hold, are decided in target-architecture §4; `ISimulationEngine` and the
+gateway change to match in CORE-4 (#40).
 
 ### 5.2 Hardware-in-the-loop mode
 
@@ -261,7 +263,7 @@ appear in the core contracts.
 ## 11. Basilisk integration
 
 `BasiliskEngine` (`headless/Host`) implements `ISimulationEngine` as the gRPC client of the
-Python Basilisk service (`Argus.Basilisk/`; spacecraft, SPICE and eclipse today, no sensors). It sends Argus commands and
+Python Basilisk service (`Argus.Basilisk/`; spacecraft, SPICE, eclipse, the IMU and the magnetometer today). It sends Argus commands and
 maps Basilisk state and sensor messages into Argus contracts through `Core/Basilisk`. Basilisk becomes authoritative for simulation time
 when selected.
 
@@ -328,7 +330,7 @@ docs/                              Architecture and interface documentation
 headless/                          dotnet build of Core and the EditMode tests; Host/ with BasiliskEngine
 
 Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
-Argus.Basilisk/                    Python Basilisk service with SPICE (build step 1 + brief)
+Argus.Basilisk/                    Python Basilisk service with SPICE (build steps 1-3 + brief)
 
 Future external packages/services:
 Argus.Hardware/                    Flight-computer protocol adapters (README placeholder)

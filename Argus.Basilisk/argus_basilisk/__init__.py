@@ -1,5 +1,6 @@
 """Argus Basilisk simulation service.
 
-Status: build step 1 (README §12): spacecraft, SPICE and eclipse behind ConfigureRun, Reset and
-Step. Sensors, pacing and actuators are UNIMPLEMENTED. README.md is the normative brief.
+Status: build steps 1 to 3 (README §12): spacecraft, SPICE, eclipse, the IMU and the magnetometer
+behind ConfigureRun, Reset and Step. The light sensors, pacing and actuators are UNIMPLEMENTED.
+README.md is the normative brief.
 """

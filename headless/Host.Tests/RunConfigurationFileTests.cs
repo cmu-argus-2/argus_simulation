@@ -139,6 +139,50 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
+        [TestCase("sensor id", "sensors[0].sensorId: 'IMU.Main' cannot be recorded")]
+        [TestCase("record root", "--record: Cannot write datasets under")]
+        public void RecordingThatCannotWorkExitsWithCode2BeforeConnecting(string problem, string expectedMessage)
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"argus-record-run-{Guid.NewGuid():N}.json");
+            string blocker = Path.Combine(Path.GetTempPath(), $"argus-not-a-directory-{Guid.NewGuid():N}");
+            JsonObject root = P0();
+            string record = Path.Combine(Path.GetTempPath(), $"argus-record-{Guid.NewGuid():N}");
+            if (problem == "sensor id")
+            {
+                // Valid for the run file, which only needs a non-blank ID, but not a directory name.
+                root["sensors"][0]["sensorId"] = "IMU.Main";
+            }
+            else
+            {
+                // A root under a regular file cannot be created.
+                File.WriteAllText(blocker, "");
+                record = Path.Combine(blocker, "datasets");
+            }
+
+            File.WriteAllText(path, root.ToJsonString());
+            TextWriter originalError = Console.Error;
+            StringWriter error = new StringWriter();
+            try
+            {
+                Console.SetError(error);
+                int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9", "--record", record });
+
+                Assert.That(exitCode, Is.EqualTo(2));
+                Assert.That(error.ToString(), Does.Contain(expectedMessage));
+                Assert.That(error.ToString(), Does.Not.Contain("Unavailable"));
+            }
+            finally
+            {
+                Console.SetError(originalError);
+                File.Delete(path);
+                File.Delete(blocker);
+                if (Directory.Exists(record))
+                {
+                    Directory.Delete(record, recursive: true);
+                }
+            }
+        }
+
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
 
         // What BasiliskEngine.Initialize sends with a real-time factor of 0.

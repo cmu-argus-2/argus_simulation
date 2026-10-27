@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build step 1 (§12): spacecraft, SPICE and eclipse; every sensor kind, pacing and non-zero commands are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 3 (§12): spacecraft, SPICE, eclipse, the IMU and the magnetometer; the light sensors, pacing and non-zero commands are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -25,8 +25,8 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
 
 Code layout: `argus_basilisk/servicer.py` (the three RPCs and the lifecycle, §3) calls
 `validation.py` (§3), `kernels.py` (§8) and `scenario.py` (§4 to §8), which builds the
-spacecraft, SPICE and eclipse (BSK-3, #16). `sensors.py` (§9) and `seeds.py` (§10) remain
-placeholders. `scripts/fetch_kernels.py` is the SPICE team's
+spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensors that `sensors.py` (§9) builds
+with seeds from `seeds.py` (§10); the IMU (BSK-4, #17) and the magnetometer (BSK-5, #18) are built. `scripts/fetch_kernels.py` is the SPICE team's
 fetch/verify tool (§8).
 
 ## 2. Install and run
@@ -113,7 +113,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
-   `SUPPORTED_SENSOR_KINDS` starts empty and BSK-4 (#17) to BSK-6 (#19) add theirs; pacing,
+   `SUPPORTED_SENSOR_KINDS` holds `"imu"` (BSK-4, #17) and `"magnetometer"` (BSK-5, #18); BSK-6 (#19) adds `"light_sensor"`; pacing,
    magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22)
    and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
@@ -138,14 +138,21 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 1. `run_id` matches and n equals the next sequence; otherwise FAILED_PRECONDITION naming
    the expected value.
 2. `sim_time_ns == n × fixed_step_ns`; otherwise INVALID_ARGUMENT.
-3. `command` has all three vectors and they are finite; otherwise INVALID_ARGUMENT. A
+3. `command` is command n-1, for [t_n-1, t_n). It has all three vectors and they are
+   finite, and for n > 0 `command_sequence == n − 1` and `command_time_ns == (n − 1) ×
+   fixed_step_ns`; otherwise INVALID_ARGUMENT, so a command sent in the wrong request is
+   rejected instead of acting a step off. Step(0) follows no command: both fields are unset
+   and the command is zero, or INVALID_ARGUMENT (no interval ends at t = 0). For n > 0 a
    non-zero command is UNIMPLEMENTED until actuators exist (G1).
 4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
    otherwise OUT_OF_RANGE, checked before executing.
-5. Run to t_n: for n = 0, `ConfigureStopTime(0)` then `ExecuteSimulation()` (the t = 0
+5. For n > 0, write the request's command (command n-1) into the actuator input messages
+   before running, so it acts over [t_n-1, t_n): the gateway's command k, computed from the
+   observation at t_k, arrives as Step(k + 1) and shapes the returned state at t_k+1 with no
+   actuation delay (target-architecture §4). Never write it after running, or it would act
+   one step late.
+6. Run to t_n: for n = 0, `ConfigureStopTime(0)` then `ExecuteSimulation()` (the t = 0
    pass); otherwise `ConfigureStopTime(n × fixed_step_ns)` then `ExecuteSimulation()`.
-6. Only after running to t_n, write command n into the actuator input messages, so it acts
-   over [t_n, t_n+1). Never write it before, or it would act one step early.
 7. Read every returned message through the reader subscribed at build time (§6) and assert
    `isWritten()` and `timeWritten() == t_n`, and that all values are finite. A failure is
    INTERNAL and the run becomes FAILED.
@@ -190,9 +197,12 @@ At every t_n, modules run in this order, set by task creation order and prioriti
 
 1. ClockSynch (when pacing);
 2. `spiceInterface`;
-3. spacecraft dynamics;
-4. eclipse, `MagneticFieldWMM` and albedo;
-5. sensor tasks, one task `sensors_<ns>` per distinct sample period.
+3. actuators (G1, BSK-8 #21), which read command n-1 from their input messages before the
+   dynamics integrate [t_n-1, t_n). After the dynamics, the command would act a step late
+   (§3 Step 5);
+4. spacecraft dynamics;
+5. eclipse, `MagneticFieldWMM` and albedo;
+6. sensor tasks, one task `sensors_<ns>` per distinct sample period.
 
 Every sensor must read state, SPICE and environment messages written at the same t_n.
 
@@ -371,9 +381,15 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 - Profile fields map as the comments in `sensors.proto` state (`PMatrix*`, `setAMatrix*`,
   `setWalkBounds*`, `senRotBias`/`senTransBias`, `gyroScale`/`accelScale`,
   `senRotMax`/`senTransMax`, `setLSBs(accelerometer, gyroscope)`). Never call
-  `setErrorBounds*`: it is the same Gauss-Markov bound.
-- The first firing writes an empty message (`NominalReady` is false); send it with the
-  measurement unset, which Argus reports as Unavailable.
+  `setErrorBounds*`: it is the same Gauss-Markov bound. A walk bound of 0 leaves the walk
+  unbounded, as the module default of −1 does.
+- `sensors.Imu` builds the two modules. The channel a module does not report gets P = 0 and
+  A = 0, so the gyroscope module's accelerometer and the accelerometer module's gyroscope are
+  noise-free; the response takes `AngVelPlatform` from the gyroscope module and
+  `AccelPlatform` from the accelerometer module.
+- The first firing writes a zero-filled message at t = 0 (`NominalReady` is false until the
+  module has run once); send it with the measurement unset, which Argus reports as
+  Unavailable.
 - `AccelPlatform` includes the lever-arm terms dω/dt × r + ω × (ω × r): in free fall it is
   zero at the centre of mass, or anywhere on a non-rotating body.
 
@@ -384,6 +400,12 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 - `stateInMsg` from `scStateOutMsg`; `magInMsg` from `MagneticFieldWMM.envOutMsgs[k]`, set up
   with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
   `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses WMM2025 only.
+- The scenario builds one `MagneticFieldWMM` in the dynamics task, after eclipse, only when a
+  magnetometer is configured, and asserts freshness on `envOutMsgs[0]` at every step. A kernel
+  set without `WMM2025.COF` cannot serve a magnetometer: ConfigureRun returns
+  FAILED_PRECONDITION before SPICE loads anything.
+- The magnetometer measures on its first firing, at t = 0, since the field is written earlier in
+  the same t_n: `tam_S = scale (C_SB C_BN B_N + bias)`, clipped to ±range.
 - `WMM2025.COF` is not in the `bsk` wheel (its `supportData` is pruned, and
   `dataFetcher.get_path` downloads it on first use). It is pinned like the kernels, as a
   `support_files` entry of `argus-2026-10-20` checked before the build, and never downloaded
@@ -413,11 +435,11 @@ with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the sh
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof |
+| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; a Step command for the wrong step, or a non-zero command in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
-| FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; run FAILED |
+| FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A non-zero command; a sensor kind or magnetometer noise not built yet; `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A non-zero command after Step(0); a sensor kind or magnetometer noise not built yet; `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 

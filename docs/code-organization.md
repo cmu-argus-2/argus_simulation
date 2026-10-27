@@ -17,7 +17,7 @@ Assets/ArgusSimulation/
 │   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
 │   ├── Imaging/                  # Camera/render contracts and imagery helpers
 │   ├── Math/                     # Double-precision vectors, quaternions, MRPs, 3x3 matrices
-│   ├── Recording/                # Run recorder, the single export route (placeholder)
+│   ├── Recording/                # Run recorder, the single export route (dataset v1)
 │   ├── Runtime/                  # Headless orchestration and gateway
 │   └── Sensors/                  # Standard sensor envelopes and models
 │       └── Camera/               # Camera sensor models (placeholders)
@@ -60,7 +60,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `IStepDrivenStateSource` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
-| Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel` |
+| Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
@@ -69,7 +69,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
-| Unity camera system | `CubeSatCameraRig` |
+| Unity camera system | `CubeSatCameraRig`, `NadirTilePriority` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
 | Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer` |
@@ -120,14 +120,12 @@ Core/Sensors/
 ├── RadioLinkSensor.cs, RadiationSensor.cs
 └── Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
     Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
-Core/Recording/RunRecorder.cs                            # TODO(D6)
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
-Argus.Basilisk/argus_basilisk/{validation,sensors,seeds}.py  # TODO(basilisk-team)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
 

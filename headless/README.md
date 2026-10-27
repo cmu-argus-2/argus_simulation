@@ -61,6 +61,11 @@ configured sensor, or `Unavailable` with no service), 2 on bad arguments or a ru
 configuration file that is unreadable or invalid. A bad file exits before the host connects
 to the service, and the message names the field.
 
+`--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
+into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
+including ground-truth sensors, from the gateway's events. It writes on its own thread, so a slow disk
+never delays a step, and `manifest.json` counts anything it had to drop.
+
 ## Run configuration files
 
 A run configuration file defines one run once (G5): epoch, fixed step, seed, kernel set,
@@ -76,8 +81,10 @@ own.
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
 - **Sensors:** each entry holds the `SensorDefinition` fields (`sensorId`, `modelName`,
-  `frameId`, `samplePeriodSeconds`, `source`, `mount`) and exactly one profile, named by
-  its kind: `imu`, `magnetometer` or `lightSensor`. The list may hold any subset of the
+  `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`, `mount`) and exactly one
+  profile, named by its kind: `imu`, `magnetometer` or `lightSensor`. `controllerVisible` is
+  `false` for a ground-truth sensor: the gateway never returns its frames to a controller,
+  though the recorder still receives them (D7). The list may hold any subset of the
   sensors, including none, so a staged run against a partly built service needs only a
   different file.
 - **Validation:** every field is required and unknown fields are rejected. Each part is

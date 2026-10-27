@@ -15,24 +15,34 @@ namespace Argus.Simulation.Host
 
         public const string Usage =
             "Usage: Argus.Simulation.Host [--duration-s <seconds>] [--real-time-factor <factor>] " +
-            "[--basilisk-endpoint <host:port>] [--run-config <path>]\n" +
+            "[--basilisk-endpoint <host:port>] [--run-config <path>] [--record <dir>]\n" +
             "  --duration-s         Simulated seconds to run (default 60).\n" +
             "  --real-time-factor   0 runs unpaced (default); above 0 Basilisk paces each step.\n" +
             "  --basilisk-endpoint  Basilisk service (default $" + EndpointVariable + ", then " + DefaultEndpoint + ").\n" +
-            "  --run-config         Run configuration file (default runs/p0-default.json).";
+            "  --run-config         Run configuration file (default runs/p0-default.json).\n" +
+            "  --record             Write dataset v1 under this directory, one <run_id>_<segment> folder per run (default: no recording).";
 
-        private HostOptions(double durationSeconds, double realTimeFactor, Uri basiliskAddress, string runConfigurationPath)
+        private HostOptions(
+            double durationSeconds,
+            double realTimeFactor,
+            Uri basiliskAddress,
+            string runConfigurationPath,
+            string recordDirectory)
         {
             DurationSeconds = durationSeconds;
             RealTimeFactor = realTimeFactor;
             BasiliskAddress = basiliskAddress;
             RunConfigurationPath = runConfigurationPath;
+            RecordDirectory = recordDirectory;
         }
 
         public double DurationSeconds { get; }
         public double RealTimeFactor { get; }
         public Uri BasiliskAddress { get; }
         public string RunConfigurationPath { get; }
+
+        // Null when the run is not recorded.
+        public string RecordDirectory { get; }
 
         // The endpoint comes from the flag, then the environment, then the default.
         public static bool TryParse(string[] args, out HostOptions options, out string error)
@@ -42,6 +52,7 @@ namespace Argus.Simulation.Host
             double realTimeFactor = 0.0;
             string endpoint = null;
             string runConfigurationPath = DefaultRunConfigurationPath;
+            string recordDirectory = null;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -83,6 +94,15 @@ namespace Argus.Simulation.Host
 
                         runConfigurationPath = value;
                         break;
+                    case "--record":
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            error = "--record must be a directory path.";
+                            return false;
+                        }
+
+                        recordDirectory = value;
+                        break;
                     default:
                         error = $"Unknown option {name}.";
                         return false;
@@ -109,7 +129,7 @@ namespace Argus.Simulation.Host
                 return false;
             }
 
-            options = new HostOptions(durationSeconds, realTimeFactor, address, runConfigurationPath);
+            options = new HostOptions(durationSeconds, realTimeFactor, address, runConfigurationPath, recordDirectory);
             error = null;
             return true;
         }
