@@ -36,6 +36,9 @@ namespace Argus.Simulation.Tests
             {
                 SimulationGateway gateway = RecordedGateway(recorder);
                 gateway.Reset(3, Scenario(0.25));
+                Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
+                Assert.Throws<ArgumentException>(() => gateway.Step(
+                    new ActuatorCommandSet(0, 0.0, new Vector3d(double.NaN, 0.0, 0.0), zero, zero)));
                 for (int i = 0; i < steps; i++)
                 {
                     gateway.Step();
@@ -55,7 +58,21 @@ namespace Argus.Simulation.Tests
             }
 
             Assert.That(File.ReadAllLines(Path.Combine(run, "sensors.jsonl")).Length, Is.EqualTo(steps + 1));
+
+            // The rejected command, then one line per step's command k, joined to state k by sequence.
+            string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
+            Assert.That(commands.Length, Is.EqualTo(steps + 1));
+            Assert.That(Field(commands[0], "outcome"), Is.EqualTo("\"Rejected\""));
+            Assert.That(commands[0], Does.Contain("\"reaction_wheel_torque_body_n_m\":[null,0,0]"));
+            Assert.That(commands[0], Does.EndWith("\"applied\":null}"));
+            for (int i = 0; i < steps; i++)
+            {
+                Assert.That(Field(commands[i + 1], "sequence"), Is.EqualTo(i.ToString(CultureInfo.InvariantCulture)));
+                Assert.That(Field(commands[i + 1], "outcome"), Is.EqualTo("\"Applied\""));
+            }
+
             string manifest = File.ReadAllText(Path.Combine(run, "manifest.json"));
+            Assert.That(manifest, Does.Contain($"\"commands.jsonl\":{{\"lines\":{steps + 1}}}"));
             Assert.That(Field(manifest, "complete"), Is.EqualTo("true"));
             Assert.That(Field(manifest, "termination"), Is.EqualTo("null"));
             Assert.That(Field(manifest, "random_seed"), Is.EqualTo("3"));
@@ -93,6 +110,8 @@ namespace Argus.Simulation.Tests
             Assert.That(Field(manifest, "policy"), Is.EqualTo("\"drop-newest\""));
             Assert.That(dropped, Is.GreaterThan(0));
             Assert.That(File.ReadAllLines(Path.Combine(run, "states.jsonl")).Length + dropped, Is.EqualTo(steps + 1));
+            long droppedCommands = long.Parse(Field(manifest, "dropped_commands"), CultureInfo.InvariantCulture);
+            Assert.That(File.ReadAllLines(Path.Combine(run, "commands.jsonl")).Length + droppedCommands, Is.EqualTo(steps));
         }
 
         [Test]
@@ -181,6 +200,7 @@ namespace Argus.Simulation.Tests
             gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, analyticOrbit: orbit);
             gateway.StateProduced += recorder.RecordState;
             gateway.SensorOutputProduced += recorder.RecordSensorOutput;
+            gateway.CommandLogged += recorder.RecordCommand;
             gateway.RunTerminated += recorder.RecordTermination;
             return gateway;
         }

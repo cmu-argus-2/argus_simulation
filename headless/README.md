@@ -63,7 +63,8 @@ to the service, and the message names the field.
 
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
-including ground-truth sensors, from the gateway's events. It writes on its own thread, so a slow disk
+including ground-truth sensors, and every command the gateway logged, applied or rejected
+(`commands.jsonl`), from the gateway's events. It writes on its own thread, so a slow disk
 never delays a step, and `manifest.json` counts anything it had to drop.
 
 ## Run configuration files

@@ -111,6 +111,7 @@ namespace Argus.Simulation.Host
                 gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, engine.BasiliskVersion);
                 gateway.StateProduced += recorder.RecordState;
                 gateway.SensorOutputProduced += recorder.RecordSensorOutput;
+                gateway.CommandLogged += recorder.RecordCommand;
                 gateway.RunTerminated += recorder.RecordTermination;
             }
 

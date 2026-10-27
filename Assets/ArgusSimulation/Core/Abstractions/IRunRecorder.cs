@@ -22,6 +22,9 @@ namespace Argus.Simulation.Core
         // Every frame of the step, controller-visible or not.
         void RecordSensorOutput(SensorOutputSet output);
 
+        // Every command the gateway logged (SimulationGateway.CommandLogged), applied or rejected.
+        void RecordCommand(CommandRecord record);
+
         // Why the gateway ended the run (SimulationGateway.RunTerminated); the manifest's termination.
         void RecordTermination(Observation terminal);
 

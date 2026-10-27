@@ -8,11 +8,12 @@ using System.Threading;
 
 namespace Argus.Simulation.Core
 {
-    // Writes dataset v1 (README.md in this folder) from every SimulationState and SensorOutputSet
-    // (D6). The calls only queue the data; one writer thread formats, encodes PNGs and writes files,
-    // so a slow or stalled disk never delays the step loop. The queue holds at most Capacity states
-    // and sensor output sets. When it is full the newest one is dropped, and the manifest's overflow
-    // entry counts every dropped state and frame. Each BeginRun opens <root>/<run_id>_<segment>.
+    // Writes dataset v1 (README.md in this folder) from every SimulationState, SensorOutputSet and
+    // gateway CommandRecord (D6). The calls only queue the data; one writer thread formats, encodes
+    // PNGs and writes files, so a slow or stalled disk never delays the step loop. The queue holds at
+    // most Capacity states, sensor output sets and command records. When it is full the newest one is
+    // dropped, and the manifest's overflow entry counts every dropped state, frame and command. Each
+    // BeginRun opens <root>/<run_id>_<segment>.
     public sealed class RunRecorder : IRunRecorder
     {
         public const string SchemaVersion = "argus-dataset/1";
@@ -25,6 +26,7 @@ namespace Argus.Simulation.Core
 
         private const string StatesFile = "states.jsonl";
         private const string SensorsFile = "sensors.jsonl";
+        private const string CommandsFile = "commands.jsonl";
         private const string ManifestFile = "manifest.json";
 
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
@@ -186,7 +188,17 @@ namespace Argus.Simulation.Core
             }
         }
 
-        public void RecordState(SimulationState state) => Enqueue(new StateItem(state), 1, 0);
+        public void RecordState(SimulationState state) => Enqueue(new StateItem(state), 1, 0, 0);
+
+        public void RecordCommand(CommandRecord record)
+        {
+            if (record == null)
+            {
+                throw new ArgumentNullException(nameof(record));
+            }
+
+            Enqueue(new CommandItem(record), 0, 0, 1);
+        }
 
         // Never dropped, even when the queue is full: the manifest must say why a run ended.
         public void RecordTermination(Observation terminal)
@@ -215,7 +227,7 @@ namespace Argus.Simulation.Core
                 throw new ArgumentNullException(nameof(output));
             }
 
-            Enqueue(new OutputItem(output), 0, output.Frames.Count);
+            Enqueue(new OutputItem(output), 0, output.Frames.Count, 0);
         }
 
         public void Close()
@@ -245,7 +257,7 @@ namespace Argus.Simulation.Core
             }
         }
 
-        private void Enqueue(Item item, int states, int frames)
+        private void Enqueue(Item item, int states, int frames, int commands)
         {
             lock (_gate)
             {
@@ -264,6 +276,7 @@ namespace Argus.Simulation.Core
 
                     _openDrop.States += states;
                     _openDrop.Frames += frames;
+                    _openDrop.Commands += commands;
                     return;
                 }
 
@@ -311,7 +324,7 @@ namespace Argus.Simulation.Core
                         _openDrop = null;
                     }
 
-                    if (item is StateItem || item is OutputItem)
+                    if (item is StateItem || item is OutputItem || item is CommandItem)
                     {
                         _queuedData--;
                     }
@@ -363,12 +376,16 @@ namespace Argus.Simulation.Core
                 case OutputItem output:
                     _current.Write(output.Output);
                     break;
+                case CommandItem command:
+                    _current.Write(command.Record);
+                    break;
                 case TerminationItem termination:
                     _current.Termination = termination.Observation;
                     break;
                 case DropItem drop:
                     _current.DroppedStates += drop.States;
                     _current.DroppedFrames += drop.Frames;
+                    _current.DroppedCommands += drop.Commands;
                     break;
             }
         }
@@ -441,6 +458,16 @@ namespace Argus.Simulation.Core
             public SensorOutputSet Output { get; }
         }
 
+        private sealed class CommandItem : Item
+        {
+            public CommandItem(CommandRecord record)
+            {
+                Record = record;
+            }
+
+            public CommandRecord Record { get; }
+        }
+
         private sealed class TerminationItem : Item
         {
             public TerminationItem(Observation observation)
@@ -455,6 +482,7 @@ namespace Argus.Simulation.Core
         {
             public long States;
             public long Frames;
+            public long Commands;
         }
 
         // One run directory, written only by the writer thread.
@@ -464,10 +492,12 @@ namespace Argus.Simulation.Core
             private readonly BeginItem _begin;
             private readonly StreamWriter _states;
             private readonly StreamWriter _sensors;
+            private readonly StreamWriter _commands;
             private string _dynamicsBackend;
             private ReferenceFrame? _earthFixedFrame;
             private long _stateLines;
             private long _sensorLines;
+            private long _commandLines;
 
             public Segment(string directory, BeginItem begin)
             {
@@ -481,10 +511,12 @@ namespace Argus.Simulation.Core
                 _begin = begin;
                 _states = OpenLines(StatesFile);
                 _sensors = OpenLines(SensorsFile);
+                _commands = OpenLines(CommandsFile);
             }
 
             public long DroppedStates { get; set; }
             public long DroppedFrames { get; set; }
+            public long DroppedCommands { get; set; }
             public Observation Termination { get; set; }
 
             public void Write(RunRecorder recorder, SimulationState state)
@@ -507,10 +539,28 @@ namespace Argus.Simulation.Core
                 }
             }
 
+            // Sequence and time are the step the command arrived for, so every line joins to state k.
+            public void Write(CommandRecord record)
+            {
+                DatasetJsonWriter json = new DatasetJsonWriter().BeginObject()
+                    .Key("run_id").Value(record.RunId)
+                    .Key("sequence").Value(record.Sequence)
+                    .Key("simulation_time_s").Value(record.SimulationTimeSeconds)
+                    .Key("outcome").Value(record.Outcome.ToString())
+                    .Key("reason").Value(record.Reason)
+                    .Key("requested");
+                WriteCommand(json, record.Requested);
+                json.Key("applied");
+                WriteCommand(json, record.Applied);
+                _commands.WriteLine(json.EndObject().ToString());
+                _commandLines++;
+            }
+
             public void Finish(RunRecorder recorder)
             {
                 _states.Dispose();
                 _sensors.Dispose();
+                _commands.Dispose();
                 WriteManifest(recorder, complete: true);
             }
 
@@ -520,6 +570,7 @@ namespace Argus.Simulation.Core
                 {
                     _states.Dispose();
                     _sensors.Dispose();
+                    _commands.Dispose();
                 }
                 catch (IOException)
                 {
@@ -538,7 +589,6 @@ namespace Argus.Simulation.Core
             private void WriteState(SimulationState state)
             {
                 SpacecraftState spacecraft = state.Spacecraft;
-                ActuatorCommandSet? command = state.AppliedCommands;
                 DatasetJsonWriter json = new DatasetJsonWriter().BeginObject()
                     .Key("run_id").Value(state.RunId)
                     .Key("sequence").Value(spacecraft.Sequence)
@@ -549,22 +599,7 @@ namespace Argus.Simulation.Core
                     .Key("body_to_ecef_xyzw").Value(spacecraft.BodyToEcef)
                     .Key("angular_velocity_body_rad_s").Value(spacecraft.AngularVelocityBodyRadiansPerSecond)
                     .Key("producing_command");
-                if (command.HasValue)
-                {
-                    ActuatorCommandSet applied = command.Value;
-                    json.BeginObject()
-                        .Key("sequence").Value(applied.Sequence)
-                        .Key("apply_at_simulation_time_s").Value(applied.ApplyAtSimulationTimeSeconds)
-                        .Key("reaction_wheel_torque_body_n_m").Value(applied.ReactionWheelTorqueBodyNewtonMeters)
-                        .Key("magnetorquer_dipole_body_a_m2").Value(applied.MagnetorquerDipoleBodyAmpereSquareMeters)
-                        .Key("thruster_force_body_n").Value(applied.ThrusterForceBodyNewtons)
-                        .EndObject();
-                }
-                else
-                {
-                    json.Null();
-                }
-
+                WriteCommand(json, state.AppliedCommands);
                 json.Key("environment");
                 if (state.HasEnvironment)
                 {
@@ -742,7 +777,8 @@ namespace Argus.Simulation.Core
                 if (complete)
                 {
                     json.Key(StatesFile).BeginObject().Key("lines").Value(_stateLines).EndObject()
-                        .Key(SensorsFile).BeginObject().Key("lines").Value(_sensorLines).EndObject();
+                        .Key(SensorsFile).BeginObject().Key("lines").Value(_sensorLines).EndObject()
+                        .Key(CommandsFile).BeginObject().Key("lines").Value(_commandLines).EndObject();
                 }
 
                 json.EndObject()
@@ -751,6 +787,7 @@ namespace Argus.Simulation.Core
                         .Key("capacity").Value(recorder._capacity)
                         .Key("dropped_states").Value(DroppedStates)
                         .Key("dropped_frames").Value(DroppedFrames)
+                        .Key("dropped_commands").Value(DroppedCommands)
                         .EndObject()
                     .EndObject();
                 // Written beside it and swapped in, so a crash never leaves a half-written manifest.
@@ -765,6 +802,26 @@ namespace Argus.Simulation.Core
                 {
                     File.Move(temporary, path);
                 }
+            }
+
+            // An ActuatorCommandSet, as in producing_command and commands.jsonl; a rejected command's
+            // non-finite values are written as null.
+            private static void WriteCommand(DatasetJsonWriter json, ActuatorCommandSet? command)
+            {
+                if (!command.HasValue)
+                {
+                    json.Null();
+                    return;
+                }
+
+                ActuatorCommandSet value = command.Value;
+                json.BeginObject()
+                    .Key("sequence").Value(value.Sequence)
+                    .Key("apply_at_simulation_time_s").Value(value.ApplyAtSimulationTimeSeconds)
+                    .Key("reaction_wheel_torque_body_n_m").Value(value.ReactionWheelTorqueBodyNewtonMeters)
+                    .Key("magnetorquer_dipole_body_a_m2").Value(value.MagnetorquerDipoleBodyAmpereSquareMeters)
+                    .Key("thruster_force_body_n").Value(value.ThrusterForceBodyNewtons)
+                    .EndObject();
             }
 
             private static void WriteInitialOrbit(DatasetJsonWriter json, ClassicalOrbitElements? orbit)

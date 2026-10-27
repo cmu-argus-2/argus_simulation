@@ -1,6 +1,6 @@
 # Core/Recording — run recorder
 
-**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1 except `commands.jsonl` (CORE-7, #43) and the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
+**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1, with `commands.jsonl` from the gateway's command log (CORE-7, #43), except the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
 
 The run recorder is the single export route (decision D6 in
 [target-architecture.md](../../../../docs/target-architecture.md)). It is a passive,
@@ -9,23 +9,25 @@ write-only archive. It never feeds data back into the run and never blocks the s
 ## RunRecorder v0
 
 - **API:** `IRunRecorder` (`Core/Abstractions/`): `BeginRun` on every gateway `Reset`
-  (`SimulationGateway.RunStarted`), then `RecordState` (`StateProduced`) and `RecordSensorOutput`
-  (`SensorOutputProduced`), and `Close` at the end. `headless/Host` subscribes exactly these
-  three events; Unity-driven runs will call the same methods (UNITY-9, #63).
+  (`SimulationGateway.RunStarted`), then `RecordState` (`StateProduced`), `RecordSensorOutput`
+  (`SensorOutputProduced`), `RecordCommand` (`CommandLogged`) and `RecordTermination`
+  (`RunTerminated`), and `Close` at the end. `headless/Host` subscribes exactly these five
+  events; Unity-driven runs will call the same methods (UNITY-9, #63).
 - **Off the step loop:** the calls only queue. One writer thread formats the JSON, encodes PNGs
   (`PngEncoder`, no Unity) and writes the files, so a stalled disk never delays
   `SimulationGateway.Step` (`RunRecorderTests`).
-- **Overflow policy `drop-newest`:** the queue holds at most `capacity` states and sensor output
-  sets (65 536 by default). When it is full, the newest one is dropped, and the manifest's
-  `overflow` entry counts it: `policy`, `capacity`, `dropped_states` and `dropped_frames` (sensor
-  frames). Nothing is dropped silently. `BeginRun` is never dropped.
+- **Overflow policy `drop-newest`:** the queue holds at most `capacity` states, sensor output
+  sets and command records (65 536 by default). When it is full, the newest one is dropped, and
+  the manifest's `overflow` entry counts it: `policy`, `capacity`, `dropped_states`,
+  `dropped_frames` (sensor frames) and `dropped_commands`. Nothing is dropped silently.
+  `BeginRun` and `RecordTermination` are never dropped.
 - **Failures:** a write error, an unknown payload type or a `Jpeg` frame stops writing. The
   manifest then stays `"complete": false`, and `Close` throws. Core has no JPEG decoder, so a
   `Jpeg` `ImageFrame` cannot become the PNG dataset v1 requires. `Png` frames are written as given.
   The recorder never overwrites a run directory that already exists.
-- **Not yet written:** `commands.jsonl` (CORE-7, #43), and `cameras` is `[]` until camera models
-  exist (CORE-6, #42). `exposure_start_simulation_time_s` and `exposure_duration_s` are `null`
-  until `ImageFrame` carries them.
+- **Not yet written:** `cameras` is `[]` until camera models exist (CORE-6, #42).
+  `exposure_start_simulation_time_s` and `exposure_duration_s` are `null` until `ImageFrame`
+  carries them.
 
 ## Inputs
 
@@ -40,7 +42,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
 ## Dataset v1
 
 Fixed by DATA-4 (#69), confirmed with the navigation owner (Krushna Thakkar, 26 Oct). CORE-5 (#41)
-writes it, and CORE-7 (#43) adds `commands.jsonl`.
+writes it, and CORE-7 (#43) added `commands.jsonl`.
 
 ```text
 <run_id>_<segment>/
@@ -85,8 +87,8 @@ writes it, and CORE-7 (#43) adds `commands.jsonl`.
 | `configuration` | object | `SimulationConfiguration` (G5); `AnalyticSimulationEngine` for `analytic_orbit` | `epoch_utc`, `fixed_step_s`, `random_seed`, `kernel_set_id` (or `null`), `initial_orbit` (classical elements in J2000, or `null`), `spacecraft` (`mass_kg`, `inertia_body_kg_m2` as a 3×3 matrix, `initial_body_to_j2000_xyzw`, `initial_angular_velocity_body_rad_s`; or `null`), and `analytic_orbit`. `fixed_step_s` and `random_seed` are the values the run actually uses. In Unity-driven runs these are `SimulationRunner`'s step and `SimulationSensorRuntime`'s seed, not the 0.1 s and seed 0 that `AnalyticStateSource` passes to the engine (which ignores the seed). Analytic runs have no `initial_orbit` or `spacecraft`, because `AnalyticSimulationEngine` takes its orbit from its constructor; it exposes that orbit as `AnalyticSimulationEngine.Orbit`. `analytic_orbit` (`altitude_m`, `inclination_deg`, `raan_deg`, `phase_deg`) is that orbit at the start of the run. Its angles are measured in the analytic fixture's own inertial frame, not J2000, so they cannot be compared with `initial_orbit`. The dashboard can change altitude and phase during a run, and `states.jsonl` records the result. `analytic_orbit` is `null` in Basilisk runs. |
 | `sensors` | array | `SensorManager.Sensors[].Definition`, plus `SensorConfiguration` where one exists | Every sensor that publishes frames: `sensor_id`, `model_name`, `frame_id`, `sample_period_s`, `source`, `mount` (`position_body_m`, `sensor_to_body_xyzw`), `controller_visible` (bool: whether the gateway may pass the sensor's frames to a controller, `SensorDefinition.IsControllerVisible`), then `kind` and `profile` (that kind's profile fields). `kind` and `profile` are `null` for a sensor with no `SensorConfiguration`, such as the ideal body-rate sensor `imu.body_rate`. |
 | `cameras` | array | camera models (CORE-6) | Per camera: `sensor_id`, `profile_id`, `intrinsics` (`width_px`, `height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px`, `source`, `calibrated`), `distortion` (`model`, `coeffs`, `source`), `noise` (`source`), `extrinsics` (`source`, `origin`, `orientation_verified`), as in the DATA-6 profile (#71). When a calibration lands, `profile_id` changes and `calibrated` becomes `true`. |
-| `files` | object | recorder | `{}` until close. Then one entry per JSONL file, keyed by its path, for example `{"states.jsonl": {"lines": 1200}, "sensors.jsonl": {"lines": 5400}}`. Images and the manifest are not listed. |
-| `overflow` | object | recorder (CORE-5) | `policy` (`drop-newest`), `capacity`, `dropped_states` and `dropped_frames`; see RunRecorder v0 above. Nothing is dropped silently. |
+| `files` | object | recorder | `{}` until close. Then one entry per JSONL file, keyed by its path, for example `{"states.jsonl": {"lines": 1200}, "sensors.jsonl": {"lines": 5400}, "commands.jsonl": {"lines": 1199}}`. Images and the manifest are not listed. |
+| `overflow` | object | recorder (CORE-5) | `policy` (`drop-newest`), `capacity`, `dropped_states`, `dropped_frames` and `dropped_commands` (added by CORE-7 before any v1 dataset was written, so the schema stays at version 1); see RunRecorder v0 above. Nothing is dropped silently. |
 
 ### `states.jsonl`: one line per `SimulationState`
 
@@ -105,7 +107,7 @@ consumer that feeds an agent or controller uses only frames whose sensor has `co
 | `velocity_ecef_m_s` | [3] | `VelocityEcefMetersPerSecond`, relative to the Earth-fixed frame |
 | `body_to_ecef_xyzw` | [4] | `BodyToEcef` |
 | `angular_velocity_body_rad_s` | [3] | `AngularVelocityBodyRadiansPerSecond`: the body rate relative to inertial, in body axes. In analytic runs (`AnalyticEarthFixed`) it is the fixture's (0, n, 0) instead until CORE-2 (PR #83) lands, a known issue (`CircularOrbitModel` TODO; `target-architecture.md`). |
-| `producing_command` | object or `null` | `AppliedCommands`: `sequence`, `apply_at_simulation_time_s`, `reaction_wheel_torque_body_n_m`, `magnetorquer_dipole_body_a_m2`, `thruster_force_body_n`. The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0, and in runs that apply no commands (Unity's `AnalyticStateSource`). The command chosen from state k is the next line's `producing_command`, or, once CORE-7 (#43) lands, the `commands.jsonl` line with the same `sequence`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
+| `producing_command` | object or `null` | `AppliedCommands`: `sequence`, `apply_at_simulation_time_s`, `reaction_wheel_torque_body_n_m`, `magnetorquer_dipole_body_a_m2`, `thruster_force_body_n`. The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0, and in runs that apply no commands (Unity's `AnalyticStateSource`). The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `outcome` is not `Rejected`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
 | `environment` | object or `null` | `EnvironmentState`: `sun_position_itrf93_m`, `j2000_to_itrf93_xyzw`, `earth_angular_velocity_itrf93_rad_s`, `spacecraft_shadow_factor` (Basilisk's illumination factor: 1 is fully sunlit, 0 is umbra). `null` in analytic runs (D9). |
 
 Backend sensor measurements (`SensorMeasurements`) are not repeated here. They appear in
@@ -137,20 +139,29 @@ Backend sensor measurements (`SensorMeasurements`) are not repeated here. They a
 
 A sensor added later brings its own `payload_type`. That is an added payload type, so the schema stays at version 1.
 
-### `commands.jsonl`: one line per gateway command record (planned, CORE-7)
+### `commands.jsonl`: one line per gateway command record (CORE-7)
 
-`CommandRecord` and the gateway's command log do not exist yet; CORE-7 (#43) adds both.
-Unity-driven runs bypass the gateway (G1), so they write no `commands.jsonl`.
+`SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
+every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
+an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
+reason. `Applied` means the gateway passed the command to the engine; if the backend then fails,
+the manifest's `termination` says so. `Clamped` arrives with actuator limits (CORE-10, #46). The file
+is created in every run directory, so it is empty when no command was received, as in
+Unity-driven runs, which bypass the gateway (G1).
 
 | field | type | source |
 |---|---|---|
-| `run_id` | string | the run |
-| `sequence` | int | `CommandRecord` |
-| `simulation_time_s` | number | `CommandRecord` |
+| `run_id` | string | `CommandRecord.RunId` |
+| `sequence` | int | `CommandRecord.Sequence`: the gateway's next step k when the command arrived, whatever the command claimed, so every line joins to state k |
+| `simulation_time_s` | number | `CommandRecord.SimulationTimeSeconds`: t_k |
 | `outcome` | string | `Applied`, `Clamped` or `Rejected` |
-| `reason` | string or `null` | why a command was clamped or rejected |
-| `requested` | object | the requested `ActuatorCommandSet`, with the same fields as `producing_command` above |
-| `applied` | object or `null` | the applied `ActuatorCommandSet`; `null` when rejected |
+| `reason` | string or `null` | why a command was clamped or rejected; `null` when `Applied` |
+| `requested` | object | the requested `ActuatorCommandSet` as the controller sent it, with the same fields as `producing_command` above; its own `sequence` and `apply_at_simulation_time_s` may differ from the line's when it was rejected |
+| `applied` | object or `null` | the `ActuatorCommandSet` the engine ran over [t_k, t_k+1), which state k+1 carries as `producing_command`; `null` when rejected |
+
+In file order `sequence` never decreases. Several lines may share one, since every command
+rejected for a step is logged against it, but at most one line per `sequence` is `Applied` or
+`Clamped`.
 
 ### `images/<sensorId>/<sequence>.png`
 
@@ -172,7 +183,9 @@ Unity-driven runs bypass the gateway (G1), so they write no `commands.jsonl`.
 ### Reader checks
 
 A reader rejects a dataset in which:
-- a `sequence` repeats or decreases in file order (see Join keys);
+- in `states.jsonl` or one sensor's frames, a `sequence` repeats or decreases in file order (see
+  Join keys); in `commands.jsonl`, a `sequence` decreases, or more than one line with the same
+  `sequence` is `Applied` or `Clamped`;
 - a number is `null` where its row does not allow `null`, in `states.jsonl` or in a `Valid` frame's
   payload;
 - a PNG's size differs from its frame's `intrinsics` (`width_px` × `height_px`).
