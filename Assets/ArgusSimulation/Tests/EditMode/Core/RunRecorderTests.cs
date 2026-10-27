@@ -170,6 +170,68 @@ namespace Argus.Simulation.Tests
             Assert.That(Directory.GetFileSystemEntries(Path.Combine(_root, "a_0")), Is.Empty);
         }
 
+        // G3: a camera frame captured at state 10 and published at state 13 joins to state 10, and
+        // so does one published Unavailable.
+        [Test]
+        public void CameraFramesRecordTheirCaptureStateNotTheirArrivalStep()
+        {
+            const string cameraId = "cam.test";
+            Vector3d sun = new Vector3d(1.47e11, 2.0e10, -6.0e10);
+            CameraIntrinsics intrinsics = new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0);
+            RenderRequest Request(long sequence, long stateSequence) => new RenderRequest(
+                cameraId,
+                sequence,
+                stateSequence,
+                stateSequence * 0.1,
+                DateTimeOffset.UnixEpoch.AddSeconds(stateSequence * 0.1),
+                0.01,
+                new Vector3d(6_878_137.0, 0.0, 0.0),
+                new Quaterniond(0.0, 0.0, 0.0, 1.0),
+                intrinsics,
+                sun);
+            SensorFrame<ImageFrame> Frame(RenderRequest request, SensorFrameStatus status, ImageFrame payload) =>
+                new SensorFrame<ImageFrame>(
+                    "test-run",
+                    cameraId,
+                    "cam_test",
+                    request.Sequence,
+                    request.StateSequence,
+                    request.ExposureStartSimulationTimeSeconds,
+                    request.ExposureStartUtc,
+                    status,
+                    "simulation",
+                    payload);
+
+            RenderRequest late = Request(0, 10);
+            RenderRequest timedOut = Request(1, 11);
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                recorder.BeginRun(
+                    new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, 0.1),
+                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity) });
+                recorder.RecordSensorOutput(new SensorOutputSet("test-run", 13, 1.3, new ISensorFrame[]
+                {
+                    Frame(late, SensorFrameStatus.Valid, new ImageFrame(late, ImageEncoding.Rgb8, new byte[4 * 2 * 3], "test-renderer"))
+                }));
+                recorder.RecordSensorOutput(new SensorOutputSet("test-run", 14, 1.4, new ISensorFrame[]
+                {
+                    Frame(timedOut, SensorFrameStatus.Unavailable, new ImageFrame(timedOut, default, null, null))
+                }));
+                recorder.Close();
+            }
+
+            string[] frames = File.ReadAllLines(Path.Combine(_root, "test-run_0", "sensors.jsonl"));
+            Assert.That(frames.Length, Is.EqualTo(2));
+            Assert.That(Field(frames[0], "state_sequence"), Is.EqualTo("10"));
+            Assert.That(Field(frames[0], "status"), Is.EqualTo("\"Valid\""));
+            Assert.That(Field(frames[0], "exposure_start_simulation_time_s"), Is.EqualTo("1"));
+            Assert.That(Field(frames[0], "exposure_duration_s"), Is.EqualTo("0.01"));
+            Assert.That(frames[0], Does.Contain("\"sun_position_ecef_m\":[147000000000,"));
+            Assert.That(Field(frames[1], "state_sequence"), Is.EqualTo("11"));
+            Assert.That(Field(frames[1], "status"), Is.EqualTo("\"Unavailable\""));
+            Assert.That(Field(frames[1], "payload"), Is.EqualTo("null"));
+        }
+
         [Test]
         public void AnUnwritableRootFailsWhenTheRecorderIsCreated()
         {

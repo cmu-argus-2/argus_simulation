@@ -550,7 +550,7 @@ namespace Argus.Simulation.Core
             {
                 foreach (ISensorFrame frame in output.Frames)
                 {
-                    WriteFrame(frame, output.SpacecraftSequence);
+                    WriteFrame(frame);
                 }
             }
 
@@ -635,14 +635,16 @@ namespace Argus.Simulation.Core
                 _stateLines++;
             }
 
-            private void WriteFrame(ISensorFrame frame, long stateSequence)
+            // state_sequence is the frame's capture state, not the step that published it: a late
+            // camera frame arrives in a later SensorOutputSet (G3, CORE-3 #38).
+            private void WriteFrame(ISensorFrame frame)
             {
                 DatasetJsonWriter json = new DatasetJsonWriter().BeginObject()
                     .Key("run_id").Value(frame.RunId)
                     .Key("sensor_id").Value(frame.SensorId)
                     .Key("frame_id").Value(frame.FrameId)
                     .Key("sequence").Value(frame.Sequence)
-                    .Key("state_sequence").Value(stateSequence)
+                    .Key("state_sequence").Value(frame.StateSequence)
                     .Key("simulation_time_s").Value(frame.SimulationTimeSeconds)
                     .Key("timestamp_utc").Utc(frame.TimestampUtc)
                     .Key("status").Value(frame.Status.ToString())
@@ -696,9 +698,20 @@ namespace Argus.Simulation.Core
                         json.Key("camera_position_ecef_m").Value(image.CameraPositionEcefMeters)
                             .Key("camera_to_ecef_xyzw").Value(image.CameraToEcef)
                             .Key("renderer").Value(image.Renderer)
-                            .Key("exposure_start_simulation_time_s").Null()
-                            .Key("exposure_duration_s").Null()
-                            .EndObject();
+                            .Key("state_sequence").Value(image.StateSequence)
+                            .Key("exposure_start_simulation_time_s").Value(image.SimulationTimeSeconds)
+                            .Key("exposure_duration_s").Value(image.ExposureDurationSeconds)
+                            .Key("sun_position_ecef_m");
+                        if (image.Request.HasSunPosition)
+                        {
+                            json.Value(image.Request.SunPositionEcefMeters.Value);
+                        }
+                        else
+                        {
+                            json.Null();
+                        }
+
+                        json.EndObject();
                         break;
                     default:
                         throw new NotSupportedException(

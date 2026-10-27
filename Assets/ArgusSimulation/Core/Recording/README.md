@@ -28,8 +28,6 @@ write-only archive. It never feeds data back into the run and never blocks the s
   `Jpeg` `ImageFrame` cannot become the PNG dataset v1 requires. `Png` frames are written as given.
   The recorder never overwrites a run directory that already exists.
 - **Not yet written:** `cameras` is `[]` until camera models exist (CORE-6, #42).
-  `exposure_start_simulation_time_s` and `exposure_duration_s` are `null` until `ImageFrame`
-  carries them.
 
 ## Inputs
 
@@ -38,7 +36,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
   analytic engine reports neither).
 - Every `SensorOutputSet` from `SensorManager`, including ground-truth sensors and camera
   `ImageFrame`s once cameras are sensor models. Camera frames carry their capture time;
-  late frames follow the late-frame policy (gap G3).
+  late frames follow the late-frame policy (gap G3, decided in CORE-3 #38: see Join keys).
 - The gateway's command log: requested, applied and rejected commands.
 
 ## Dataset v1
@@ -71,7 +69,7 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 | Frames | Position, velocity and attitude are Earth-fixed in the frame named by `manifest.earth_fixed_frame`: `Itrf93` in Basilisk runs, `AnalyticEarthFixed` in the analytic fixture (D9). One run never mixes them. The body frame is `SpacecraftState`'s. The camera frame is proposed as x right, y down, z out of the lens (DATA-6, #71); no code defines it yet. |
 | Time | `simulation_time_s` is seconds since the run epoch. Every `*_utc` field (`timestamp_utc`, `created_utc`, `epoch_utc`) is UTC, written as `yyyy-MM-ddTHH:mm:ss.fffffffZ`: always 7 fractional digits, ending in `Z`, for example `2026-10-20T12:00:00.0000000Z`. C#'s `"O"` format on a `DateTimeOffset` writes `+00:00` instead, so the writer formats the UTC value with the explicit format and the invariant culture (in .NET custom formats, `:` and the calendar follow the culture). Python 3.11+ `datetime.fromisoformat` reads it to the microsecond; `strptime` with `%f` does not. |
 | Paths | Relative to the run directory, separated by `/` on every OS. |
-| Join keys | In `states.jsonl`, `sequence` is the spacecraft sequence and is unique within a run directory. Any reset restarts it at 0 (a gateway `Reset`, or `SimulationRunner.ResetSimulation` in Unity), so the recorder closes the directory and starts a new one. A gateway `Reset` keeps the `run_id`, so `manifest.segment` numbers the directories of one `run_id` from 0, and each directory is named `<run_id>_<segment>`. In `sensors.jsonl`, `sequence` counts per sensor, so a frame's key is (`sensor_id`, `sequence`). Every sensor frame carries `state_sequence`, the spacecraft sequence of the state it was captured at, so frames join to their state. How a late camera frame is handled is still open (G3; CORE-3 #38 is blocked on it). If late frames are kept, each keeps its capture state and capture time, not those of the step it arrived in. In file order, the `sequence` of `states.jsonl` and each sensor's `sequence` strictly increase; if late frames are kept, the recorder holds one back until it can be written in order. |
+| Join keys | In `states.jsonl`, `sequence` is the spacecraft sequence and is unique within a run directory. Any reset restarts it at 0 (a gateway `Reset`, or `SimulationRunner.ResetSimulation` in Unity), so the recorder closes the directory and starts a new one. A gateway `Reset` keeps the `run_id`, so `manifest.segment` numbers the directories of one `run_id` from 0, and each directory is named `<run_id>_<segment>`. In `sensors.jsonl`, `sequence` counts per sensor, so a frame's key is (`sensor_id`, `sequence`). Every sensor frame carries `state_sequence`, the spacecraft sequence of the state it was captured at, so frames join to their state. A late camera frame (G3, CORE-3 #38) is published on the step its render finishes but keeps its capture state and capture time, not those of the step it arrived in: its `state_sequence` is `SensorFrame.StateSequence`, the capture state, not the `SensorOutputSet`'s. An `Unavailable` camera frame keeps its capture `state_sequence` too. A camera publishes its frames in sequence order, and an exposure not rendered within the camera's latency limit is published as `Unavailable`, so a camera frame is never dropped or marked `Stale`. In file order, the `sequence` of `states.jsonl` and each sensor's `sequence` strictly increase. |
 
 ### `manifest.json`
 
@@ -123,7 +121,7 @@ Backend sensor measurements (`SensorMeasurements`) are not repeated here. They a
 | `sensor_id` | string | `SensorId` |
 | `frame_id` | string | `FrameId` |
 | `sequence` | int | `Sequence` |
-| `state_sequence` | int | `SensorOutputSet.SpacecraftSequence` (late camera frames: see Join keys) |
+| `state_sequence` | int | `StateSequence`: the spacecraft sequence of the state the frame was captured at. The `SensorOutputSet`'s sequence for every sensor except a late camera frame (see Join keys) |
 | `simulation_time_s` | number | `SimulationTimeSeconds` |
 | `timestamp_utc` | string | `TimestampUtc` |
 | `status` | string | `SensorFrameStatus`: `Valid`, `Unavailable`, `Stale` or `Invalid` |
@@ -137,7 +135,7 @@ Backend sensor measurements (`SensorMeasurements`) are not repeated here. They a
 | `AngularRateMeasurement` | `angular_velocity_sensor_rad_s` |
 | `MagnetometerMeasurement` | `magnetic_field_sensor_t` |
 | `LightSensorMeasurement` | `irradiance_w_m2` |
-| `ImageFrame` | `image` (the PNG's path, or `null` when the frame has no pixels), `camera_id`, `intrinsics` (the six values, as in the manifest), `camera_position_ecef_m`, `camera_to_ecef_xyzw`, `renderer` (string), `exposure_start_simulation_time_s` and `exposure_duration_s`, from the frame's `RenderRequest` (`null` until `ImageFrame` carries them: CORE-3 #38, UNITY-4 #57). Pixels go only to the PNG. |
+| `ImageFrame` | `image` (the PNG's path, or `null` when the frame has no pixels), `camera_id`, `intrinsics` (the six values, as in the manifest), `camera_position_ecef_m`, `camera_to_ecef_xyzw`, `renderer` (string), `state_sequence`, `exposure_start_simulation_time_s`, `exposure_duration_s` and `sun_position_ecef_m` (`null` when the state had no `EnvironmentState`, so the renderer lit the scene its own way, D9), from `ImageFrame.Request`. Pixels go only to the PNG. |
 
 A sensor added later brings its own `payload_type`. That is an added payload type, so the schema stays at version 1.
 
@@ -168,8 +166,8 @@ rejected for a step is logged against it, but at most one line per `sequence` is
 
 ### `images/<sensorId>/<sequence>.png`
 
-- **One PNG per camera frame that has pixels,** whatever its `status`, so a late frame marked
-  `Stale` keeps its image. An `Unavailable` frame has no payload, so it has no PNG. The name is the frame's `sequence`, zero-padded to 8 digits, for example
+- **One PNG per camera frame that has pixels,** whatever its `status`. An `Unavailable` frame has no
+  payload, so it has no PNG. The name is the frame's `sequence`, zero-padded to 8 digits, for example
   `images/cam_xp/00000042.png`. Readers take the path from `payload.image` and never rebuild it.
 - **Run and sensor IDs are path-safe:** a lowercase letter or digit, then lowercase letters, digits, `.`, `_`
   or `-` (`[a-z0-9][a-z0-9._-]*`), not ending in `.` and not a Windows device name such as `con` or
@@ -201,7 +199,7 @@ the step loop, so both run types write the same format with the same code:
 | run | owns the step loop | recorder runs in | images come from |
 |---|---|---|---|
 | Basilisk run | `headless/Host` (`BasiliskEngine`) | `headless/Host` | Unity, through Core's `IImageRenderer`, over the render link (UNITY-10 #64, G3) |
-| Unity-driven analytic run (`AnalyticStateSource`) | Unity | Unity, as the same `RunRecorder` | the in-process `UnityImageRenderer` (UNITY-4 #57), once CORE-3 (#38) decides what a camera does in analytic runs |
+| Unity-driven analytic run (`AnalyticStateSource`) | Unity | Unity, as the same `RunRecorder` | the in-process `UnityImageRenderer` (UNITY-4 #57). Analytic runs have no `EnvironmentState`, so their frames have no `sun_position_ecef_m` (CORE-3 #38) |
 
 `manifest.writer.process` records which one. In Unity-driven runs the recorder takes sensor frames
 from the temporary sensor bridge (`Unity/Sensors/`). G2 moves the sensors and the recorder into the

@@ -206,7 +206,7 @@ BackendSensorModel<TMeasurement>         (Basilisk-sourced)
 
 SensorModel<TPayload>                    (Argus-computed)
 ├── IdealBodyRateSensorModel
-└── CameraModel                          (placeholder)
+└── CameraModel                          (base: exposure, pose, pending frames, G3)
     ├── ArducamImx708CameraModel         (placeholder)
     └── NadirGroundTruthCameraModel      (placeholder)
 
@@ -263,7 +263,7 @@ appear in the core contracts.
 ## 11. Basilisk integration
 
 `BasiliskEngine` (`headless/Host`) implements `ISimulationEngine` as the gRPC client of the
-Python Basilisk service (`Argus.Basilisk/`; spacecraft, SPICE, eclipse and the IMU today). It sends Argus commands and
+Python Basilisk service (`Argus.Basilisk/`; spacecraft, SPICE, eclipse, the IMU and the magnetometer today). It sends Argus commands and
 maps Basilisk state and sensor messages into Argus contracts through `Core/Basilisk`. Basilisk becomes authoritative for simulation time
 when selected.
 
@@ -330,7 +330,7 @@ docs/                              Architecture and interface documentation
 headless/                          dotnet build of Core and the EditMode tests; Host/ with BasiliskEngine
 
 Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
-Argus.Basilisk/                    Python Basilisk service with SPICE (build steps 1-2 + brief)
+Argus.Basilisk/                    Python Basilisk service with SPICE (build steps 1-3 + brief)
 
 Future external packages/services:
 Argus.Hardware/                    Flight-computer protocol adapters (README placeholder)
