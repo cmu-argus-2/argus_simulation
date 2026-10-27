@@ -149,6 +149,12 @@ namespace Argus.Simulation.Core
                 // A backend failure, such as BasiliskEngine's wrapped RpcException.
                 return Terminate(exception);
             }
+            catch (OperationCanceledException)
+            {
+                // Cancellation, such as Ctrl+C during a Basilisk RPC, is not a failure: the run stays
+                // running, so the caller's Stop records why it ended.
+                throw;
+            }
             catch (Exception exception)
             {
                 // Any other exception is a bug and propagates with its stack trace. It still ends the

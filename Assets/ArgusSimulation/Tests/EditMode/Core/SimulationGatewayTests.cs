@@ -148,6 +148,12 @@ namespace Argus.Simulation.Tests
             Assert.Throws<InvalidOperationException>(() => buggy.Step());
             Assert.That(log.ConvertAll(record => (record.Outcome, record.Sequence)),
                 Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
+
+            // Cancellation is neither: the run stays running, so the caller's Stop says why it ended.
+            SimulationGateway cancelled = new SimulationGateway(new FailingEngine(Engine(), failAtStep: 1, new OperationCanceledException()));
+            cancelled.Reset(0, Scenario(0.5));
+            Assert.Throws<OperationCanceledException>(() => cancelled.Step());
+            Assert.That(cancelled.Stop("Cancelled (Ctrl+C)").Status, Is.EqualTo(ObservationStatus.Stopped));
         }
 
         [Test]
