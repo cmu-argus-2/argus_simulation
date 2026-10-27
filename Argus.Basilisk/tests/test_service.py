@@ -424,6 +424,22 @@ def test_epoch_outside_wmm2025_is_out_of_range_only_with_a_magnetometer(service)
     assert list(stub.ConfigureRun(without_magnetometer).configured_sensor_ids) == ["imu.main"]
 
 
+# magField_N (J2000, tesla) at Step(0) of magnetometer_request(): the P0 orbit at 2025-01-15T00:00Z
+# with argus-2026-10-20. An independent WMM2025 synthesis from the same WMM2025.COF, with r_BN_N
+# rotated into ITRF93 by SPICE's J20002Pfix, agrees to 3e-11 nT (review of #101). A wrong epoch,
+# Earth frame or position would move it: one year of secular variation alone is about 36 nT.
+P0_MAGNETIC_FIELD_J2000_T = [-5.319363221698996e-06, 3.296339128501271e-06, 2.31698126016024e-05]
+
+
+@real_kernels
+def test_magnetic_field_at_step_zero_matches_the_reference(service):
+    servicer, stub = service
+    stub.ConfigureRun(magnetometer_request())
+    stub.Step(step_request(0))
+    field = servicer._run.scenario.readers["magneticFieldWMM.envOutMsgs[0]"]().magField_N
+    assert np.allclose(field, P0_MAGNETIC_FIELD_J2000_T, rtol=0.0, atol=1e-12)
+
+
 @real_kernels
 def test_configure_run_with_a_magnetometer_is_accepted(service):
     _, stub = service
