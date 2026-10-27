@@ -72,6 +72,7 @@ namespace Argus.Simulation.Core
                 sensorId,
                 Definition.FrameId,
                 _nextSequence,
+                context.Spacecraft.Sequence,
                 context.Spacecraft.SimulationTimeSeconds,
                 context.Spacecraft.TimestampUtc,
                 status,

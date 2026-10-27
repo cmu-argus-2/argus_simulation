@@ -38,7 +38,7 @@ flowchart TB
 
     subgraph CORE["Headless C# — Argus.Simulation.Core + headless/Host"]
         dyn["Dynamics<br/>ISimulationEngine → SimulationState<br/>+ EnvironmentState (Basilisk runs)"]
-        smod["Sensor models<br/>SensorManager, SensorModel&lt;T&gt;<br/>(planned: CameraModel)"]
+        smod["Sensor models<br/>SensorManager, SensorModel&lt;T&gt;, CameraModel"]
         gate["Simulation gateway<br/>Reset / Step over ISimulationEngine<br/>returns observations (planned: command log)"]
         beng["BasiliskEngine (headless/Host)<br/>gRPC client over Core/Basilisk mapping"]
         rec["Run recorder<br/>single export route for run data"]
@@ -260,7 +260,7 @@ recorder and Unity through `StateProduced`.
 |---|---|---|
 | G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state; `BasiliskEngine` sends it as `StepRequest.command`, and the v1 link defines a non-zero command as UNIMPLEMENTED until actuators exist. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. |
 | G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. `headless/Host` already runs the gateway, `BasiliskEngine`, the P0 sensors and the recorder; the gateway server and the state stream (`StateStreamServer`, `StateStreamClient`, `state_stream.proto`) are placeholders. |
-| G3 | Camera timing in real time | A Cesium render can take longer than a step. Needs a late-frame policy: stamp with capture time, drop, or mark stale. |
+| G3 | Camera timing in real time | A Cesium render can take longer than a step. Decided (CORE-3 #38): stamp with capture time. `CameraModel` starts each exposure at its slot and publishes the frame on the step its render finishes, with the capture state's sequence and time, in sequence order. An exposure not rendered within the camera's latency limit (simulation time), or whose render fails, is published as `Unavailable`; frames are never dropped silently, marked `Stale`, or black. A step loop that must not outrun the renderer waits until `PendingExposureCount` is 0. With no `EnvironmentState` (analytic runs, D9) the camera still renders and the request records that it has no Sun position; the Sun is never approximated. |
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. None of it has run against a real Basilisk service yet. |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). |
 
@@ -370,7 +370,7 @@ Argus.Hardware/            HIL adapters                                        p
 - [x] The runner publishes whole states through `ISimulationStateSource`
       (`ISpacecraftStateSource` removed; `AnalyticStateSource`).
 - [ ] The Unity Sun light and night side follow `EnvironmentState`.
-- [ ] Camera models with a late-frame policy, and a Unity `IImageRenderer` (D5, G3).
+- [ ] Camera models with a late-frame policy (base `CameraModel` done in CORE-3), and a Unity `IImageRenderer` (D5, G3).
 - [ ] Run recorder v0, the gateway command log, and controller-visible observations
       (D6, D7).
 
