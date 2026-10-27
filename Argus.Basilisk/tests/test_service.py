@@ -1,4 +1,5 @@
-"""Service acceptance (README §13) over a real in-process gRPC server: BSK-3 and the IMU (BSK-4).
+"""Service acceptance (README §13) over a real in-process gRPC server: BSK-3, the IMU (BSK-4) and
+the magnetometer (BSK-5).
 
 Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
 argus-2026-10-20 in kernels/, and the SPICE reference test needs argus-2026-09-25
@@ -83,9 +84,16 @@ def configure_request():
 
 
 def imu_request():
-    """The P0 default with only its IMU; BSK-5 (#18) and BSK-6 (#19) add the other sensors."""
+    """The P0 default with only its IMU."""
     request = p0_default_request()
     del request.configuration.sensors[1:]
+    return request
+
+
+def magnetometer_request():
+    """The P0 default with its IMU and magnetometer; BSK-6 (#19) adds the light sensors."""
+    request = p0_default_request()
+    del request.configuration.sensors[2:]
     return request
 
 
@@ -134,10 +142,10 @@ def test_calls_need_a_configured_run(service):
 
 def test_configure_run_rejects_before_building(service):
     _, stub = service
-    # The magnetometer and the light sensors are still UNIMPLEMENTED.
+    # The light sensors are still UNIMPLEMENTED.
     code, details = status_of(stub.ConfigureRun, p0_default_request())
     assert code == grpc.StatusCode.UNIMPLEMENTED
-    assert "'magnetometer'" in details and "'imu'" not in details
+    assert "'light_sensor'" in details and "'magnetometer'" not in details and "'imu'" not in details
 
     unknown = configure_request()
     unknown.configuration.kernel_set_id = "no-such-set"
@@ -396,3 +404,139 @@ def test_imu_noise_repeats_bit_for_bit_after_reset(service):
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [
         r.SerializeToString(deterministic=True) for r in second]
+
+
+# --- The magnetometer (BSK-5) -------------------------------------------------------------
+
+
+def test_magnetometer_needs_the_wmm_file_in_the_kernel_set(service, monkeypatch, tmp_path):
+    """A kernel set without WMM2025.COF cannot serve a magnetometer; checked before SPICE loads."""
+    _, stub = service
+    window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
+    no_wmm = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
+    monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: no_wmm)
+    code, details = status_of(stub.ConfigureRun, magnetometer_request())
+    assert code == grpc.StatusCode.FAILED_PRECONDITION
+    assert "WMM2025.COF" in details
+
+
+def test_magnetometer_noise_stays_unimplemented(service):
+    _, stub = service
+    request = magnetometer_request()
+    request.configuration.sensors[1].magnetometer.noise_std_tesla = 1e-7
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.UNIMPLEMENTED
+    assert "noise_std_tesla" in details
+
+
+@real_kernels
+def test_epoch_outside_wmm2025_is_out_of_range_only_with_a_magnetometer(service):
+    _, stub = service
+    before_wmm = datetime(2024, 12, 31, tzinfo=timezone.utc)
+    request = magnetometer_request()
+    request.configuration.epoch_utc.FromDatetime(before_wmm)
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.OUT_OF_RANGE
+    assert "WMM2025" in details
+
+    without_magnetometer = imu_request()
+    without_magnetometer.configuration.epoch_utc.FromDatetime(before_wmm)
+    assert list(stub.ConfigureRun(without_magnetometer).configured_sensor_ids) == ["imu.main"]
+
+
+# magField_N (J2000, tesla) at Step(0) of magnetometer_request(): the P0 orbit at 2025-01-15T00:00Z
+# with argus-2026-10-20. An independent WMM2025 synthesis from the same WMM2025.COF, with r_BN_N
+# rotated into ITRF93 by SPICE's J20002Pfix, agrees to 3e-11 nT (review of #101). A wrong epoch,
+# Earth frame or position would move it: one year of secular variation alone is about 36 nT.
+P0_MAGNETIC_FIELD_J2000_T = [-5.319363221698996e-06, 3.296339128501271e-06, 2.31698126016024e-05]
+
+
+@real_kernels
+def test_magnetic_field_at_step_zero_matches_the_reference(service):
+    servicer, stub = service
+    stub.ConfigureRun(magnetometer_request())
+    stub.Step(step_request(0))
+    field = servicer._run.scenario.readers["magneticFieldWMM.envOutMsgs[0]"]().magField_N
+    assert np.allclose(field, P0_MAGNETIC_FIELD_J2000_T, rtol=0.0, atol=1e-12)
+
+
+@real_kernels
+def test_configure_run_with_a_magnetometer_is_accepted(service):
+    _, stub = service
+    assert list(stub.ConfigureRun(magnetometer_request()).configured_sensor_ids) == ["imu.main", "mag.main"]
+
+
+@real_kernels
+def test_noise_free_magnetometer_reads_the_wmm_field_in_sensor_axes(service):
+    servicer, stub = service
+    request = magnetometer_request()
+    configuration = request.configuration
+    set_vector(configuration.spacecraft.initial_angular_velocity_body_rad_per_s, (0.05, -0.2, 0.1))
+    sensor = configuration.sensors[1]
+    quarter_turn_z = (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5))
+    set_quaternion(sensor.definition.mount.sensor_to_body, quarter_turn_z)
+    bias = np.array([1e-6, -2e-6, 3e-6])
+    set_vector(sensor.magnetometer.constant_bias_sensor_tesla, bias)
+    sensor.magnetometer.scale_factor = 1.1
+    sensor.magnetometer.range_tesla = 1.5e-5  # Below the ~24 uT field, so some axes clip.
+    stub.ConfigureRun(request)
+    field = servicer._run.scenario.readers["magneticFieldWMM.envOutMsgs[0]"]
+    c_sb = rbk.EP2C(np.array([quarter_turn_z[3], *quarter_turn_z[:3]]))
+
+    clipped = 0
+    for n in range(20):
+        response = stub.Step(step_request(n))
+        sample = {sample.sensor_id: sample for sample in response.sensor_samples}["mag.main"]
+        assert sample.sample_time_ns == response.sim_time_ns
+        sigma = response.spacecraft.sigma_bn
+        c_bn = rbk.MRP2C(np.array([sigma.x, sigma.y, sigma.z]))
+        expected = np.clip(1.1 * (c_sb @ c_bn @ np.array(field().magField_N) + bias), -1.5e-5, 1.5e-5)
+        measured = xyz(sample.magnetometer.magnetic_field_sensor_tesla)
+        assert np.allclose(measured, expected, rtol=0.0, atol=1e-18)
+        clipped += int(np.sum(np.isclose(np.abs(measured), 1.5e-5, rtol=0.0, atol=0.0)))
+    assert clipped > 0
+
+
+@real_kernels
+def test_magnetometer_repeats_bit_for_bit_after_reset(service):
+    _, stub = service
+    stub.ConfigureRun(magnetometer_request())
+
+    def run():
+        return [stub.Step(step_request(n)) for n in range(100)]
+
+    first = run()
+    assert all(len(response.sensor_samples) == 2 for response in first)
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    second = run()
+    assert [r.SerializeToString(deterministic=True) for r in first] == [
+        r.SerializeToString(deterministic=True) for r in second]
+
+
+@real_kernels
+def test_magnetic_field_never_downloads(tmp_path):
+    """MagneticFieldWMM reads the verified WMM2025.COF; bsk's dataFetcher is never used (D3)."""
+    script = """
+import sys
+sys.path[:0] = [".", "tests"]
+attempts = []
+def audit(event, args):
+    if event == "socket.connect":
+        attempts.append(args[1])
+        raise OSError("network blocked")
+sys.addaudithook(audit)
+from argus_basilisk.kernels import load_kernel_set
+from argus_basilisk.scenario import Scenario
+from test_validation import p0_default_request
+configuration = p0_default_request().configuration
+del configuration.sensors[2:]
+scenario = Scenario(configuration, load_kernel_set(configuration.kernel_set_id))
+for n in range(3):
+    scenario.step(n)
+assert not attempts, attempts
+assert not any("dataFetcher" in name for name in sys.modules), "dataFetcher was imported"
+"""
+    cache = tmp_path / "bsk_support_data"
+    environment = dict(os.environ, BSK_SUPPORT_DATA_CACHE=str(cache))
+    subprocess.run([sys.executable, "-c", script], cwd=ROOT, env=environment, check=True)
+    assert not cache.exists() or not any(path.is_file() for path in cache.rglob("*"))

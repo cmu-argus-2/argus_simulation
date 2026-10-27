@@ -1,7 +1,7 @@
 """P0 sensor modules (README §9).
 
-Build order step 2 (README §12): the IMU. The magnetometer (BSK-5, #18) and the light sensors
-(BSK-6, #19) are rejected by validation until they are built.
+Build order steps 2 and 3 (README §12): the IMU and the magnetometer. The light sensors (BSK-6,
+#19) are rejected by validation until they are built.
 
 Each Argus sensor owns its Basilisk modules and the readers subscribed to their output messages
 at build time (§6). The Scenario adds the modules to the sensor task for their period, checks the
@@ -11,13 +11,13 @@ readers' freshness and reads each measurement.
 import math
 
 import numpy as np
-from Basilisk.simulation import imuSensor
+from Basilisk.simulation import imuSensor, magnetometer
 from Basilisk.utilities import RigidBodyKinematics as rbk
 
 from . import seeds
 from .contracts import sensors_pb, types_pb
 
-__all__ = ["Imu", "build_sensors"]
+__all__ = ["Imu", "Magnetometer", "build_sensors"]
 
 
 class Imu:
@@ -64,14 +64,73 @@ class Imu:
         )
 
 
-def build_sensors(configuration, spacecraft_state_msg) -> list:
-    """The Argus sensors of a validated configuration, in configuration order."""
+class Magnetometer:
+    """One Argus magnetometer (TAM) reading the MagneticFieldWMM field at the spacecraft.
+
+    tam_S = scale (C_SB C_BN B_N + bias), clipped to +-range. Noise is 0: bsk 2.11.1 seeds the
+    module's noise generator once in its constructor, so validation rejects noise_std_tesla > 0
+    until BSK-9 (#22), and RNGSeed is left alone.
+    """
+
+    kind = "magnetometer"
+
+    def __init__(self, sensor, spacecraft_state_msg, magnetic_field_msg):
+        definition = sensor.definition
+        profile = sensor.magnetometer
+        self.sensor_id = definition.sensor_id
+        self.sample_period_ns = definition.sample_period_ns
+
+        self.module = magnetometer.Magnetometer()
+        self.module.ModelTag = f"magnetometer[{self.sensor_id}]"
+        self.module.stateInMsg.subscribeTo(spacecraft_state_msg)
+        self.module.magInMsg.subscribeTo(magnetic_field_msg)
+        rotation = definition.mount.sensor_to_body
+        self.module.dcm_SB = rbk.EP2C(np.array([rotation.w, rotation.x, rotation.y, rotation.z]))
+        # Every error term is set explicitly: the module defaults are a random walk (A = I) and
+        # noise -1.
+        self.module.senNoiseStd = np.full(3, profile.noise_std_tesla)
+        self.module.setAMatrix(np.zeros((3, 3)))
+        self.module.walkBounds = np.zeros(3)
+        self.module.senBias = _array(profile.constant_bias_sensor_tesla)
+        self.module.scaleFactor = profile.scale_factor
+        self.module.maxOutput = profile.range_tesla
+        self.module.minOutput = -profile.range_tesla
+        self._reader = self.module.tamDataOutMsg.addSubscriber()
+
+    @property
+    def modules(self) -> tuple:
+        return (self.module,)
+
+    @property
+    def readers(self) -> dict:
+        return {f"{self.module.ModelTag}.tamDataOutMsg": self._reader}
+
+    @property
+    def ready(self) -> bool:
+        """Always: the magnetometer measures on its first firing, from the field written at t_n."""
+        return True
+
+    def measurement(self) -> sensors_pb.MagnetometerMeasurement:
+        return sensors_pb.MagnetometerMeasurement(magnetic_field_sensor_tesla=_vector(self._reader().tam_S))
+
+
+def build_sensors(configuration, spacecraft_state_msg, magnetic_field_msg=None) -> list:
+    """The Argus sensors of a validated configuration, in configuration order.
+
+    magnetic_field_msg is the MagneticFieldWMM output for the spacecraft; it is required when a
+    magnetometer is configured.
+    """
     built = []
     for sensor in configuration.sensors:
         kind = sensor.WhichOneof("profile")
-        if kind != Imu.kind:
+        if kind == Imu.kind:
+            built.append(Imu(sensor, configuration.random_seed, spacecraft_state_msg))
+        elif kind == Magnetometer.kind:
+            if magnetic_field_msg is None:
+                raise ValueError(f"magnetometer {sensor.definition.sensor_id!r} needs the MagneticFieldWMM output")
+            built.append(Magnetometer(sensor, spacecraft_state_msg, magnetic_field_msg))
+        else:
             raise ValueError(f"sensor kind {kind!r} is not built yet (sensor_id {sensor.definition.sensor_id!r})")
-        built.append(Imu(sensor, configuration.random_seed, spacecraft_state_msg))
     return built
 
 

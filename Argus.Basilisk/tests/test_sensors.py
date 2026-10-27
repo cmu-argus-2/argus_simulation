@@ -1,4 +1,4 @@
-"""IMU modules (README §9, §10) on a spacecraft hub alone; needs bsk==2.11.1 but no kernels."""
+"""IMU and magnetometer modules (README §9, §10) without SPICE; needs bsk==2.11.1 but no kernels."""
 
 import math
 
@@ -7,13 +7,13 @@ import pytest
 
 pytest.importorskip("Basilisk")
 
-from Basilisk.architecture import astroConstants  # noqa: E402
+from Basilisk.architecture import astroConstants, messaging  # noqa: E402
 from Basilisk.simulation import extForceTorque, gravityEffector, spacecraft  # noqa: E402
 from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
 from argus_basilisk.seeds import ACCEL, GYRO, rng_seed  # noqa: E402
-from argus_basilisk.sensors import Imu, build_sensors  # noqa: E402
+from argus_basilisk.sensors import Imu, Magnetometer, build_sensors  # noqa: E402
 from test_validation import p0_default_request, set_quaternion, set_vector  # noqa: E402
 
 STEP_NS = 100_000_000
@@ -264,3 +264,41 @@ def test_gyroscope_and_accelerometer_noise_are_independent():
     accelerometer_error = noisy[:, 1] - clean[:, 1]
     assert np.abs(gyroscope_error).max() > 0.0
     assert not np.allclose(gyroscope_error, accelerometer_error)
+
+
+def magnetometer_configuration():
+    """The P0 default with only its magnetometer, turned, biased, scaled and range-limited."""
+    configuration = p0_default_request().configuration
+    del configuration.sensors[2:]
+    del configuration.sensors[0]
+    sensor = configuration.sensors[0]
+    set_quaternion(sensor.definition.mount.sensor_to_body, QUARTER_TURN_Z)
+    set_vector(sensor.magnetometer.constant_bias_sensor_tesla, (1e-6, -2e-6, 3e-6))
+    sensor.magnetometer.scale_factor = 1.1
+    sensor.magnetometer.range_tesla = 6e-5
+    return configuration
+
+
+def test_magnetometer_sets_every_error_term_explicitly():
+    configuration = magnetometer_configuration()
+    hub = make_hub()
+    field = messaging.MagneticFieldMsg()
+    sensor = Magnetometer(configuration.sensors[0], hub.scStateOutMsg, field)
+    module = sensor.module
+
+    assert module.ModelTag == "magnetometer[mag.main]"
+    assert np.allclose(module.dcm_SB, rbk.EP2C(np.array([QUARTER_TURN_Z[3], *QUARTER_TURN_Z[:3]])), atol=1e-15)
+    # Defaults are a random walk (A = I) and noise -1; both are overridden.
+    assert np.allclose(module.getAMatrix(), np.zeros((3, 3)))
+    assert np.allclose(np.ravel(module.senNoiseStd), 0.0)
+    assert np.allclose(np.ravel(module.walkBounds), 0.0)
+    assert np.allclose(np.ravel(module.senBias), [1e-6, -2e-6, 3e-6])
+    assert module.scaleFactor == 1.1
+    assert (module.minOutput, module.maxOutput) == (-6e-5, 6e-5)
+    assert sensor.ready
+
+
+def test_magnetometer_needs_the_magnetic_field_message():
+    configuration = magnetometer_configuration()
+    with pytest.raises(ValueError, match="MagneticFieldWMM"):
+        build_sensors(configuration, make_hub().scStateOutMsg)
