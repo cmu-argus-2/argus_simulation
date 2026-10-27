@@ -24,8 +24,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
   `Jpeg` `ImageFrame` cannot become the PNG dataset v1 requires. `Png` frames are written as given.
   The recorder never overwrites a run directory that already exists.
 - **Not yet written:** `commands.jsonl` (CORE-7, #43), and `cameras` is `[]` until camera models
-  exist (CORE-6, #42). `exposure_start_simulation_time_s` and `exposure_duration_s` are `null`
-  until `ImageFrame` carries them.
+  exist (CORE-6, #42).
 
 ## Inputs
 
@@ -67,7 +66,7 @@ writes it, and CORE-7 (#43) adds `commands.jsonl`.
 | Frames | Position, velocity and attitude are Earth-fixed in the frame named by `manifest.earth_fixed_frame`: `Itrf93` in Basilisk runs, `AnalyticEarthFixed` in the analytic fixture (D9). One run never mixes them. The body frame is `SpacecraftState`'s. The camera frame is proposed as x right, y down, z out of the lens (DATA-6, #71); no code defines it yet. |
 | Time | `simulation_time_s` is seconds since the run epoch. Every `*_utc` field (`timestamp_utc`, `created_utc`, `epoch_utc`) is UTC, written as `yyyy-MM-ddTHH:mm:ss.fffffffZ`: always 7 fractional digits, ending in `Z`, for example `2026-10-20T12:00:00.0000000Z`. C#'s `"O"` format on a `DateTimeOffset` writes `+00:00` instead, so the writer formats the UTC value with the explicit format and the invariant culture (in .NET custom formats, `:` and the calendar follow the culture). Python 3.11+ `datetime.fromisoformat` reads it to the microsecond; `strptime` with `%f` does not. |
 | Paths | Relative to the run directory, separated by `/` on every OS. |
-| Join keys | In `states.jsonl`, `sequence` is the spacecraft sequence and is unique within a run directory. Any reset restarts it at 0 (a gateway `Reset`, or `SimulationRunner.ResetSimulation` in Unity), so the recorder closes the directory and starts a new one. A gateway `Reset` keeps the `run_id`, so `manifest.segment` numbers the directories of one `run_id` from 0, and each directory is named `<run_id>_<segment>`. In `sensors.jsonl`, `sequence` counts per sensor, so a frame's key is (`sensor_id`, `sequence`). Every sensor frame carries `state_sequence`, the spacecraft sequence of the state it was captured at, so frames join to their state. A late camera frame (G3, CORE-3 #38) is published on the step its render finishes but keeps its capture state and capture time, not those of the step it arrived in: its `state_sequence` is `payload.state_sequence`, not the `SensorOutputSet`'s. A camera publishes its frames in sequence order, and an exposure not rendered within the camera's latency limit is published as `Unavailable`, so a camera frame is never dropped or marked `Stale`. In file order, the `sequence` of `states.jsonl` and each sensor's `sequence` strictly increase. |
+| Join keys | In `states.jsonl`, `sequence` is the spacecraft sequence and is unique within a run directory. Any reset restarts it at 0 (a gateway `Reset`, or `SimulationRunner.ResetSimulation` in Unity), so the recorder closes the directory and starts a new one. A gateway `Reset` keeps the `run_id`, so `manifest.segment` numbers the directories of one `run_id` from 0, and each directory is named `<run_id>_<segment>`. In `sensors.jsonl`, `sequence` counts per sensor, so a frame's key is (`sensor_id`, `sequence`). Every sensor frame carries `state_sequence`, the spacecraft sequence of the state it was captured at, so frames join to their state. A late camera frame (G3, CORE-3 #38) is published on the step its render finishes but keeps its capture state and capture time, not those of the step it arrived in: its `state_sequence` is `SensorFrame.StateSequence`, the capture state, not the `SensorOutputSet`'s. An `Unavailable` camera frame keeps its capture `state_sequence` too. A camera publishes its frames in sequence order, and an exposure not rendered within the camera's latency limit is published as `Unavailable`, so a camera frame is never dropped or marked `Stale`. In file order, the `sequence` of `states.jsonl` and each sensor's `sequence` strictly increase. |
 
 ### `manifest.json`
 
@@ -119,7 +118,7 @@ Backend sensor measurements (`SensorMeasurements`) are not repeated here. They a
 | `sensor_id` | string | `SensorId` |
 | `frame_id` | string | `FrameId` |
 | `sequence` | int | `Sequence` |
-| `state_sequence` | int | `SensorOutputSet.SpacecraftSequence` (late camera frames: see Join keys) |
+| `state_sequence` | int | `StateSequence`: the spacecraft sequence of the state the frame was captured at. The `SensorOutputSet`'s sequence for every sensor except a late camera frame (see Join keys) |
 | `simulation_time_s` | number | `SimulationTimeSeconds` |
 | `timestamp_utc` | string | `TimestampUtc` |
 | `status` | string | `SensorFrameStatus`: `Valid`, `Unavailable`, `Stale` or `Invalid` |

@@ -41,6 +41,39 @@ namespace Argus.Simulation.Tests
             Assert.That(frame.Payload.Renderer, Is.EqualTo("test-renderer"));
         }
 
+        // Captured at state 10 and published at state 13, whether rendered or timed out.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LateOrTimedOutFrameKeepsItsCaptureState(bool timesOut)
+        {
+            TestRenderer renderer = new TestRenderer();
+            SensorManager manager = Manager(new TestCamera(1.0, timesOut ? 0.25 : double.PositiveInfinity, renderer));
+            manager.Sample(Context(0));
+            renderer.Complete(0);
+            Single(manager.Sample(Context(1)));
+            for (long step = 2; step <= 12; step++)
+            {
+                Assert.That(manager.Sample(Context(step)).Frames, Is.Empty, $"step {step}");
+            }
+
+            if (!timesOut)
+            {
+                renderer.Complete(1);
+            }
+
+            SensorOutputSet arrival = manager.Sample(Context(13));
+            Assert.That(arrival.IsValid, Is.True);
+            Assert.That(arrival.SpacecraftSequence, Is.EqualTo(13));
+            SensorFrame<ImageFrame> frame = Single(arrival);
+            Assert.That(frame.Status, Is.EqualTo(timesOut ? SensorFrameStatus.Unavailable : SensorFrameStatus.Valid));
+            Assert.That(frame.Sequence, Is.EqualTo(1));
+            Assert.That(frame.StateSequence, Is.EqualTo(10));
+            Assert.That(frame.SimulationTimeSeconds, Is.EqualTo(1.0).Within(1e-12));
+            Assert.That(frame.Payload.CameraId, Is.EqualTo(CameraId));
+            Assert.That(frame.Payload.StateSequence, Is.EqualTo(10));
+            Assert.That(frame.Payload.Data, timesOut ? Is.Null : Is.Not.Null);
+        }
+
         [Test]
         public void FramesArePublishedInSequenceOrder()
         {
@@ -93,6 +126,7 @@ namespace Argus.Simulation.Tests
             SensorFrame<ImageFrame> first = Single(manager.Sample(Context(0)));
             Assert.That(first.Status, Is.EqualTo(SensorFrameStatus.Unavailable));
             Assert.That(first.Payload.Data, Is.Null);
+            Assert.That(first.Payload.CameraId, Is.EqualTo(CameraId));
             Assert.That(manager.Sample(Context(1)).Frames, Is.Empty);
             Assert.That(Single(manager.Sample(Context(5))).Sequence, Is.EqualTo(1));
         }
@@ -127,6 +161,7 @@ namespace Argus.Simulation.Tests
             {
                 // Nothing to wait for: the exposure is Unavailable at its own step.
                 Assert.That(Single(started).Status, Is.EqualTo(SensorFrameStatus.Unavailable));
+                Assert.That(Single(started).Payload.CameraId, Is.EqualTo(CameraId));
                 return;
             }
 
@@ -150,6 +185,7 @@ namespace Argus.Simulation.Tests
             SensorFrame<ImageFrame> frame = Single(manager.Sample(Context(1)));
             Assert.That(frame.Status, Is.EqualTo(SensorFrameStatus.Unavailable));
             Assert.That(frame.Payload.Data, Is.Null);
+            Assert.That(frame.Payload.CameraId, Is.EqualTo(CameraId));
         }
 
         [Test]
@@ -216,14 +252,14 @@ namespace Argus.Simulation.Tests
                     RunId,
                     "analytic",
                     State(step, ReferenceFrame.AnalyticEarthFixed),
-                    ActuatorCommandSet.None(step, step * StepSeconds)));
+                    null));
 
         private static SimulationState StateWithEnvironment(string runId, long step) =>
             new SimulationState(
                 runId,
                 "basilisk",
                 State(step, ReferenceFrame.Itrf93),
-                ActuatorCommandSet.None(step, step * StepSeconds),
+                null,
                 new EnvironmentState(
                     SunItrf93,
                     new Quaterniond(0.0, 0.0, 0.0, 1.0),

@@ -154,6 +154,7 @@ namespace Argus.Simulation.Core
                 _pending.Dequeue();
                 Abandon(head);
                 slot = head.Slot;
+                payload = WithoutPixels(head.Request);
                 return true;
             }
 
@@ -168,6 +169,7 @@ namespace Argus.Simulation.Core
             else
             {
                 Observe(render);
+                payload = WithoutPixels(head.Request);
             }
 
             head.Cancellation?.Dispose();
@@ -182,6 +184,11 @@ namespace Argus.Simulation.Core
                 rendered.Sequence == request.Sequence &&
                 frame.IsValid;
         }
+
+        // An Unavailable exposure keeps its request, so it still names its camera, pose and capture
+        // state; it has no pixels and no renderer.
+        private static ImageFrame WithoutPixels(RenderRequest request) =>
+            new ImageFrame(request, default, null, null);
 
         // Not disposed: the renderer may still hold the token.
         private static void Abandon(PendingExposure exposure)

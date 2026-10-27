@@ -33,6 +33,10 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
 3. Frames are published in sequence order, one per `TrySample`; a later exposure that
    finishes first waits for the earlier one.
 
+Every frame, `Valid` or `Unavailable`, carries its capture state in
+`SensorFrame.StateSequence`, which the recorder writes as `state_sequence`. An `Unavailable`
+frame's `ImageFrame` keeps the request (camera ID, pose, capture state) with no pixels.
+
 A camera never publishes a black or approximated image. With no renderer every exposure is
 `Unavailable`. With no `EnvironmentState` (analytic runs, D9) it still renders and
 `RenderRequest.SunPositionEcefMeters` is `null`, which records that the renderer lit the

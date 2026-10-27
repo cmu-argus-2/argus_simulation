@@ -16,6 +16,7 @@ namespace Argus.Simulation.Core
         string SensorId { get; }
         string FrameId { get; }
         long Sequence { get; }
+        long StateSequence { get; }
         double SimulationTimeSeconds { get; }
         DateTimeOffset TimestampUtc { get; }
         SensorFrameStatus Status { get; }
@@ -33,6 +34,7 @@ namespace Argus.Simulation.Core
             string sensorId,
             string frameId,
             long sequence,
+            long stateSequence,
             double simulationTimeSeconds,
             DateTimeOffset timestampUtc,
             SensorFrameStatus status,
@@ -43,6 +45,7 @@ namespace Argus.Simulation.Core
             SensorId = sensorId;
             FrameId = frameId;
             Sequence = sequence;
+            StateSequence = stateSequence;
             SimulationTimeSeconds = simulationTimeSeconds;
             TimestampUtc = timestampUtc.ToUniversalTime();
             Status = status;
@@ -54,6 +57,9 @@ namespace Argus.Simulation.Core
         public string SensorId { get; }
         public string FrameId { get; }
         public long Sequence { get; }
+        // The spacecraft sequence of the state the frame was captured at. A late camera frame keeps
+        // its capture state, so this can be earlier than the SensorOutputSet that publishes it (G3).
+        public long StateSequence { get; }
         public double SimulationTimeSeconds { get; }
         public DateTimeOffset TimestampUtc { get; }
         public SensorFrameStatus Status { get; }
@@ -67,6 +73,7 @@ namespace Argus.Simulation.Core
             !string.IsNullOrWhiteSpace(SensorId) &&
             !string.IsNullOrWhiteSpace(FrameId) &&
             Sequence >= 0 &&
+            StateSequence >= 0 &&
             SimulationTimeSeconds >= 0.0 &&
             !double.IsNaN(SimulationTimeSeconds) &&
             !double.IsInfinity(SimulationTimeSeconds) &&

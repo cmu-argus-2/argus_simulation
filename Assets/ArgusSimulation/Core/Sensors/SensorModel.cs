@@ -133,6 +133,7 @@ namespace Argus.Simulation.Core
                 Definition.SensorId,
                 Definition.FrameId,
                 slot.Sequence,
+                slot.StateSequence,
                 slot.SimulationTimeSeconds,
                 slot.TimestampUtc,
                 status,
