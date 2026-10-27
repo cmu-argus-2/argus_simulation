@@ -1,8 +1,8 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order steps 1 to 3 (README §12): spacecraft, SPICE, eclipse, the IMU, and the magnetometer
-with MagneticFieldWMM. The light sensors (§9), pacing (§5) and actuators (G1) are rejected by
-validation before a Scenario is built.
+Build order steps 1 to 4 (README §12): spacecraft, SPICE, eclipse, and the P0 sensors: the IMU,
+the magnetometer with MagneticFieldWMM, and the light sensors with albedo. Pacing (§5) and
+actuators (G1) are rejected by validation before a Scenario is built.
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
 pass. Each Scenario owns a fresh SimBaseClass and fresh modules; Reset builds a new one.
@@ -16,13 +16,13 @@ import numpy as np
 from Basilisk import __version__ as BASILISK_VERSION
 from Basilisk.architecture import astroConstants, messaging
 from Basilisk.architecture.bskLogging import BasiliskError
-from Basilisk.simulation import eclipse, gravityEffector, magneticFieldWMM, spacecraft, spiceInterface
+from Basilisk.simulation import albedo, eclipse, gravityEffector, magneticFieldWMM, spacecraft, spiceInterface
 from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
 from .contracts import service_pb, types_pb
 from .kernels import KernelSet
-from .sensors import build_sensors
+from .sensors import build_sensors, light_sensor_instrument
 
 __all__ = ["BASILISK_VERSION", "KernelLoadError", "Scenario", "StaleMessageError", "format_epoch"]
 
@@ -49,6 +49,7 @@ SPICE_PRIORITY = 300
 SPACECRAFT_PRIORITY = 200
 ECLIPSE_PRIORITY = 100
 MAGNETIC_FIELD_PRIORITY = 90
+ALBEDO_PRIORITY = 80
 
 # The kernel-set support file MagneticFieldWMM reads (§8, §9).
 WMM_FILE = "WMM2025.COF"
@@ -139,8 +140,28 @@ class Scenario:
             self.sim.AddModelToTask(TASK_NAME, self.magnetic_field, MAGNETIC_FIELD_PRIORITY)
             magnetic_field_msg = self.magnetic_field.envOutMsgs[0]
 
+        # Albedo (§9), built only for light sensors: Earth's average albedo, one instrument per light
+        # sensor in configuration order, so albOutMsgs[i] belongs to the i-th light sensor.
+        self.albedo = None
+        albedo_msgs = ()
+        light_sensors = [sensor for sensor in configuration.sensors if sensor.WhichOneof("profile") == "light_sensor"]
+        if light_sensors:
+            self.albedo = albedo.Albedo()
+            self.albedo.ModelTag = "albedo"
+            self.albedo.spacecraftStateInMsg.subscribeTo(self.spacecraft.scStateOutMsg)
+            self.albedo.sunPositionInMsg.subscribeTo(self.spice.planetStateOutMsgs[SUN_INDEX])
+            self.albedo.addPlanetandAlbedoAverageModel(self.spice.planetStateOutMsgs[EARTH_INDEX])
+            for sensor in light_sensors:
+                self.albedo.addInstrumentConfig(*light_sensor_instrument(sensor))
+            self.sim.AddModelToTask(TASK_NAME, self.albedo, ALBEDO_PRIORITY)
+            albedo_msgs = [self.albedo.albOutMsgs[index] for index in range(len(light_sensors))]
+
         # Sensors (§9), each on the task for its sample period, after dynamics.
-        self.sensors = build_sensors(configuration, self.spacecraft.scStateOutMsg, magnetic_field_msg)
+        self.sensors = build_sensors(
+            configuration, self.spacecraft.scStateOutMsg, magnetic_field_msg,
+            sun_msg=self.spice.planetStateOutMsgs[SUN_INDEX],
+            eclipse_msg=self.eclipse.eclipseOutMsgs[0],
+            albedo_msgs=albedo_msgs)
         for period_ns in sorted({sensor.sample_period_ns for sensor in self.sensors}):
             process.addTask(self.sim.CreateNewTask(f"sensors_{period_ns}", period_ns), SENSOR_TASK_PRIORITY)
         for sensor in self.sensors:
@@ -158,6 +179,8 @@ class Scenario:
         }
         if magnetic_field_msg is not None:
             self.readers["magneticFieldWMM.envOutMsgs[0]"] = magnetic_field_msg.addSubscriber()
+        for index, message in enumerate(albedo_msgs):
+            self.readers[f"albedo.albOutMsgs[{index}]"] = message.addSubscriber()
 
         try:
             self.sim.InitializeSimulation()

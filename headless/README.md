@@ -93,9 +93,9 @@ own.
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` is placeholder data, not confirmed hardware: the values the host
-used before run files existed. Its magnetometer noise is 0 because bsk 2.11.1 cannot seed
-magnetometer noise and the service rejects it (`Argus.Basilisk/README.md` §9).
+`runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
+light-sensor noise are 0 because the service rejects both in bsk 2.11.1: magnetometer noise
+cannot be seeded, and light-sensor noise would be a random walk (`Argus.Basilisk/README.md` §9).
 TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
 light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
 and epoch.

@@ -1,4 +1,4 @@
-"""IMU and magnetometer modules (README §9, §10) without SPICE; needs bsk==2.11.1 but no kernels."""
+"""IMU, magnetometer and light-sensor modules (README §9, §10) without SPICE; needs bsk==2.11.1 but no kernels."""
 
 import math
 
@@ -12,8 +12,11 @@ from Basilisk.simulation import extForceTorque, gravityEffector, spacecraft  # n
 from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
-from argus_basilisk.seeds import ACCEL, GYRO, rng_seed  # noqa: E402
-from argus_basilisk.sensors import Imu, Magnetometer, build_sensors  # noqa: E402
+from Basilisk.simulation import coarseSunSensor  # noqa: E402
+
+from argus_basilisk.seeds import ACCEL, CSS, GYRO, rng_seed  # noqa: E402
+from argus_basilisk.sensors import (  # noqa: E402
+    Imu, LightSensor, Magnetometer, SOLAR_IRRADIANCE_W_PER_M2, build_sensors, light_sensor_instrument)
 from test_validation import p0_default_request, set_quaternion, set_vector  # noqa: E402
 
 STEP_NS = 100_000_000
@@ -302,3 +305,94 @@ def test_magnetometer_needs_the_magnetic_field_message():
     configuration = magnetometer_configuration()
     with pytest.raises(ValueError, match="MagneticFieldWMM"):
         build_sensors(configuration, make_hub().scStateOutMsg)
+
+
+# --- Light sensors (BSK-6) ----------------------------------------------------------------
+
+AU_M = astroConstants.AU * 1000.0
+
+
+def light_sensors(configuration):
+    return [sensor for sensor in configuration.sensors if sensor.WhichOneof("profile") == "light_sensor"]
+
+
+def environment_messages(sun_direction, shadow_factor, albedo_ratio):
+    """A Sun 1 AU along sun_direction, an eclipse factor and an albedo ratio, as written messages."""
+    sun = messaging.SpicePlanetStateMsgPayload()
+    sun.PlanetName = "sun"
+    sun.PositionVector = list(AU_M * np.asarray(sun_direction, dtype=float))
+    eclipse = messaging.EclipseMsgPayload()
+    eclipse.illuminationFactor = shadow_factor
+    albedo = messaging.AlbedoMsgPayload()
+    albedo.albedoAtInstrument = albedo_ratio
+    return (messaging.SpicePlanetStateMsg().write(sun), messaging.EclipseMsg().write(eclipse),
+            messaging.AlbedoMsg().write(albedo))
+
+
+def test_each_p0_light_sensor_looks_out_of_its_face():
+    """The boresight is sensor +z, so nHat_B is the face normal named by the sensor ID."""
+    normals = {"px": [1, 0, 0], "mx": [-1, 0, 0], "py": [0, 1, 0], "my": [0, -1, 0], "pz": [0, 0, 1], "mz": [0, 0, -1]}
+    for sensor in light_sensors(p0_default_request().configuration):
+        field_of_view, boresight, position = light_sensor_instrument(sensor)
+        face = sensor.definition.sensor_id.split(".")[1]
+        assert np.allclose(boresight, normals[face], atol=1e-15), sensor.definition.sensor_id
+        assert field_of_view == sensor.light_sensor.field_of_view_half_angle_rad
+        assert np.allclose(position, [getattr(sensor.definition.mount.position_body_m, a) for a in "xyz"])
+
+
+def test_light_sensor_maps_the_profile_into_the_module():
+    configuration = p0_default_request().configuration
+    sensor = light_sensors(configuration)[0]
+    profile = sensor.light_sensor
+    profile.scale_factor = 0.9
+    profile.noise_std_w_per_m2 = 2.0
+    profile.bias_w_per_m2 = 3.0
+    hub = make_hub()
+    sun, eclipse, albedo = environment_messages([1, 0, 0], 1.0, 0.0)
+    module = LightSensor(sensor, configuration.random_seed, hub.scStateOutMsg, sun, eclipse, albedo).module
+    scale = 0.9 * SOLAR_IRRADIANCE_W_PER_M2
+
+    assert module.ModelTag == "css[light.px]"
+    assert module.RNGSeed == rng_seed(configuration.random_seed, "light.px", CSS)
+    assert module.scaleFactor == scale
+    assert module.senNoiseStd == 2.0 / scale
+    assert module.senBias == 3.0 / scale
+    assert module.fov == profile.field_of_view_half_angle_rad
+    assert (module.minOutput, module.maxOutput) == (0.0, profile.saturation_w_per_m2)
+    assert module.kellyFactor == 0.0
+    assert module.faultState == coarseSunSensor.NOMINAL
+    assert np.allclose(np.ravel(module.nHat_B), [1, 0, 0], atol=1e-15)
+
+
+def test_light_sensor_needs_the_sun_eclipse_and_albedo():
+    configuration = p0_default_request().configuration
+    del configuration.sensors[:2]
+    with pytest.raises(ValueError, match="Sun, eclipse and albedo"):
+        build_sensors(configuration, make_hub().scStateOutMsg)
+
+
+@pytest.mark.parametrize("shadow_factor", [1.0, 0.0])
+def test_noise_free_light_sensor_reads_direct_sun_plus_albedo(shadow_factor):
+    """OutputData = scale (cos(theta) shadow (1 AU / d)^2 + albedo); the Sun here is exactly 1 AU away."""
+    configuration = p0_default_request().configuration
+    sensor = light_sensors(configuration)[0]  # light.px: boresight body +x
+    sensor.light_sensor.noise_std_w_per_m2 = 0.0
+    sensor.light_sensor.saturation_w_per_m2 = 1e6
+    hub = make_hub()
+    hub.hub.omega_BN_BInit = [[0.0], [0.0], [0.0]]
+    hub.hub.r_CN_NInit = [[0.0], [0.0], [0.0]]
+    theta = math.radians(60.0)
+    sun, eclipse, albedo = environment_messages([math.cos(theta), math.sin(theta), 0.0], shadow_factor, 0.05)
+    light = LightSensor(sensor, configuration.random_seed, hub.scStateOutMsg, sun, eclipse, albedo)
+    sim = SimulationBaseClass.SimBaseClass()
+    process = sim.CreateNewProcess("dynamics")
+    process.addTask(sim.CreateNewTask("dynamics", STEP_NS), 200)
+    process.addTask(sim.CreateNewTask("sensors", STEP_NS), 100)
+    sim.AddModelToTask("dynamics", hub)
+    sim.AddModelToTask("sensors", light.module)
+    sim.InitializeSimulation()
+    sim.ConfigureStopTime(0)
+    sim.ExecuteSimulation()
+
+    expected = SOLAR_IRRADIANCE_W_PER_M2 * (math.cos(theta) * shadow_factor + 0.05)
+    assert light.measurement().irradiance_w_per_m2 == pytest.approx(expected, rel=1e-9)
