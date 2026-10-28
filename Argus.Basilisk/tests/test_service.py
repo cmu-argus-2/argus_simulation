@@ -26,6 +26,8 @@ from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
+from argus_basilisk.seeds import MAG, rng_seed  # noqa: E402
+from argus_basilisk.sensors import _magnetometer_noise  # noqa: E402
 from test_validation import p0_default_request, set_quaternion, set_vector, zero_command  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -420,13 +422,11 @@ def test_magnetometer_needs_the_wmm_file_in_the_kernel_set(service, monkeypatch,
     assert "WMM2025.COF" in details
 
 
-def test_magnetometer_noise_stays_unimplemented(service):
-    _, stub = service
+def noisy_magnetometer_request():
+    """magnetometer_request() with 100 nT magnetometer noise (BSK-9)."""
     request = magnetometer_request()
     request.configuration.sensors[1].magnetometer.noise_std_tesla = 1e-7
-    code, details = status_of(stub.ConfigureRun, request)
-    assert code == grpc.StatusCode.UNIMPLEMENTED
-    assert "noise_std_tesla" in details
+    return request
 
 
 @real_kernels
@@ -498,15 +498,37 @@ def test_noise_free_magnetometer_reads_the_wmm_field_in_sensor_axes(service):
 
 
 @real_kernels
-def test_magnetometer_repeats_bit_for_bit_after_reset(service):
-    _, stub = service
+def test_noisy_magnetometer_adds_seeded_noise_to_the_noise_free_reading(service):
+    servicer, stub = service
     stub.ConfigureRun(magnetometer_request())
+    clean = [stub.Step(step_request(n)) for n in range(20)]
+    stub.ConfigureRun(noisy_magnetometer_request())
+    noisy = [stub.Step(step_request(n)) for n in range(20)]
+
+    seed = servicer._run.scenario.sensors[1].rng_seed
+    assert seed == rng_seed(1, "mag.main", MAG)
+    for n, (before, after) in enumerate(zip(clean, noisy)):
+        before_mag = xyz(before.sensor_samples[1].magnetometer.magnetic_field_sensor_tesla)
+        after_mag = xyz(after.sensor_samples[1].magnetometer.magnetic_field_sensor_tesla)
+        assert np.allclose(np.subtract(after_mag, before_mag), 1e-7 * _magnetometer_noise(seed, n), rtol=0.0, atol=1e-18)
+        # The IMU and the dynamics are untouched.
+        assert before.sensor_samples[0] == after.sensor_samples[0]
+        assert before.spacecraft == after.spacecraft
+
+
+@real_kernels
+def test_magnetometer_repeats_bit_for_bit_after_reset(service):
+    """With noise on (BSK-9): 100 steps, Reset, 100 steps is bit-identical."""
+    _, stub = service
+    stub.ConfigureRun(noisy_magnetometer_request())
 
     def run():
         return [stub.Step(step_request(n)) for n in range(100)]
 
     first = run()
     assert all(len(response.sensor_samples) == 2 for response in first)
+    readings = np.array([xyz(r.sensor_samples[1].magnetometer.magnetic_field_sensor_tesla) for r in first])
+    assert np.abs(np.diff(readings, axis=0)).min() > 0.0  # Noise is on.
     stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [

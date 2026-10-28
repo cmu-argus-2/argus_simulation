@@ -544,20 +544,12 @@ def _check_imu_channel(problems: _Problems, channel, fields: tuple[str, ...], pa
 
 
 def _check_magnetometer(problems: _Problems, magnetometer, path: str) -> None:
-    noise_valid = _check_finite_non_negative(problems, magnetometer.noise_std_tesla, f"{path}.noise_std_tesla")
+    # Noise > 0 is seeded in the service, since bsk 2.11.1 ignores the module's RNGSeed (README §9).
+    _check_finite_non_negative(problems, magnetometer.noise_std_tesla, f"{path}.noise_std_tesla")
     if _require(problems, magnetometer, "constant_bias_sensor_tesla", path):
         _check_finite_vector(problems, magnetometer.constant_bias_sensor_tesla, f"{path}.constant_bias_sensor_tesla")
     _check_finite_positive(problems, magnetometer.scale_factor, f"{path}.scale_factor")
     _check_finite_positive(problems, magnetometer.range_tesla, f"{path}.range_tesla")
-
-    # bsk 2.11.1 seeds the magnetometer noise generator once with the default seed (README §9).
-    # Lifted by BSK-9 (#22) when seeded magnetometer noise exists.
-    if noise_valid and magnetometer.noise_std_tesla > 0.0:
-        problems.unimplemented(
-            f"{path}.noise_std_tesla",
-            "bsk 2.11.1 cannot seed magnetometer noise; use 0",
-            magnetometer.noise_std_tesla,
-        )
 
 
 def _check_light_sensor(problems: _Problems, light_sensor, path: str) -> None:

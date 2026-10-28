@@ -94,8 +94,8 @@ own.
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
 `runs/p0-default.json` is placeholder data, not confirmed hardware: the values the host
-used before run files existed. Its magnetometer noise is 0 because bsk 2.11.1 cannot seed
-magnetometer noise and the service rejects it (`Argus.Basilisk/README.md` §9).
+used before run files existed. Its magnetometer noise is 0 until DATA-1 (#67) gives the
+sensor's sigma; the service accepts noise > 0 (`Argus.Basilisk/README.md` §9).
 TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
 light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
 and epoch.
