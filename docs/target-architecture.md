@@ -127,6 +127,7 @@ tiles. It is not run data and sits outside D6.
 | D8 | Unity never sees Basilisk-specific types. | Keeps the backend replaceable. | All Basilisk data enters through `BasiliskEngine` as Argus contracts. |
 | D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. |
 | D10 | Sensors that Basilisk models (IMU, magnetometer, light sensor) keep their physics and cadence in Basilisk. | One implementation of each sensor's physics, timed by the clock that owns the run (D2). | `BasiliskEngine` maps each step's Basilisk sensor messages into `SimulationState.SensorMeasurements`; a `BackendSensorModel<T>` publishes a frame exactly when its sensor was sampled and never computes, holds or repeats a value. |
+| D11 | A spacecraft is a body plus a list of configured devices. Every sensor and actuator is a device: an instance of a generic device kind, registered by name and configured with an ID, mount, rate and that kind's parameters. Commands address actuators by device ID. | Argus is a platform for many spacecraft, not one, and their hardware is not fixed in advance. A team adopts its spacecraft by writing a profile, not by changing contracts or code. When the hardware is unknown, the device starts as an ideal kind and takes a real part's parameters later. | A spacecraft profile file (body and devices) is kept apart from the run file (orbit, epoch, initial conditions, seed). Kinds are physics models, not part numbers: gyroscope, accelerometer, magnetometer and light sensor; ideal body torque, momentum wheel, magnetic torquer and thruster. A specific part is a parameter set for its kind. Adding a kind adds one Core model and, when Basilisk models its physics (D10), one service builder, each registered by kind name. The gateway, recorder, command log and file formats do not change. Each kind validates its own parameters and command values, so actuator limits are per device (CORE-10). `SensorKind`, the sensor profile oneofs and the fixed three-vector `ActuatorCommandSet` are replaced (CON-4). Actuator kinds come after the sensor work, starting with ideal body torque. |
 
 ## 4. Run modes
 
@@ -236,7 +237,8 @@ recorder and Unity through `StateProduced`.
 | `ISpacecraftStateSource` | `Core/Abstractions/ISimulationStateSource.cs`, `IStepDrivenStateSource.cs` | Replaced by `ISimulationStateSource`, which carries the whole state; the analytic source is also `IStepDrivenStateSource` | D2, G2 | done (stream client planned) |
 | `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 | planned |
 | `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` (scenario = `SimulationConfiguration`) returns observation 0; `Step(command k)` returns observation k+1 (controller-visible frames, never `SimulationState`; §4); command log; authority and heartbeat | D7, G1 | observations and command log done; limits and authority planned (CORE-10, CORE-9) |
-| Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | An engine that applies them | G1 | planned |
+| Devices | `Core/Contracts/` (`DeviceConfiguration`, kind registry) | Sensors and actuators as configured devices of a spacecraft profile; kinds registered by name | D11, G5 | planned (CON-4) |
+| Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | Per-device commands (device ID and the kind's values) in place of three fixed body-frame vectors, and an engine that applies them | D11, G1 | planned |
 
 ## 6. Frames, units and time
 
@@ -395,6 +397,11 @@ the gateway.
 
 ## 11. Open questions
 
+- How does the proto carry a device kind's parameters and command values? (D11) The options
+  are a typed message per kind, where the schema checks fields but each new kind needs a
+  contracts change, or one generic parameter map that each kind validates, where a new kind
+  needs no contracts change. Proposed: the generic map, with each kind rejecting unknown,
+  missing or out-of-range parameters, as the run file does today.
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
   (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service is
   still a skeleton); whether lockstep runs use it stays open.
