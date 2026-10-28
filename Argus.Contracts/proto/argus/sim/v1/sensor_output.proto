@@ -1,0 +1,50 @@
+// Dashboard sensor envelopes and scalar/vector payloads; camera frames use the render link.
+syntax = "proto3";
+package argus.sim.v1;
+import "google/protobuf/timestamp.proto";
+import "argus/sim/v1/types.proto";
+import "argus/sim/v1/sensors.proto";
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+enum SensorFrameStatus {
+  SENSOR_FRAME_STATUS_UNSPECIFIED = 0;
+  SENSOR_FRAME_STATUS_VALID = 1;
+  SENSOR_FRAME_STATUS_UNAVAILABLE = 2;
+  SENSOR_FRAME_STATUS_STALE = 3;
+  SENSOR_FRAME_STATUS_INVALID = 4;
+}
+message AngularRateMeasurement {
+  // Body relative to inertial, expressed in sensor axes.
+  Vector3 angular_velocity_sensor_rad_per_s = 1;
+}
+message SensorFrame {
+  string run_id = 1;
+  string sensor_id = 2;
+  string frame_id = 3;
+  // Nonnegative per-sensor sequence, not engine step.
+  optional int64 sequence = 4;
+  optional double simulation_time_s = 5;
+  google.protobuf.Timestamp timestamp_utc = 6;
+  // Map explicitly: Core Valid=0 does NOT equal the wire zero value.
+  SensorFrameStatus status = 7;
+  string source = 8;
+  // Required presence: Core ISensorFrame.StateSequence, including on failures.
+  // Zero is a valid capture step; absent is invalid. Never substitute delivery step.
+  optional int64 capture_state_sequence = 9;
+  // VALID requires a payload. UNAVAILABLE omits it but retains the envelope.
+  // STALE requires the retained payload and original capture metadata.
+  // INVALID omits payload; readers must not substitute zero measurements.
+  oneof payload {
+    AngularRateMeasurement angular_rate = 10;
+    ImuMeasurement imu = 11;
+    MagnetometerMeasurement magnetometer = 12;
+    LightSensorMeasurement light_sensor = 13;
+  }
+}
+message SensorOutputSet {
+  string run_id = 1;
+  // Step/time when the host published these results, not their acquisition step/time.
+  optional int64 spacecraft_sequence = 2;
+  optional double simulation_time_s = 3;
+  repeated SensorFrame frames = 4;
+}

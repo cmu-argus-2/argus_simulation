@@ -1,0 +1,73 @@
+// Draft CON-1 shared state. Mirrors Core contracts, never Basilisk-native messages.
+syntax = "proto3";
+package argus.sim.v1;
+import "google/protobuf/timestamp.proto";
+import "argus/sim/v1/types.proto";
+import "argus/sim/v1/commands.proto";
+import "argus/sim/v1/sensors.proto";
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+enum ReferenceFrame {
+  REFERENCE_FRAME_UNSPECIFIED = 0;
+  REFERENCE_FRAME_ANALYTIC_EARTH_FIXED = 1;
+  REFERENCE_FRAME_ITRF93 = 2;
+}
+
+message SpacecraftState {
+  // Original nonnegative engine step; gaps after decimation are legal.
+  optional int64 sequence = 1;
+  // Seconds since simulation start; finite and nonnegative.
+  optional double simulation_time_s = 2;
+  google.protobuf.Timestamp timestamp_utc = 3;
+  // Frame of position, velocity and attitude below. Unspecified is invalid.
+  ReferenceFrame earth_fixed_frame = 4;
+  Vector3 position_planet_fixed_m = 5;
+  // Velocity relative to the rotating earth_fixed_frame.
+  Vector3 velocity_planet_fixed_m_per_s = 6;
+  // Active Hamilton scalar-last quaternion: body components -> earth_fixed_frame.
+  Quaternion body_to_planet_fixed = 7;
+  // Body relative to inertial, expressed in body axes (omega_BN_B).
+  Vector3 angular_velocity_body_rad_per_s = 8;
+}
+
+message EnvironmentState {
+  // Earth centre to Sun centre, geometric, aberration correction NONE.
+  Vector3 sun_position_itrf93_m = 1;
+  Quaternion j2000_to_itrf93 = 2;
+  // ITRF93 relative to J2000, expressed in ITRF93 axes.
+  Vector3 earth_angular_velocity_itrf93_rad_per_s = 3;
+  // Required presence: zero is valid umbra, one is full illumination.
+  optional double spacecraft_shadow_factor = 4;
+}
+
+message AppliedCommand {
+  // At spacecraft step k this is k-1, acting over [t_(k-1), t_k).
+  optional int64 sequence = 1;
+  optional double apply_at_simulation_time_s = 2;
+  ActuatorCommand command = 3;
+}
+
+// An explicit sampled-without-data result. Absence of a BackendSensorSample entry
+// means not sampled; an empty result oneof is invalid, not unavailable.
+message UnavailableMeasurement {}
+message BackendSensorSample {
+  string sensor_id = 1;
+  oneof result {
+    ImuMeasurement imu = 2;
+    MagnetometerMeasurement magnetometer = 3;
+    LightSensorMeasurement light_sensor = 4;
+    UnavailableMeasurement unavailable = 5;
+  }
+}
+
+message SimulationState {
+  string run_id = 1;
+  string dynamics_backend = 2;
+  SpacecraftState spacecraft = 3;
+  // Legitimately absent at t0 or for a source applying no commands.
+  AppliedCommand applied_commands = 4;
+  // Present exactly for ITRF93 states. Analytic states must omit it.
+  EnvironmentState environment = 5;
+  // Sensor IDs are unique. Empty means no backend sensors sampled this step.
+  repeated BackendSensorSample backend_samples = 6;
+}
