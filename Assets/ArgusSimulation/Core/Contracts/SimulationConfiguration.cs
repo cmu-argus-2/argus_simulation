@@ -4,7 +4,8 @@ using System.Collections.Generic;
 namespace Argus.Simulation.Core
 {
     // One run configuration shared by Basilisk and Argus (G5). The optional members after
-    // FixedStepSeconds are Basilisk inputs.
+    // FixedStepSeconds are Basilisk inputs, except the sensors Argus computes
+    // (SensorConfiguration.IsBackendModelled, CORE-18).
     public readonly struct SimulationConfiguration
     {
         private const int MaximumKernelSetIdLength = 64;

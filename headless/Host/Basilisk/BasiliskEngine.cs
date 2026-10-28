@@ -5,6 +5,7 @@ using Argus.Simulation.Core;
 using Grpc.Core;
 using Grpc.Net.Client;
 using PbBasilisk = Argus.Contracts.Basilisk.V1;
+using PbSim = Argus.Contracts.Sim.V1;
 
 namespace Argus.Simulation.Host
 {
@@ -79,9 +80,12 @@ namespace Argus.Simulation.Host
                     nameof(configuration));
             }
 
+            // Basilisk samples only the backend-modelled sensors; Argus-computed ones schedule
+            // themselves in SensorModel (CORE-18).
             foreach (SensorConfiguration sensor in configuration.Sensors)
             {
-                if (BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
+                if (sensor.IsBackendModelled &&
+                    BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
                 {
                     throw new ArgumentException(
                         $"Sensor '{sensor.Definition.SensorId}' period is not a multiple of the fixed step.",
@@ -102,7 +106,7 @@ namespace Argus.Simulation.Host
             Expect(response.RunId == configuration.RunId, "ConfigureRun", "run_id");
             Expect(response.KernelSetId == configuration.KernelSetId, "ConfigureRun", "kernel_set_id");
             Expect(response.FixedStepNs == (ulong)fixedStepNanoseconds, "ConfigureRun", "fixed_step_ns");
-            Expect(HasSensorsInOrder(response.ConfiguredSensorIds, configuration.Sensors), "ConfigureRun", "configured_sensor_ids");
+            Expect(HasSensorsInOrder(response.ConfiguredSensorIds, request.Configuration.Sensors), "ConfigureRun", "configured_sensor_ids");
             Expect(response.SpiceEarthFrame == "ITRF93", "ConfigureRun", "spice_earth_frame");
             Expect(!string.IsNullOrWhiteSpace(response.BasiliskVersion), "ConfigureRun", "basilisk_version");
 
@@ -248,16 +252,18 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<SensorConfiguration> sensors)
+        // The service echoes every requested sensor in request order, and the request carries only the
+        // backend-modelled ones (BasiliskProtoMapper, CORE-18).
+        private static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<PbSim.SensorConfiguration> requested)
         {
-            if (configuredIds.Count != sensors.Count)
+            if (configuredIds.Count != requested.Count)
             {
                 return false;
             }
 
-            for (int i = 0; i < sensors.Count; i++)
+            for (int i = 0; i < requested.Count; i++)
             {
-                if (!string.Equals(configuredIds[i], sensors[i].Definition.SensorId, StringComparison.Ordinal))
+                if (!string.Equals(configuredIds[i], requested[i].Definition.SensorId, StringComparison.Ordinal))
                 {
                     return false;
                 }

@@ -6,10 +6,11 @@ namespace Argus.Simulation.Core
         Unknown = 0,
         Imu = 1,
         Magnetometer = 2,
-        LightSensor = 3
+        LightSensor = 3,
+        Camera = 4
     }
 
-    // One sensor of the run configuration (G5): its definition and the profile the backend models it
+    // One sensor of the run configuration (G5): its definition and the profile its kind is modelled
     // with. Build it with the factory for its kind; only the matching profile is set.
     public readonly struct SensorConfiguration
     {
@@ -18,13 +19,15 @@ namespace Argus.Simulation.Core
             SensorKind kind,
             ImuProfile imuProfile,
             MagnetometerProfile magnetometerProfile,
-            LightSensorProfile lightSensorProfile)
+            LightSensorProfile lightSensorProfile,
+            CameraProfile cameraProfile)
         {
             Definition = definition;
             Kind = kind;
             ImuProfile = imuProfile;
             MagnetometerProfile = magnetometerProfile;
             LightSensorProfile = lightSensorProfile;
+            CameraProfile = cameraProfile;
         }
 
         public SensorDefinition Definition { get; }
@@ -32,22 +35,33 @@ namespace Argus.Simulation.Core
         public ImuProfile ImuProfile { get; }
         public MagnetometerProfile MagnetometerProfile { get; }
         public LightSensorProfile LightSensorProfile { get; }
+        public CameraProfile CameraProfile { get; }
 
         public bool IsValid => Definition.IsValid && Kind switch
         {
             SensorKind.Imu => ImuProfile.IsValid,
             SensorKind.Magnetometer => MagnetometerProfile.IsValid,
             SensorKind.LightSensor => LightSensorProfile.IsValid,
+            SensorKind.Camera => CameraProfile.IsValid,
             _ => false
         };
 
+        // Where each kind is computed (D10, CORE-18). Backend-modelled sensors keep their physics and
+        // cadence in the dynamics backend: only they go to ConfigureRun and MapMeasurements, and Argus
+        // never computes them. Every other kind is computed by Argus and never reaches the backend.
+        public bool IsBackendModelled =>
+            Kind is SensorKind.Imu or SensorKind.Magnetometer or SensorKind.LightSensor;
+
         public static SensorConfiguration ForImu(SensorDefinition definition, ImuProfile profile) =>
-            new SensorConfiguration(definition, SensorKind.Imu, profile, default, default);
+            new SensorConfiguration(definition, SensorKind.Imu, profile, default, default, default);
 
         public static SensorConfiguration ForMagnetometer(SensorDefinition definition, MagnetometerProfile profile) =>
-            new SensorConfiguration(definition, SensorKind.Magnetometer, default, profile, default);
+            new SensorConfiguration(definition, SensorKind.Magnetometer, default, profile, default, default);
 
         public static SensorConfiguration ForLightSensor(SensorDefinition definition, LightSensorProfile profile) =>
-            new SensorConfiguration(definition, SensorKind.LightSensor, default, default, profile);
+            new SensorConfiguration(definition, SensorKind.LightSensor, default, default, profile, default);
+
+        public static SensorConfiguration ForCamera(SensorDefinition definition, CameraProfile profile) =>
+            new SensorConfiguration(definition, SensorKind.Camera, default, default, default, profile);
     }
 }

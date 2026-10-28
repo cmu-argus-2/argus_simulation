@@ -72,8 +72,8 @@ never delays a step, and `manifest.json` counts anything it had to drop.
 A run configuration file defines one run once (G5): epoch, fixed step, seed, kernel set,
 orbit, spacecraft and sensors. `RunConfigurationFile` reads it into Core
 `SimulationConfiguration`, and `BasiliskEngine` sends it to the service as
-`argus.sim.v1.RunConfiguration`. The run ID is not in the file; the host gives each run its
-own.
+`argus.sim.v1.RunConfiguration`, without the sensors Argus computes. The run ID is not in the
+file; the host gives each run its own.
 
 - **Location:** `headless/Host/runs/`. The build copies every `runs/*.json` next to the
   host binary.
@@ -83,7 +83,11 @@ own.
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
 - **Sensors:** each entry holds the `SensorDefinition` fields (`sensorId`, `modelName`,
   `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`, `mount`) and exactly one
-  profile, named by its kind: `imu`, `magnetometer` or `lightSensor`. `controllerVisible` is
+  profile, named by its kind: `imu`, `magnetometer`, `lightSensor` or `camera`.
+  Basilisk models the first three. Argus computes the camera, so it is never sent to the
+  service (CORE-18); its profile is `intrinsics` (`widthPixels`, `heightPixels`,
+  `focalLengthXPixels`, `focalLengthYPixels`, `principalPointXPixels`,
+  `principalPointYPixels`) and `exposureDurationSeconds`. `controllerVisible` is
   `false` for a ground-truth sensor: the gateway never returns its frames to a controller,
   though the recorder still receives them (D7). The list may hold any subset of the
   sensors, including none, so a staged run against a partly built service needs only a
