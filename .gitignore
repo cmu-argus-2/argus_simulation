@@ -28,6 +28,7 @@ crashlytics-build.properties
 
 # Headless dotnet build of the Unity-independent core (see headless/README.md).
 !headless/**/*.csproj
+!Argus.Contracts/Unity/*.csproj
 [Bb]in/
 [Tt]est[Rr]esults/
 

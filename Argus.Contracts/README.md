@@ -1,6 +1,8 @@
 # Argus.Contracts: cross-process schemas
 
-**Status:** v1 Basilisk link defined; gateway, state-stream and renderer schemas planned
+**Status:** Basilisk and state-stream schemas defined; gateway and renderer schemas planned
+
+HOST-3 and UNITY-5 implement the state-stream server and client.
 
 Versioned Protobuf schemas for every message that crosses a process boundary. Nothing here
 is generated or compiled into a committed artifact; each consumer generates its own code.
@@ -13,10 +15,12 @@ proto/argus/
 │   ├── types.proto             # Vector3, Quaternion, Matrix3
 │   ├── commands.proto          # ActuatorCommand
 │   ├── sensors.proto           # Sensor definitions, P0 profiles and measurements
-│   └── run_configuration.proto # RunConfiguration (G5)
+│   ├── run_configuration.proto # RunConfiguration (G5)
+│   ├── state.proto             # State, environment and backend samples
+│   └── sensor_output.proto     # Dashboard envelopes and non-image payloads
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
-├── stream/v1/state_stream.proto      # Placeholder: host → Unity state stream (G2)
+├── stream/v1/state_stream.proto      # Host → Unity state stream (CON-1)
 ├── gateway/v1/gateway.proto          # Placeholder: HIL and controller link (D7, G1)
 └── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
@@ -49,8 +53,8 @@ types directly.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the
-  one exception is `BasiliskSensorSample.measurement`, whose unset value means the sensor
-  ran without data (reported Unavailable). For scalars zero is a value; range checks reject
+  exceptions are `BasiliskSensorSample.measurement` (Unavailable) and the state-stream
+  presence rules below. For scalars zero is a value; range checks reject
   meaningless zeros. A scalar whose zero would be a plausible wrong value is declared
   `optional` (for example `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).
 - Every field states its frame, unit and time scale, in its name and its comment.
@@ -68,7 +72,7 @@ types directly.
   `using PbBasilisk = Argus.Contracts.Basilisk.V1;` and never imports those namespaces
   unqualified, because their type names collide with Core. (`Pb` alone clashes with a
   namespace inside Google.Protobuf.) Core never references Protobuf or gRPC, and Unity
-  does not yet; the planned Unity `StateStreamClient` (G2) will consume `argus.stream.v1`,
+  uses the separate generated contract assembly described below; `StateStreamClient` (G2) consumes `argus.stream.v1`,
   never `argus.basilisk.v1` (D8).
 - **Python:** `Argus.Basilisk/scripts/generate_protos.py` writes into the gitignored
   `Argus.Basilisk/generated/`.
@@ -81,12 +85,19 @@ protoc -I Argus.Contracts/proto -I "$(brew --prefix)/include" --descriptor_set_o
 
 ## Endpoints
 
-| Link | Server | Client | Variable | Default | Transport |
-|---|---|---|---|---|---|
-| Basilisk | `Argus.Basilisk` | `headless/Host` (`BasiliskEngine`) | `ARGUS_BASILISK_ENDPOINT` | `127.0.0.1:50051` | insecure h2c, loopback only in v1 |
+| Link | Server | Client | Variable | Default | Transport | Stream rate |
+|---|---|---|---|---|---|---|
+| Basilisk | `Argus.Basilisk` | `headless/Host` (`BasiliskEngine`) | `ARGUS_BASILISK_ENDPOINT` | `127.0.0.1:50051` | insecure h2c, loopback only in v1 | Not applicable |
+| State stream (HOST-3 implements) | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
 
-The endpoint comes from a command-line flag, then the process environment, then the
-default.
+For every endpoint, precedence is command-line flag, then environment, then default.
+Basilisk uses `--basilisk-endpoint` > `ARGUS_BASILISK_ENDPOINT` > `127.0.0.1:50051`.
+The stream endpoint uses `--stream-endpoint`, then `ARGUS_STREAM_ENDPOINT`, then the
+default above. Stream rate uses `--stream-rate-hz`, then `ARGUS_STREAM_RATE_HZ`, default
+10 Hz of wall-clock time. These settings are the contract for HOST-3/UNITY-5, not options
+implemented by this schema-only change. Both endpoint settings take bare `host:port`
+(bracket IPv6 addresses, e.g. `[::1]:50052`), with no URI scheme or path. The stream
+client adds `http://` when constructing its channel URI; the server parses host/port.
 
 ## Deferred
 
@@ -94,9 +105,95 @@ Added with the PR that first needs them:
 
 - the gateway link for HIL flight computers and other external controllers (observations
   out, commands in);
-- the decimated state stream from the headless core to Unity, with the host's
-  `SensorOutputSet`s (G2);
+- runtime state-stream server (HOST-3) and Unity client (UNITY-5); schema is defined below;
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
   pixel buffers may use shared memory plus a metadata message (system-architecture.md §12).
 
 See [target-architecture.md](../docs/target-architecture.md).
+
+## State stream (CON-1)
+
+`StateStreamService.Subscribe` sends a `SubscribeResponse` containing both a complete
+SimulationState and a dashboard projection of SensorOutputSet. Both are required, even
+if no sensor has produced a frame yet. The set run ID, snapshot sequence and snapshot
+time match the state; each frame retains its own capture sequence/time. This projection
+is distinct from the original per-step SensorManager output used by the recorder.
+
+### Delivery rules
+
+- Cap sends at 10 Hz of **wall-clock** time by default. Host rate precedence is
+  `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > 10; require a finite positive value.
+  This configures delivery, never the physics or sensor sample period. No runtime tuning RPC.
+- Host keeps the latest frame per non-camera sensor in the current generation. Every
+  produced frame updates that sensor's slot, including Unavailable/Invalid (which must
+  replace an older successful reading). Never cache across reset/run replacement.
+- For each state, atomically snapshot those slots as of that step into the output set;
+  frames must not come from a future step. Each client has one latest complete pair
+  slot; the producer replaces unsent pairs without
+  waiting for network I/O. Use a monotonic clock; do not send duplicate states or catch-up
+  bursts. A stalled client never blocks the simulation step loop.
+- This is a lossy display stream: intermediate measurements can be skipped, but a slow
+  sensor remains visible in successive snapshots until its next frame. Cached frames
+  preserve status, sequence, payload and acquisition times unchanged. Caching does not
+  turn VALID into STALE; STALE is a producer-reported status. Display age from acquisition
+  time and never present a cached reading as a new measurement. Cache size is bounded
+  by configured non-camera sensors; reject unknown sensor IDs.
+- Frames carry required `capture_state_sequence` from Core StateSequence, even on failure.
+  Capture sequence and time may precede the output set's publication sequence and time.
+- Camera frames are excluded from the stream's SensorOutputSet projection entirely, for
+  every status. Camera requests/images use the render link (UNITY-10); do not encode an
+  image as an unavailable scalar sensor. Unknown non-camera payloads are mapping errors.
+- `run_generation` is required and unique for every ConfigureRun/Reset, including across
+  host restarts (use a UUID). It is stable across reconnects in the same generation and
+  independent of the recorder's storage-dependent segment number. Sequence increases
+  only within a generation; a new generation may restart at zero with the same run ID.
+- Reset/run replacement atomically invalidates the latest pair and all sensor slots before
+  publishing the new generation. A subscription waits for a complete new pair rather than
+  replaying a pre-reset cache. Finish old RPCs before publishing new-generation data.
+  Unity clears interpolation on a new subscription or changed generation. Any already
+  in-flight old response remains labelled with its old generation and must not be mixed
+  with new-generation state. Cancel old readers and discard their callbacks after reconnect.
+  No historical replay; on stop, finish active streams.
+- The recorder and controllers retain their full-rate paths. Unpaced runs can have large
+  simulation-time gaps and are not guaranteed smooth live visualization.
+
+### Presence and encoding
+
+Reuse sim/v1 vectors, quaternions, commands and measurements; no Basilisk imports.
+Initial/no-command states omit applied_commands. Analytic states omit environment;
+ITRF93 states require it. At state k, present applied_commands has sequence k-1.
+Backend unavailable is an explicit marker; no sample entry means not sampled.
+Sensor VALID/STALE requires a typed payload; UNAVAILABLE/INVALID omits payload while
+retaining the envelope. STALE retains original acquisition metadata. Enum zero is invalid;
+map Core enums explicitly (Core Valid=0 is wire Valid=1). All optional scalar fields in
+these messages require presence: optional distinguishes missing from legitimate zero.
+Validate finite values, nonnegative sequence/time and physical ranges in the mappers;
+Protobuf parsing alone does not validate them. UTC timestamps are separate from elapsed
+simulation seconds. Duplicate sensor IDs in backend_samples are invalid.
+
+### Transport and Unity generation
+
+Choose native gRPC over HTTP/2 for desktop Unity, using Grpc.Net.Client and
+[YetAnotherHttpHandler](https://github.com/Cysharp/YetAnotherHttpHandler) in Unity.
+This keeps the Host on ordinary ASP.NET Core gRPC without a gRPC-Web adapter.
+The handler documents Unity and Apple Silicon support; WebGL is outside this decision.
+For local cleartext h2c, create the handler with `Http2Only = true`. Host binds HTTP/2
+on loopback only. Remote exposure/TLS is outside v1 scope.
+
+Generate rather than vendor code. From repository root:
+
+```sh
+dotnet build Argus.Contracts/Unity/Argus.Stream.Contracts.csproj
+```
+
+This pinned Grpc.Tools 2.84.0 project compiles shared sim messages and the stream client
+into a netstandard2.1 assembly, with Google.Protobuf 3.36.2 and Grpc.Core.Api 2.84.0.
+It generates no Basilisk messages or server stub. UNITY-5 imports this built assembly and
+its compatible runtime dependencies into a dedicated Unity plugin assembly; do not import
+Grpc.Tools itself. Core never references these assemblies. Host keeps its own internal
+generation; HOST-3 enables server generation for stream only.
+
+Headless CI builds the managed contract assembly in Release configuration. Installing/pinning the Unity HTTP handler,
+Grpc.Net.Client and their dependencies, then verifying Editor/player cancellation and
+reconnect, belongs to UNITY-5. A successful netstandard build does **not** demonstrate
+that native handler loading or an actual Unity network connection works.

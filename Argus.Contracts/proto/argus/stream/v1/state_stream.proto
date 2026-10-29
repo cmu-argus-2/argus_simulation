@@ -1,10 +1,26 @@
-// PLACEHOLDER: no messages yet.
-// TODO(G2): server-streaming RPC from headless/Host to Unity carrying decimated SimulationStates
-// (spacecraft state, EnvironmentState, backend measurements) plus the host's SensorOutputSets,
-// reusing argus.sim.v1 types. Define it with
-// StateStreamServer and the Unity StateStreamClient.
+// Host-to-Unity display snapshots. Native gRPC/HTTP2; see README for delivery rules.
 syntax = "proto3";
-
 package argus.stream.v1;
-
+import "argus/sim/v1/state.proto";
+import "argus/sim/v1/sensor_output.proto";
 option csharp_namespace = "Argus.Contracts.Stream.V1";
+
+service StateStreamService {
+  // Subscribe to the active run. Live data, not recorder replay or a control API.
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+}
+
+// Start with host-configured delivery rate; no runtime tuning interface yet.
+message SubscribeRequest {}
+message SubscribeResponse {
+  // Current complete simulation state (original engine step and elapsed time).
+  argus.sim.v1.SimulationState state = 1;
+  // Dashboard projection: latest non-camera frame per sensor, as of state.
+  // Set run ID/step/time match state; individual frames retain capture metadata.
+  // This is not the unmodified SensorManager output of this step.
+  argus.sim.v1.SensorOutputSet sensor_output = 2;
+  // Required nonempty opaque identity, unique for each ConfigureRun/Reset and
+  // across host restarts (e.g. UUID). Stable across subscriptions in one generation.
+  // Independent of recorder segment numbers, which depend on recording storage.
+  string run_generation = 3;
+}
