@@ -316,12 +316,10 @@ def test_sample_period_multiple_of_the_step_is_valid():
     assert problems_of(request) == []
 
 
-def test_magnetometer_noise_is_unimplemented():
+def test_magnetometer_noise_is_valid():
     request = p0_default_request()
     request.configuration.sensors[1].magnetometer.noise_std_tesla = 1e-7
-    problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("configuration.sensors[1].magnetometer.noise_std_tesla")
+    assert problems_of(request) == []
 
 
 def test_pacing_is_unimplemented():

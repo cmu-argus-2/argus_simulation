@@ -1,7 +1,8 @@
 """P0 sensor modules (README §9).
 
-Build order steps 2 and 3 (README §12): the IMU and the magnetometer. The light sensors (BSK-6,
-#19) are rejected by validation until they are built.
+Build order steps 2 and 3 (README §12): the IMU and the magnetometer, with seeded magnetometer
+noise (BSK-9, #22). The light sensors (BSK-6, #19) are rejected by validation until they are
+built.
 
 Each Argus sensor owns its Basilisk modules and the readers subscribed to their output messages
 at build time (§6). The Scenario adds the modules to the sensor task for their period, checks the
@@ -67,18 +68,23 @@ class Imu:
 class Magnetometer:
     """One Argus magnetometer (TAM) reading the MagneticFieldWMM field at the spacecraft.
 
-    tam_S = scale (C_SB C_BN B_N + bias), clipped to +-range. Noise is 0: bsk 2.11.1 seeds the
-    module's noise generator once in its constructor, so validation rejects noise_std_tesla > 0
-    until BSK-9 (#22), and RNGSeed is left alone.
+    tam_S = scale (C_SB C_BN B_N + noise + bias), clipped to +-range. bsk 2.11.1 seeds the
+    module's noise generator once in its constructor and ignores RNGSeed, so the module runs
+    noise-free and unclipped, and measurement() adds the seeded noise from the "mag" stream and
+    clips (§9, BSK-9 #22).
     """
 
     kind = "magnetometer"
 
-    def __init__(self, sensor, spacecraft_state_msg, magnetic_field_msg):
+    def __init__(self, sensor, random_seed: int, spacecraft_state_msg, magnetic_field_msg):
         definition = sensor.definition
         profile = sensor.magnetometer
         self.sensor_id = definition.sensor_id
         self.sample_period_ns = definition.sample_period_ns
+        self.rng_seed = seeds.rng_seed(random_seed, self.sensor_id, seeds.MAG)
+        self._noise_std = profile.noise_std_tesla
+        self._scale = profile.scale_factor
+        self._range = profile.range_tesla
 
         self.module = magnetometer.Magnetometer()
         self.module.ModelTag = f"magnetometer[{self.sensor_id}]"
@@ -87,14 +93,14 @@ class Magnetometer:
         rotation = definition.mount.sensor_to_body
         self.module.dcm_SB = rbk.EP2C(np.array([rotation.w, rotation.x, rotation.y, rotation.z]))
         # Every error term is set explicitly: the module defaults are a random walk (A = I) and
-        # noise -1.
-        self.module.senNoiseStd = np.full(3, profile.noise_std_tesla)
+        # noise -1. Noise and clipping are applied in measurement().
+        self.module.senNoiseStd = np.zeros(3)
         self.module.setAMatrix(np.zeros((3, 3)))
         self.module.walkBounds = np.zeros(3)
         self.module.senBias = _array(profile.constant_bias_sensor_tesla)
         self.module.scaleFactor = profile.scale_factor
-        self.module.maxOutput = profile.range_tesla
-        self.module.minOutput = -profile.range_tesla
+        self.module.maxOutput = math.inf
+        self.module.minOutput = -math.inf
         self._reader = self.module.tamDataOutMsg.addSubscriber()
 
     @property
@@ -111,7 +117,12 @@ class Magnetometer:
         return True
 
     def measurement(self) -> sensors_pb.MagnetometerMeasurement:
-        return sensors_pb.MagnetometerMeasurement(magnetic_field_sensor_tesla=_vector(self._reader().tam_S))
+        field = np.array(self._reader().tam_S)
+        if self._noise_std > 0.0:
+            sample_index = self._reader.timeWritten() // self.sample_period_ns
+            field = field + self._scale * self._noise_std * _magnetometer_noise(self.rng_seed, sample_index)
+        return sensors_pb.MagnetometerMeasurement(
+            magnetic_field_sensor_tesla=_vector(np.clip(field, -self._range, self._range)))
 
 
 def build_sensors(configuration, spacecraft_state_msg, magnetic_field_msg=None) -> list:
@@ -128,7 +139,7 @@ def build_sensors(configuration, spacecraft_state_msg, magnetic_field_msg=None) 
         elif kind == Magnetometer.kind:
             if magnetic_field_msg is None:
                 raise ValueError(f"magnetometer {sensor.definition.sensor_id!r} needs the MagneticFieldWMM output")
-            built.append(Magnetometer(sensor, spacecraft_state_msg, magnetic_field_msg))
+            built.append(Magnetometer(sensor, configuration.random_seed, spacecraft_state_msg, magnetic_field_msg))
         else:
             raise ValueError(f"sensor kind {kind!r} is not built yet (sensor_id {sensor.definition.sensor_id!r})")
     return built
@@ -182,6 +193,13 @@ def _gauss_markov(noise_density: float, random_walk: float, period_s: float) -> 
     if random_walk > 0.0:
         return random_walk * math.sqrt(period_s) * np.eye(3), np.eye(3)
     return noise_density / math.sqrt(period_s) * np.eye(3), np.zeros((3, 3))
+
+
+def _magnetometer_noise(rng_seed: int, sample_index: int) -> np.ndarray:
+    """Three standard normal draws for one magnetometer sample (§10): a PCG64 generator seeded
+    with SeedSequence([rng_seed, sample_index]), so each sample depends only on its seed and
+    index, never on how many samples were read before."""
+    return np.random.default_rng([rng_seed, sample_index]).standard_normal(3)
 
 
 def _array(vector) -> np.ndarray:

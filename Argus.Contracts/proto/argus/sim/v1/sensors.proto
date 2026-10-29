@@ -75,8 +75,9 @@ message ImuProfile {
 
 // magnetometer (TAM): output = scale (B + noise + bias), clipped to +-range.
 message MagnetometerProfile {
-  // Per sample: senNoiseStd = [s, s, s]; setAMatrix(0); walkBounds = 0. bsk 2.11.1 cannot seed
-  // magnetometer noise, so the service rejects values > 0 with UNIMPLEMENTED for now.
+  // Per-sample white noise, scaled and clipped with the field. bsk 2.11.1 ignores the
+  // magnetometer's RNGSeed, so the service draws it from the 'mag' seed stream and runs the
+  // module noise-free (Argus.Basilisk/README.md §9).
   double noise_std_tesla = 1;
   // senBias.
   Vector3 constant_bias_sensor_tesla = 2;
