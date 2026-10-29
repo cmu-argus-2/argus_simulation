@@ -4,7 +4,8 @@ using System.Collections.Generic;
 namespace Argus.Simulation.Core
 {
     // One run configuration shared by Basilisk and Argus (G5). The optional members after
-    // FixedStepSeconds are Basilisk inputs.
+    // FixedStepSeconds are Basilisk inputs, except the sensors Argus computes
+    // (SensorConfiguration.IsBackendModelled, CORE-18).
     public readonly struct SimulationConfiguration
     {
         private const int MaximumKernelSetIdLength = 64;
@@ -52,7 +53,7 @@ namespace Argus.Simulation.Core
             (!Spacecraft.HasValue || Spacecraft.Value.IsValid) &&
             RandomSeed >= 0 &&
             (KernelSetId == null || IsKernelSetId(KernelSetId)) &&
-            AreSensorsValid(Sensors);
+            AreSensorsValid(Sensors, FixedStepSeconds);
 
         private static SensorConfiguration[] Copy(IReadOnlyList<SensorConfiguration> sensors)
         {
@@ -65,18 +66,29 @@ namespace Argus.Simulation.Core
             return copy;
         }
 
-        private static bool AreSensorsValid(IReadOnlyList<SensorConfiguration> sensors)
+        // Every sensor samples only at step states, so its period must be a whole number of steps:
+        // otherwise an Argus sensor samples unevenly under a period it never keeps (CORE-18). Basilisk
+        // also needs whole steps; BasiliskEngine checks those in exact nanoseconds.
+        private static bool AreSensorsValid(IReadOnlyList<SensorConfiguration> sensors, double fixedStepSeconds)
         {
             HashSet<string> sensorIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (SensorConfiguration sensor in sensors)
             {
-                if (!sensor.IsValid || !sensorIds.Add(sensor.Definition.SensorId))
+                if (!sensor.IsValid ||
+                    !IsWholeNumberOfSteps(sensor.Definition.SamplePeriodSeconds, fixedStepSeconds) ||
+                    !sensorIds.Add(sensor.Definition.SensorId))
                 {
                     return false;
                 }
             }
 
             return true;
+        }
+
+        private static bool IsWholeNumberOfSteps(double periodSeconds, double stepSeconds)
+        {
+            double steps = Math.Round(periodSeconds / stepSeconds);
+            return steps >= 1.0 && SimulationTime.AreSame(steps * stepSeconds, periodSeconds);
         }
 
         // The service turns the ID into a file name, so only [a-z0-9][a-z0-9._-]* is accepted.

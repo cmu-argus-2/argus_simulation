@@ -65,15 +65,42 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(Request(configuration).Configuration.Sensors.Count, Is.EqualTo(sensorCount));
         }
 
+        // A camera is computed by Argus: it loads from the file, but ConfigureRun carries the same
+        // backend-modelled sensors as without it, so validation.py never sees it (CORE-18).
+        [Test]
+        public void ArgusComputedCameraLoadsButIsNotSentToBasilisk()
+        {
+            JsonObject root = P0();
+            root["sensors"].AsArray().Insert(1, CameraNode("cam.px"));
+
+            SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
+
+            Assert.That(withCamera.IsValid, Is.True);
+            Assert.That(withCamera.Sensors.Count, Is.EqualTo(p0.Sensors.Count + 1));
+            SensorConfiguration camera = withCamera.Sensors[1];
+            Assert.That(camera.Kind, Is.EqualTo(SensorKind.Camera));
+            Assert.That(camera.IsBackendModelled, Is.False);
+            Assert.That(camera.Definition.SensorId, Is.EqualTo("cam.px"));
+            Assert.That(camera.CameraProfile.Intrinsics.WidthPixels, Is.EqualTo(4608));
+            Assert.That(camera.CameraProfile.Intrinsics.HeightPixels, Is.EqualTo(2592));
+            Assert.That(camera.CameraProfile.Intrinsics.FocalLengthXPixels, Is.EqualTo(3548.0));
+            Assert.That(camera.CameraProfile.Intrinsics.PrincipalPointYPixels, Is.EqualTo(1296.0));
+            Assert.That(camera.CameraProfile.ExposureDurationSeconds, Is.EqualTo(0.0005));
+            Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
+        }
+
         [TestCase("missing field", "initialOrbit.eccentricity: is required")]
         [TestCase("unknown field", "spacecraft.massKg: is not a known field")]
         [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
         [TestCase("invalid profile", "sensors[0].imu.gyroscope: is not a valid gyroscope profile")]
         [TestCase("duplicate sensor ID", "sensors[1].sensorId: duplicates another sensor's ID")]
-        [TestCase("two profiles", "sensors[2]: needs exactly one of imu, magnetometer, lightSensor")]
+        [TestCase("two profiles", "sensors[2]: needs exactly one of imu, magnetometer, lightSensor, camera")]
         [TestCase("wrong type", "sensors[0].mount.positionBodyMeters: must be an array of 3 numbers")]
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
+        [TestCase("invalid camera intrinsics", "sensors[8].camera.intrinsics: needs")]
+        [TestCase("period off the step grid", "sensors[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
@@ -106,6 +133,16 @@ namespace Argus.Simulation.Host.Tests
                     break;
                 case "invalid kernel set":
                     root["kernelSetId"] = "Argus 2026";
+                    break;
+                case "invalid camera intrinsics":
+                    JsonObject camera = CameraNode("cam.px");
+                    camera["camera"]["intrinsics"]["widthPixels"] = 0;
+                    sensors.Add(camera);
+                    break;
+                case "period off the step grid":
+                    JsonObject offGrid = CameraNode("cam.px");
+                    offGrid["samplePeriodSeconds"] = 0.25;
+                    sensors.Add(offGrid);
                     break;
             }
 
@@ -184,6 +221,35 @@ namespace Argus.Simulation.Host.Tests
         }
 
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
+
+        // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount.
+        private static JsonObject CameraNode(string sensorId) => new JsonObject
+        {
+            ["sensorId"] = sensorId,
+            ["modelName"] = "arducam-imx708",
+            ["frameId"] = sensorId.Replace('.', '_'),
+            ["samplePeriodSeconds"] = 1.0,
+            ["source"] = "argus",
+            ["controllerVisible"] = true,
+            ["mount"] = new JsonObject
+            {
+                ["positionBodyMeters"] = new JsonArray(0.05116, -0.000198, -0.02927),
+                ["sensorToBody"] = new JsonObject { ["x"] = -0.5, ["y"] = 0.5, ["z"] = -0.5, ["w"] = 0.5 }
+            },
+            ["camera"] = new JsonObject
+            {
+                ["intrinsics"] = new JsonObject
+                {
+                    ["widthPixels"] = 4608,
+                    ["heightPixels"] = 2592,
+                    ["focalLengthXPixels"] = 3548.0,
+                    ["focalLengthYPixels"] = 3548.0,
+                    ["principalPointXPixels"] = 2304.0,
+                    ["principalPointYPixels"] = 1296.0
+                },
+                ["exposureDurationSeconds"] = 0.0005
+            }
+        };
 
         // What BasiliskEngine.Initialize sends with a real-time factor of 0.
         private static PbBasilisk.ConfigureRunRequest Request(SimulationConfiguration configuration) =>

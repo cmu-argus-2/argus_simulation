@@ -1,6 +1,6 @@
 # Core/Sensors/Camera — camera sensor models
 
-**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** `CameraModel` base implemented (CORE-3); concrete cameras are placeholders (`TODO(D5)`, `TODO(D5, D7)`)
+**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** `CameraModel` base implemented (CORE-3); `ArducamImx708CameraModel` built from the run configuration (CORE-18), its DATA-6 profile pending (CORE-6, `TODO(D5)`); `NadirGroundTruthCameraModel` is a placeholder (`TODO(D5, D7)`)
 
 Cameras are Core sensor models; Unity only renders (decision D5 in
 [target-architecture.md](../../../../../docs/target-architecture.md)).
@@ -12,8 +12,12 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   it sends a `RenderRequest` (`Core/Imaging/RenderRequest.cs`) to an `IImageRenderer`
   (`Core/Abstractions/IImageRenderer.cs`) and publishes the result as a
   `SensorFrame<ImageFrame>`. Distortion and noise come with the concrete profiles.
-- `ArducamImx708CameraModel` (CORE-6): the physical camera profile, used for the +X, -X, +Y
-  and -Y body cameras.
+- `ArducamImx708CameraModel`: the physical camera, used for the +X, -X, +Y and -Y body
+  cameras. `SensorFactory` builds it from a `Camera` sensor configuration,
+  whose `CameraProfile` holds the intrinsics and exposure duration (CORE-18). Cameras are
+  computed by Argus, so they are never sent to Basilisk. The renderer comes from the host or
+  Unity; `headless/Host` has none yet, so its camera frames are `Unavailable`. CORE-6 adds
+  the DATA-6 distortion and noise and the four mounts.
 - `NadirGroundTruthCameraModel` (CORE-8): follows spacecraft position with a north-up nadir
   orientation that ignores attitude, by overriding `ComputePose`.
 

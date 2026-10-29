@@ -24,6 +24,8 @@ message RunConfiguration {
   string kernel_set_id = 6;
   // Required: Basilisk hub defaults (1 kg, identity inertia) are silently wrong.
   SpacecraftConfiguration spacecraft = 7;
+  // The run's backend-modelled sensors, in run-configuration order. Sensors Argus computes, such as
+  // cameras, are left out (D10, CORE-18).
   repeated SensorConfiguration sensors = 8;
 }
 

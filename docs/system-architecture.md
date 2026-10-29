@@ -207,7 +207,7 @@ BackendSensorModel<TMeasurement>         (Basilisk-sourced)
 SensorModel<TPayload>                    (Argus-computed)
 ├── IdealBodyRateSensorModel
 └── CameraModel                          (base: exposure, pose, pending frames, G3)
-    ├── ArducamImx708CameraModel         (placeholder)
+    ├── ArducamImx708CameraModel         (body cameras, CORE-18; DATA-6 profile in CORE-6)
     └── NadirGroundTruthCameraModel      (placeholder)
 
 Upcoming, source open (Basilisk module per D10, or Argus-computed); placeholders in Core/Sensors:

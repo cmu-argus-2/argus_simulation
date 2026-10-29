@@ -102,6 +102,8 @@ message LightSensorProfile {
 }
 
 // Mirrors Core SensorConfiguration; the oneof case is Core SensorKind. Unset: INVALID_ARGUMENT.
+// ConfigureRun carries only backend-modelled kinds (Core SensorConfiguration.IsBackendModelled):
+// sensors Argus computes, such as cameras, never reach the Basilisk service (D10, CORE-18).
 message SensorConfiguration {
   SensorDefinition definition = 1;
   oneof profile {

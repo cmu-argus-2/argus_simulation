@@ -79,9 +79,13 @@ namespace Argus.Simulation.Host
                     nameof(configuration));
             }
 
+            // SimulationConfiguration.IsValid already requires whole steps for every sensor; Basilisk
+            // also needs its own sensors' periods in exact nanoseconds. Argus-computed sensors schedule
+            // themselves in SensorModel (CORE-18).
             foreach (SensorConfiguration sensor in configuration.Sensors)
             {
-                if (BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
+                if (sensor.IsBackendModelled &&
+                    BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
                 {
                     throw new ArgumentException(
                         $"Sensor '{sensor.Definition.SensorId}' period is not a multiple of the fixed step.",
@@ -248,22 +252,29 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<SensorConfiguration> sensors)
+        // The service echoes every requested sensor in request order. The echo must be exactly the
+        // configuration's backend-modelled sensors, in order; checking it against the configuration
+        // rather than the request also catches a mapper that drops one (CORE-18).
+        internal static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<SensorConfiguration> sensors)
         {
-            if (configuredIds.Count != sensors.Count)
+            int next = 0;
+            foreach (SensorConfiguration sensor in sensors)
             {
-                return false;
-            }
+                if (!sensor.IsBackendModelled)
+                {
+                    continue;
+                }
 
-            for (int i = 0; i < sensors.Count; i++)
-            {
-                if (!string.Equals(configuredIds[i], sensors[i].Definition.SensorId, StringComparison.Ordinal))
+                if (next == configuredIds.Count ||
+                    !string.Equals(configuredIds[next], sensor.Definition.SensorId, StringComparison.Ordinal))
                 {
                     return false;
                 }
+
+                next++;
             }
 
-            return true;
+            return next == configuredIds.Count;
         }
 
         private static void Expect(bool condition, string rpc, string field)
