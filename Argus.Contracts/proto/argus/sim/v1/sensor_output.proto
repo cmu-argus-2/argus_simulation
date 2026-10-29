@@ -18,33 +18,49 @@ message AngularRateMeasurement {
   Vector3 angular_velocity_sensor_rad_per_s = 1;
 }
 message SensorFrame {
+  // Opaque run identity; not a coordinate or a timestamp.
   string run_id = 1;
+  // Sensor identity within this run.
   string sensor_id = 2;
+  // Sensor coordinate-frame label, copied from Core FrameId.
   string frame_id = 3;
   // Nonnegative per-sensor sequence, not engine step.
   optional int64 sequence = 4;
+  // Acquisition time in seconds since simulation start, not publication time.
   optional double simulation_time_s = 5;
+  // UTC corresponding to acquisition time above.
   google.protobuf.Timestamp timestamp_utc = 6;
   // Map explicitly: Core Valid=0 does NOT equal the wire zero value.
   SensorFrameStatus status = 7;
+  // Producer label from Core Source, e.g. backend/model identifier.
   string source = 8;
   // Required presence: Core ISensorFrame.StateSequence, including on failures.
   // Zero is a valid capture step; absent is invalid. Never substitute delivery step.
   optional int64 capture_state_sequence = 9;
   // VALID requires a payload. UNAVAILABLE omits it but retains the envelope.
-  // STALE requires the retained payload and original capture metadata.
+  // STALE requires retained payload and original capture metadata. Caching alone
+  // does not change status; acquisition time exposes the age of a cached VALID frame.
   // INVALID omits payload; readers must not substitute zero measurements.
   oneof payload {
+    // Body rate in sensor axes, radians/second.
     AngularRateMeasurement angular_rate = 10;
+    // Rate and specific force in sensor axes, SI units.
     ImuMeasurement imu = 11;
+    // Magnetic field in sensor axes, tesla.
     MagnetometerMeasurement magnetometer = 12;
+    // Sensor irradiance in W/m^2.
     LightSensorMeasurement light_sensor = 13;
   }
 }
 message SensorOutputSet {
+  // Opaque run identity; not a coordinate or a timestamp.
   string run_id = 1;
-  // Step/time when the host published these results, not their acquisition step/time.
+  // Publication step, or current snapshot step for the stream projection.
+  // Not the individual frames' acquisition step.
   optional int64 spacecraft_sequence = 2;
+  // Publication/snapshot time, seconds since simulation start.
   optional double simulation_time_s = 3;
+  // Stream projection contains at most one latest frame per non-camera sensor.
+  // Frames may have earlier acquisition times; an empty list is legitimate.
   repeated SensorFrame frames = 4;
 }

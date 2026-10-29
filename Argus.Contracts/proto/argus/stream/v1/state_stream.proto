@@ -13,8 +13,14 @@ service StateStreamService {
 // Start with host-configured delivery rate; no runtime tuning interface yet.
 message SubscribeRequest {}
 message SubscribeResponse {
-  // Both required, even when sensor_output.frames is empty. Their run IDs and
-  // publication step/time must match. Original acquisition metadata stays on frames.
+  // Current complete simulation state (original engine step and elapsed time).
   argus.sim.v1.SimulationState state = 1;
+  // Dashboard projection: latest non-camera frame per sensor, as of state.
+  // Set run ID/step/time match state; individual frames retain capture metadata.
+  // This is not the unmodified SensorManager output of this step.
   argus.sim.v1.SensorOutputSet sensor_output = 2;
+  // Required nonempty opaque identity, unique for each ConfigureRun/Reset and
+  // across host restarts (e.g. UUID). Stable across subscriptions in one generation.
+  // Independent of recorder segment numbers, which depend on recording storage.
+  string run_generation = 3;
 }

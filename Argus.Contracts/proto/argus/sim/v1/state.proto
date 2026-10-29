@@ -1,4 +1,4 @@
-// Draft CON-1 shared state. Mirrors Core contracts, never Basilisk-native messages.
+// CON-1 shared state. Mirrors Core contracts, never Basilisk-native messages.
 syntax = "proto3";
 package argus.sim.v1;
 import "google/protobuf/timestamp.proto";
@@ -18,9 +18,11 @@ message SpacecraftState {
   optional int64 sequence = 1;
   // Seconds since simulation start; finite and nonnegative.
   optional double simulation_time_s = 2;
+  // UTC instant corresponding to this spacecraft state.
   google.protobuf.Timestamp timestamp_utc = 3;
   // Frame of position, velocity and attitude below. Unspecified is invalid.
   ReferenceFrame earth_fixed_frame = 4;
+  // Earth-centred position in earth_fixed_frame axes, metres.
   Vector3 position_planet_fixed_m = 5;
   // Velocity relative to the rotating earth_fixed_frame.
   Vector3 velocity_planet_fixed_m_per_s = 6;
@@ -33,6 +35,7 @@ message SpacecraftState {
 message EnvironmentState {
   // Earth centre to Sun centre, geometric, aberration correction NONE.
   Vector3 sun_position_itrf93_m = 1;
+  // Active, unit quaternion mapping J2000 components to ITRF93 at this state.
   Quaternion j2000_to_itrf93 = 2;
   // ITRF93 relative to J2000, expressed in ITRF93 axes.
   Vector3 earth_angular_velocity_itrf93_rad_per_s = 3;
@@ -43,7 +46,9 @@ message EnvironmentState {
 message AppliedCommand {
   // At spacecraft step k this is k-1, acting over [t_(k-1), t_k).
   optional int64 sequence = 1;
+  // Start of the command interval, seconds since simulation start (t_(k-1)).
   optional double apply_at_simulation_time_s = 2;
+  // Applied actuator values in body axes and SI units.
   ActuatorCommand command = 3;
 }
 
@@ -51,18 +56,26 @@ message AppliedCommand {
 // means not sampled; an empty result oneof is invalid, not unavailable.
 message UnavailableMeasurement {}
 message BackendSensorSample {
+  // Configured sensor identity at the enclosing state's time.
   string sensor_id = 1;
   oneof result {
+    // Sensor-axis rate and specific force, SI units, at the enclosing state.
     ImuMeasurement imu = 2;
+    // Sensor-axis magnetic field, tesla, at the enclosing state.
     MagnetometerMeasurement magnetometer = 3;
+    // Irradiance, W/m^2, at the enclosing state.
     LightSensorMeasurement light_sensor = 4;
+    // Sensor sampled at the enclosing state but produced no measurement.
     UnavailableMeasurement unavailable = 5;
   }
 }
 
 message SimulationState {
+  // Opaque configured run identity, not necessarily unique across resets.
   string run_id = 1;
+  // Nonempty Core backend label, e.g. analytic or basilisk; not a wire type name.
   string dynamics_backend = 2;
+  // Spacecraft truth at one engine step, including its time and reference frame.
   SpacecraftState spacecraft = 3;
   // Legitimately absent at t0 or for a source applying no commands.
   AppliedCommand applied_commands = 4;

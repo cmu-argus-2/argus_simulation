@@ -1,87 +1,143 @@
+using System;
 using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using NUnit.Framework;
 using PbSim = Argus.Contracts.Sim.V1;
 using PbStream = Argus.Contracts.Stream.V1;
 
 namespace Argus.Simulation.Host.Tests
 {
-    // Wire round trips only: these do not validate a Core mapper or a running stream.
-    public sealed class StateStreamContractTests
+    // Wire/schema tests, not a running HOST-3 cache, pairing validator or Unity client.
+    internal sealed class StateStreamContractTests
     {
-        [Test]
-        public void InitialAnalyticStatePreservesZeroAndMissingEnvironment()
+        private static readonly DateTime Epoch = new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc);
+
+        private static PbStream.SubscribeResponse Snapshot(string generation, long step)
         {
-            var message = new PbStream.SubscribeResponse
+            return new PbStream.SubscribeResponse
             {
+                RunGeneration = generation,
                 State = new PbSim.SimulationState
                 {
                     RunId = "test", DynamicsBackend = "analytic",
                     Spacecraft = new PbSim.SpacecraftState
                     {
-                        Sequence = 0, SimulationTimeS = 0,
-                        EarthFixedFrame = PbSim.ReferenceFrame.AnalyticEarthFixed
+                        Sequence = step, SimulationTimeS = step * 0.1,
+                        TimestampUtc = Timestamp.FromDateTime(Epoch.AddSeconds(step * 0.1)),
+                        EarthFixedFrame = PbSim.ReferenceFrame.AnalyticEarthFixed,
+                        PositionPlanetFixedM = new PbSim.Vector3 { X = 7000000 },
+                        VelocityPlanetFixedMPerS = new PbSim.Vector3 { Y = 7500 },
+                        BodyToPlanetFixed = new PbSim.Quaternion { W = 1 },
+                        AngularVelocityBodyRadPerS = new PbSim.Vector3()
                     }
+                },
+                SensorOutput = new PbSim.SensorOutputSet
+                {
+                    RunId = "test", SpacecraftSequence = step, SimulationTimeS = step * 0.1
                 }
             };
-            var decoded = PbStream.SubscribeResponse.Parser.ParseFrom(message.ToByteArray());
+        }
+
+        private static PbSim.SensorFrame Frame(PbSim.SensorFrameStatus status)
+        {
+            var frame = new PbSim.SensorFrame
+            {
+                RunId = "test", SensorId = "gyro", FrameId = "gyro-body", Source = "analytic",
+                Sequence = 7, SimulationTimeS = 1, CaptureStateSequence = 10,
+                TimestampUtc = Timestamp.FromDateTime(Epoch.AddSeconds(1)), Status = status
+            };
+            if (status == PbSim.SensorFrameStatus.Valid || status == PbSim.SensorFrameStatus.Stale)
+                frame.AngularRate = new PbSim.AngularRateMeasurement
+                { AngularVelocitySensorRadPerS = new PbSim.Vector3 { Z = 0.25 } };
+            return frame;
+        }
+
+        private static PbStream.SubscribeResponse RoundTrip(PbStream.SubscribeResponse value) =>
+            PbStream.SubscribeResponse.Parser.ParseFrom(value.ToByteArray());
+
+        [Test]
+        public void InitialAnalyticSnapshotPreservesPresentZeroAndAbsentEnvironment()
+        {
+            var decoded = RoundTrip(Snapshot("generation-a", 0));
             Assert.That(decoded.State.Spacecraft.HasSequence, Is.True);
             Assert.That(decoded.State.Spacecraft.Sequence, Is.Zero);
             Assert.That(decoded.State.Spacecraft.HasSimulationTimeS, Is.True);
+            Assert.That(decoded.SensorOutput, Is.Not.Null);
+            Assert.That(decoded.SensorOutput.Frames, Is.Empty);
             Assert.That(decoded.State.Environment, Is.Null);
             Assert.That(decoded.State.AppliedCommands, Is.Null);
-            var umbra = PbSim.EnvironmentState.Parser.ParseFrom(
-                new PbSim.EnvironmentState { SpacecraftShadowFactor = 0 }.ToByteArray());
-            Assert.That(umbra.HasSpacecraftShadowFactor, Is.True);
-            Assert.That(new PbSim.EnvironmentState().HasSpacecraftShadowFactor, Is.False);
+            Assert.That(new PbSim.SpacecraftState().HasSequence, Is.False);
         }
 
         [Test]
-        public void PairedSnapshotPreservesUnavailableFrameCaptureMetadata()
+        public void SameRunIdResetRetainsDistinctGenerationDespiteSequenceRestart()
         {
-            var output = new PbSim.SensorOutputSet
-            {
-                RunId = "test", SpacecraftSequence = 105, SimulationTimeS = 1.05
-            };
-            output.Frames.Add(new PbSim.SensorFrame
-            {
-                RunId = "test", SensorId = "imu", FrameId = "imu-body", Source = "backend",
-                Sequence = 7, SimulationTimeS = 1, CaptureStateSequence = 100,
-                Status = PbSim.SensorFrameStatus.Unavailable
-            });
-            var decoded = PbStream.SubscribeResponse.Parser.ParseFrom(
-                new PbStream.SubscribeResponse { SensorOutput = output, State = new PbSim.SimulationState
-                { RunId = "test", Spacecraft = new PbSim.SpacecraftState { Sequence = 105, SimulationTimeS = 1.05 } } }.ToByteArray());
-            Assert.That(decoded.State.RunId, Is.EqualTo(decoded.SensorOutput.RunId));
-            Assert.That(decoded.State.Spacecraft.Sequence, Is.EqualTo(decoded.SensorOutput.SpacecraftSequence));
-            Assert.That(decoded.State.Spacecraft.SimulationTimeS, Is.EqualTo(decoded.SensorOutput.SimulationTimeS));
-            Assert.That(decoded.SensorOutput.SpacecraftSequence, Is.EqualTo(105));
+            var old = RoundTrip(Snapshot("generation-a", 4000));
+            var reset = RoundTrip(Snapshot("generation-b", 0));
+            var reconnect = RoundTrip(Snapshot("generation-b", 1));
+            Assert.That(old.State.RunId, Is.EqualTo(reset.State.RunId));
+            Assert.That(old.RunGeneration, Is.EqualTo("generation-a"));
+            Assert.That(reset.RunGeneration, Is.EqualTo("generation-b"));
+            Assert.That(reset.State.Spacecraft.Sequence, Is.Zero);
+            Assert.That(reconnect.RunGeneration, Is.EqualTo(reset.RunGeneration));
+        }
+
+        [TestCase(PbSim.SensorFrameStatus.Valid)]
+        [TestCase(PbSim.SensorFrameStatus.Stale)]
+        [TestCase(PbSim.SensorFrameStatus.Unavailable)]
+        [TestCase(PbSim.SensorFrameStatus.Invalid)]
+        public void CachedSensorRetainsAcquisitionMetadataAcrossLaterSnapshots(PbSim.SensorFrameStatus status)
+        {
+            var first = Snapshot("generation-a", 20);
+            first.SensorOutput.Frames.Add(Frame(status));
+            var later = Snapshot("generation-a", 30);
+            later.SensorOutput.Frames.Add(first.SensorOutput.Frames[0].Clone());
+            var decoded = RoundTrip(later);
             var frame = decoded.SensorOutput.Frames[0];
-            Assert.That(frame.Sequence, Is.EqualTo(7));
-            Assert.That(frame.CaptureStateSequence, Is.EqualTo(100));
+            Assert.That(decoded.State.Spacecraft.Sequence, Is.EqualTo(30));
+            Assert.That(frame.CaptureStateSequence, Is.EqualTo(10));
             Assert.That(frame.SimulationTimeS, Is.EqualTo(1));
-            Assert.That(frame.PayloadCase, Is.EqualTo(PbSim.SensorFrame.PayloadOneofCase.None));
-            frame.ClearCaptureStateSequence();
-            var unknown = PbSim.SensorFrame.Parser.ParseFrom(frame.ToByteArray());
-            // Wire can express absence; a consumer must reject this missing required field.
-            Assert.That(unknown.HasCaptureStateSequence, Is.False);
-            frame.CaptureStateSequence = 0;
-            Assert.That(PbSim.SensorFrame.Parser.ParseFrom(frame.ToByteArray()).HasCaptureStateSequence, Is.True);
+            Assert.That(frame.TimestampUtc, Is.EqualTo(Timestamp.FromDateTime(Epoch.AddSeconds(1))));
+            Assert.That(frame.Status, Is.EqualTo(status));
+            Assert.That(frame.ToByteArray(), Is.EqualTo(RoundTrip(first).SensorOutput.Frames[0].ToByteArray()));
+            Assert.That(frame.PayloadCase, Is.EqualTo(
+                status == PbSim.SensorFrameStatus.Valid || status == PbSim.SensorFrameStatus.Stale
+                ? PbSim.SensorFrame.PayloadOneofCase.AngularRate : PbSim.SensorFrame.PayloadOneofCase.None));
         }
 
         [Test]
-        public void BackendUnavailableIsDifferentFromMissingSampleAndEmptyResult()
+        public void EnvironmentShadowZeroAndBackendUnavailableKeepPresence()
         {
-            var state = new PbSim.SimulationState();
-            state.BackendSamples.Add(new PbSim.BackendSensorSample
+            var snapshot = Snapshot("generation-a", 0);
+            snapshot.State.Spacecraft.EarthFixedFrame = PbSim.ReferenceFrame.Itrf93;
+            snapshot.State.Environment = new PbSim.EnvironmentState
             {
-                SensorId = "imu", Unavailable = new PbSim.UnavailableMeasurement()
-            });
-            var decoded = PbSim.SimulationState.Parser.ParseFrom(state.ToByteArray());
-            Assert.That(decoded.BackendSamples.Count, Is.EqualTo(1));
-            Assert.That(decoded.BackendSamples[0].ResultCase,
+                SunPositionItrf93M = new PbSim.Vector3 { X = 1.5e11 },
+                J2000ToItrf93 = new PbSim.Quaternion { W = 1 },
+                EarthAngularVelocityItrf93RadPerS = new PbSim.Vector3 { Z = 7.292115e-5 },
+                SpacecraftShadowFactor = 0
+            };
+            snapshot.State.BackendSamples.Add(new PbSim.BackendSensorSample
+            { SensorId = "imu", Unavailable = new PbSim.UnavailableMeasurement() });
+            var decoded = RoundTrip(snapshot);
+            Assert.That(decoded.State.Environment.HasSpacecraftShadowFactor, Is.True);
+            Assert.That(decoded.State.Environment.SpacecraftShadowFactor, Is.Zero);
+            Assert.That(new PbSim.EnvironmentState().HasSpacecraftShadowFactor, Is.False);
+            Assert.That(decoded.State.BackendSamples[0].ResultCase,
                 Is.EqualTo(PbSim.BackendSensorSample.ResultOneofCase.Unavailable));
             Assert.That(new PbSim.BackendSensorSample().ResultCase,
                 Is.EqualTo(PbSim.BackendSensorSample.ResultOneofCase.None));
+        }
+
+        [Test]
+        public void SchemaKeepsBothMessagesAndGenerationOutsideAOneof()
+        {
+            var descriptor = PbStream.SubscribeResponse.Descriptor;
+            Assert.That(descriptor.FindFieldByName("state").ContainingOneof, Is.Null);
+            Assert.That(descriptor.FindFieldByName("sensor_output").ContainingOneof, Is.Null);
+            Assert.That(descriptor.FindFieldByName("run_generation").FieldNumber, Is.EqualTo(3));
+            Assert.That(descriptor.FindFieldByName("state").MessageType, Is.EqualTo(PbSim.SimulationState.Descriptor));
+            Assert.That(descriptor.FindFieldByName("sensor_output").MessageType, Is.EqualTo(PbSim.SensorOutputSet.Descriptor));
         }
     }
 }

@@ -1,8 +1,8 @@
 # Argus.Contracts: cross-process schemas
 
-**Status:** v1 Basilisk link defined; state-stream schema drafted (CON-1, awaiting review); gateway and renderer planned
+**Status:** Basilisk and state-stream schemas defined; gateway and renderer schemas planned
 
-This PR defines the contract; HOST-3 and UNITY-5 implement its runtime behavior.
+HOST-3 and UNITY-5 implement the state-stream server and client.
 
 Versioned Protobuf schemas for every message that crosses a process boundary. Nothing here
 is generated or compiled into a committed artifact; each consumer generates its own code.
@@ -20,7 +20,7 @@ proto/argus/
 │   └── sensor_output.proto     # Dashboard envelopes and non-image payloads
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
-├── stream/v1/state_stream.proto      # Draft host → Unity state stream (CON-1)
+├── stream/v1/state_stream.proto      # Host → Unity state stream (CON-1)
 ├── gateway/v1/gateway.proto          # Placeholder: HIL and controller link (D7, G1)
 └── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
@@ -72,7 +72,7 @@ types directly.
   `using PbBasilisk = Argus.Contracts.Basilisk.V1;` and never imports those namespaces
   unqualified, because their type names collide with Core. (`Pb` alone clashes with a
   namespace inside Google.Protobuf.) Core never references Protobuf or gRPC, and Unity
-  does not yet; the planned Unity `StateStreamClient` (G2) will consume `argus.stream.v1`,
+  uses the separate generated contract assembly described below; `StateStreamClient` (G2) consumes `argus.stream.v1`,
   never `argus.basilisk.v1` (D8).
 - **Python:** `Argus.Basilisk/scripts/generate_protos.py` writes into the gitignored
   `Argus.Basilisk/generated/`.
@@ -88,12 +88,16 @@ protoc -I Argus.Contracts/proto -I "$(brew --prefix)/include" --descriptor_set_o
 | Link | Server | Client | Variable | Default | Transport | Stream rate |
 |---|---|---|---|---|---|---|
 | Basilisk | `Argus.Basilisk` | `headless/Host` (`BasiliskEngine`) | `ARGUS_BASILISK_ENDPOINT` | `127.0.0.1:50051` | insecure h2c, loopback only in v1 | Not applicable |
-| State stream (HOST-3 implements) | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `http://127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
+| State stream (HOST-3 implements) | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
 
+For every endpoint, precedence is command-line flag, then environment, then default.
+Basilisk uses `--basilisk-endpoint` > `ARGUS_BASILISK_ENDPOINT` > `127.0.0.1:50051`.
 The stream endpoint uses `--stream-endpoint`, then `ARGUS_STREAM_ENDPOINT`, then the
 default above. Stream rate uses `--stream-rate-hz`, then `ARGUS_STREAM_RATE_HZ`, default
 10 Hz of wall-clock time. These settings are the contract for HOST-3/UNITY-5, not options
-implemented by this schema-only change.
+implemented by this schema-only change. Both endpoint settings take bare `host:port`
+(bracket IPv6 addresses, e.g. `[::1]:50052`), with no URI scheme or path. The stream
+client adds `http://` when constructing its channel URI; the server parses host/port.
 
 ## Deferred
 
@@ -110,30 +114,46 @@ See [target-architecture.md](../docs/target-architecture.md).
 ## State stream (CON-1)
 
 `StateStreamService.Subscribe` sends a `SubscribeResponse` containing both a complete
-SimulationState and that step's SensorOutputSet. Both are required, including an empty
-output set when no supported sensors fired. Run ID, publication sequence and simulation
-time must match. Preserve original sequence numbers and timestamps after decimation.
+SimulationState and a dashboard projection of SensorOutputSet. Both are required, even
+if no sensor has produced a frame yet. The set run ID, snapshot sequence and snapshot
+time match the state; each frame retains its own capture sequence/time. This projection
+is distinct from the original per-step SensorManager output used by the recorder.
 
 ### Delivery rules
 
 - Cap sends at 10 Hz of **wall-clock** time by default. Host rate precedence is
   `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > 10; require a finite positive value.
   This configures delivery, never the physics or sensor sample period. No runtime tuning RPC.
-- Each client has one latest complete pair slot; the producer replaces unsent pairs without
+- Host keeps the latest frame per non-camera sensor in the current generation. Every
+  produced frame updates that sensor's slot, including Unavailable/Invalid (which must
+  replace an older successful reading). Never cache across reset/run replacement.
+- For each state, atomically snapshot those slots as of that step into the output set;
+  frames must not come from a future step. Each client has one latest complete pair
+  slot; the producer replaces unsent pairs without
   waiting for network I/O. Use a monotonic clock; do not send duplicate states or catch-up
   bursts. A stalled client never blocks the simulation step loop.
-- This is a lossy display stream. Intermediate sensor samples may be skipped with their
-  states. Do not fill a pair with cached samples from another step. A dashboard can retain
-  an earlier reading only if it shows its original timestamp/age, not as a new measurement.
+- This is a lossy display stream: intermediate measurements can be skipped, but a slow
+  sensor remains visible in successive snapshots until its next frame. Cached frames
+  preserve status, sequence, payload and acquisition times unchanged. Caching does not
+  turn VALID into STALE; STALE is a producer-reported status. Display age from acquisition
+  time and never present a cached reading as a new measurement. Cache size is bounded
+  by configured non-camera sensors; reject unknown sensor IDs.
 - Frames carry required `capture_state_sequence` from Core StateSequence, even on failure.
   Capture sequence and time may precede the output set's publication sequence and time.
 - Camera frames are excluded from the stream's SensorOutputSet projection entirely, for
   every status. Camera requests/images use the render link (UNITY-10); do not encode an
   image as an unavailable scalar sensor. Unknown non-camera payloads are mapping errors.
-- Stream starts with the newest available complete pair. Within a subscription the run ID
-  is constant and state sequence strictly increases. On reset, run replacement or stop,
-  finish the existing RPC before sending any new-run state (even if run_id is reused).
-  Unity clears interpolation history on every new subscription. No historical replay.
+- `run_generation` is required and unique for every ConfigureRun/Reset, including across
+  host restarts (use a UUID). It is stable across reconnects in the same generation and
+  independent of the recorder's storage-dependent segment number. Sequence increases
+  only within a generation; a new generation may restart at zero with the same run ID.
+- Reset/run replacement atomically invalidates the latest pair and all sensor slots before
+  publishing the new generation. A subscription waits for a complete new pair rather than
+  replaying a pre-reset cache. Finish old RPCs before publishing new-generation data.
+  Unity clears interpolation on a new subscription or changed generation. Any already
+  in-flight old response remains labelled with its old generation and must not be mixed
+  with new-generation state. Cancel old readers and discard their callbacks after reconnect.
+  No historical replay; on stop, finish active streams.
 - The recorder and controllers retain their full-rate paths. Unpaced runs can have large
   simulation-time gaps and are not guaranteed smooth live visualization.
 
@@ -173,7 +193,7 @@ its compatible runtime dependencies into a dedicated Unity plugin assembly; do n
 Grpc.Tools itself. Core never references these assemblies. Host keeps its own internal
 generation; HOST-3 enables server generation for stream only.
 
-The managed contract build is checked here. Installing/pinning the Unity HTTP handler,
+Headless CI builds the managed contract assembly in Release configuration. Installing/pinning the Unity HTTP handler,
 Grpc.Net.Client and their dependencies, then verifying Editor/player cancellation and
 reconnect, belongs to UNITY-5. A successful netstandard build does **not** demonstrate
 that native handler loading or an actual Unity network connection works.
