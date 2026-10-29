@@ -93,7 +93,9 @@ file; the host gives each run its own.
   sensors, including none, so a staged run against a partly built service needs only a
   different file.
 - **Validation:** every field is required and unknown fields are rejected. Each part is
-  checked with its Core `IsValid`, so the file accepts exactly what Core accepts.
+  checked with its Core `IsValid`, so the file accepts exactly what Core accepts. Every
+  `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
+  at steps.
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 

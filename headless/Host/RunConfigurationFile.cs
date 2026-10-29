@@ -60,7 +60,7 @@ namespace Argus.Simulation.Host
 
                 ClassicalOrbitElements orbit = Orbit(Field(root, "initialOrbit", ""), "initialOrbit");
                 SpacecraftConfiguration spacecraft = Spacecraft(Field(root, "spacecraft", ""), "spacecraft");
-                SensorConfiguration[] sensors = Sensors(Field(root, "sensors", ""), "sensors");
+                SensorConfiguration[] sensors = Sensors(Field(root, "sensors", ""), "sensors", runId, epochUtc, fixedStepSeconds);
 
                 SimulationConfiguration configuration = new SimulationConfiguration(
                     runId,
@@ -116,7 +116,12 @@ namespace Argus.Simulation.Host
             return spacecraft;
         }
 
-        private static SensorConfiguration[] Sensors(JsonElement element, string path)
+        private static SensorConfiguration[] Sensors(
+            JsonElement element,
+            string path,
+            string runId,
+            DateTimeOffset epochUtc,
+            double fixedStepSeconds)
         {
             if (element.ValueKind != JsonValueKind.Array)
             {
@@ -130,6 +135,10 @@ namespace Argus.Simulation.Host
             {
                 string sensorPath = $"{path}[{index}]";
                 sensors[index] = Sensor(sensor, sensorPath);
+                Check(
+                    new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, sensors: new[] { sensors[index] }).IsValid,
+                    Join(sensorPath, "samplePeriodSeconds"),
+                    "must be a whole multiple of fixedStepSeconds");
                 Check(sensorIds.Add(sensors[index].Definition.SensorId), Join(sensorPath, "sensorId"), "duplicates another sensor's ID");
                 index++;
             }

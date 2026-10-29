@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Argus.Simulation.Core;
 using NUnit.Framework;
@@ -9,27 +8,29 @@ namespace Argus.Simulation.Tests
     public sealed class SensorConfigurationTests
     {
         // Each kind declares whether the backend models it; Argus never computes a kind the backend
-        // models (D10). A new kind fails here until it is added to this table (CORE-18).
+        // models (D10). A new kind fails here until it has a row with its expected answer, and
+        // IsBackendModelled throws for a kind it does not list (CORE-18).
         [Test]
         public void EveryKindDeclaresWhetherTheBackendModelsIt()
         {
-            Dictionary<SensorKind, SensorConfiguration> isBackendModelled = new Dictionary<SensorKind, SensorConfiguration>
+            (SensorConfiguration Sensor, bool IsBackendModelled)[] kinds =
             {
-                { SensorKind.Imu, SensorConfiguration.ForImu(Definition("imu.main"), default) },
-                { SensorKind.Magnetometer, SensorConfiguration.ForMagnetometer(Definition("mag.main"), default) },
-                { SensorKind.LightSensor, SensorConfiguration.ForLightSensor(Definition("light.px"), default) },
-                { SensorKind.Camera, Camera(4608, 3548.0, 0.0005) }
+                (SensorConfiguration.ForImu(Definition("imu.main"), default), true),
+                (SensorConfiguration.ForMagnetometer(Definition("mag.main"), default), true),
+                (SensorConfiguration.ForLightSensor(Definition("light.px"), default), true),
+                (Camera(4608, 3548.0, 0.0005), false)
             };
             SensorKind[] declared = Enum.GetValues(typeof(SensorKind))
                 .Cast<SensorKind>()
                 .Where(kind => kind != SensorKind.Unknown)
                 .ToArray();
 
-            Assert.That(isBackendModelled.Keys, Is.EquivalentTo(declared));
-            Assert.That(isBackendModelled[SensorKind.Imu].IsBackendModelled, Is.True);
-            Assert.That(isBackendModelled[SensorKind.Magnetometer].IsBackendModelled, Is.True);
-            Assert.That(isBackendModelled[SensorKind.LightSensor].IsBackendModelled, Is.True);
-            Assert.That(isBackendModelled[SensorKind.Camera].IsBackendModelled, Is.False);
+            Assert.That(kinds.Select(row => row.Sensor.Kind), Is.EquivalentTo(declared));
+            foreach ((SensorConfiguration sensor, bool isBackendModelled) in kinds)
+            {
+                Assert.That(sensor.IsBackendModelled, Is.EqualTo(isBackendModelled), sensor.Kind.ToString());
+            }
+
             Assert.That(default(SensorConfiguration).IsBackendModelled, Is.False);
         }
 

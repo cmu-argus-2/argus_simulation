@@ -9,8 +9,12 @@ namespace Argus.Simulation.Core
     // model.
     public sealed class ArducamImx708CameraModel : CameraModel
     {
-        // Waits for every render, as a lockstep run does.
-        // TODO(G3): take the limit from the first caller that supplies a renderer (late-frame policy).
+        // Never gives up on a render. Frames are published in order, so a render that hangs stops this
+        // camera, and one that falls behind the step loop delays every later frame; either way one more
+        // exposure stays pending per period until Reset. Safe only while no caller supplies a renderer
+        // (every exposure is then Unavailable at once). A caller cannot wait for renders yet:
+        // PendingExposureCount drops only when the next step samples the camera.
+        // TODO(G3): take the limit, or a way to wait, from the first caller that supplies a renderer (UNITY-4).
         private const double RenderLatencyLimitSeconds = double.PositiveInfinity;
 
         public ArducamImx708CameraModel(SensorConfiguration configuration, IImageRenderer renderer)

@@ -100,6 +100,7 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
         [TestCase("invalid camera intrinsics", "sensors[8].camera.intrinsics: needs")]
+        [TestCase("period off the step grid", "sensors[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
@@ -137,6 +138,11 @@ namespace Argus.Simulation.Host.Tests
                     JsonObject camera = CameraNode("cam.px");
                     camera["camera"]["intrinsics"]["widthPixels"] = 0;
                     sensors.Add(camera);
+                    break;
+                case "period off the step grid":
+                    JsonObject offGrid = CameraNode("cam.px");
+                    offGrid["samplePeriodSeconds"] = 0.25;
+                    sensors.Add(offGrid);
                     break;
             }
 

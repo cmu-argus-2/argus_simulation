@@ -1,3 +1,5 @@
+using System;
+
 namespace Argus.Simulation.Core
 {
     // Append new values only; never renumber.
@@ -48,9 +50,15 @@ namespace Argus.Simulation.Core
 
         // Where each kind is computed (D10, CORE-18). Backend-modelled sensors keep their physics and
         // cadence in the dynamics backend: only they go to ConfigureRun and MapMeasurements, and Argus
-        // never computes them. Every other kind is computed by Argus and never reaches the backend.
-        public bool IsBackendModelled =>
-            Kind is SensorKind.Imu or SensorKind.Magnetometer or SensorKind.LightSensor;
+        // never computes them. Argus-computed kinds never reach the backend. Every kind must be listed:
+        // an unlisted kind throws instead of silently never being sent or sampled.
+        public bool IsBackendModelled => Kind switch
+        {
+            SensorKind.Imu or SensorKind.Magnetometer or SensorKind.LightSensor => true,
+            SensorKind.Camera or SensorKind.Unknown => false,
+            _ => throw new InvalidOperationException(
+                $"Sensor kind {Kind} does not declare whether the backend models it (D10).")
+        };
 
         public static SensorConfiguration ForImu(SensorDefinition definition, ImuProfile profile) =>
             new SensorConfiguration(definition, SensorKind.Imu, profile, default, default, default);
