@@ -102,6 +102,10 @@ The scene is at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs,
 
 NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-06-21`, a date with daylight imagery up to the north pole. To change it, use the **SETTINGS** panel in the top toolbar, pass `-gt-date YYYY-MM-DD` and `-gt-layer LAYER` on the command line, or select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
 
+For tests and dataset generation you can optionally download the full-resolution imagery once
+(~31 GB per date as PNG, ~5 GB as JPEG) and have Unity read it from disk instead of streaming.
+See [Argus.Imagery/README.md](Argus.Imagery/README.md).
+
 ### Simulator controls
 
 - Left-drag to turn the globe, middle-drag to pan, and scroll to zoom.
