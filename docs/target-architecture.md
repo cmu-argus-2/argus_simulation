@@ -106,7 +106,7 @@ flowchart TB
 | BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; checked on real Basilisk without sensors (HOST-4, #28) | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (full P0 run with sensors HOST-5, #29) |
 | Run recorder | `Core/Recording/RunRecorder.cs` (`IRunRecorder`) | Writes dataset v1 (manifest, states, sensors, commands, PNG images) off the step loop; `headless/Host --record` feeds it from the gateway's events | The single export route for run data: states, every `SensorFrame`, the gateway command log | main (v0; Unity capture UNITY-9) |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
-| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1), the IMU (step 2) and the magnetometer (step 3); light sensors, pacing and actuators UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-3 on main; Basilisk/SPICE team implements the rest |
+| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1), the IMU (step 2), the magnetometer (step 3) and the light sensors with albedo (step 4); pacing, actuators and sensor noise beyond the IMU UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-4 on main; Basilisk/SPICE team implements the rest |
 | Flight computer (HIL) | `Argus.Hardware/` | README placeholder | HIL hardware adapters talking to the gateway | planned |
 | Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` from a run configuration file (placeholder P0 data) and records it with `--record` | Hosts the headless core process (G2): recorder, gateway server, Unity state stream | main (host skeleton) |
 
@@ -266,8 +266,8 @@ recorder and Unity through `StateProduced`.
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. The full P0 run with sensors is HOST-5 (#29). |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). |
 
-**Not built yet:** the Basilisk service's light sensors, pacing and actuators
-(only spacecraft, SPICE, eclipse, the IMU and the magnetometer are built; `BasiliskEngine` is checked on real Basilisk without sensors, and the full P0 run is HOST-5 (#29)); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
+**Not built yet:** the Basilisk service's pacing, actuators, and magnetometer and light-sensor
+noise (only spacecraft, SPICE, eclipse and the noise-free P0 sensors are built; `BasiliskEngine` is checked on real Basilisk without sensors, and the full P0 run is HOST-5 (#29)); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe).
@@ -345,7 +345,7 @@ Assets/ArgusSimulation/
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
 headless/                  dotnet build of Core + EditMode tests; Host/        main
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
-Argus.Basilisk/            Basilisk service with SPICE                         build steps 1-3 + brief
+Argus.Basilisk/            Basilisk service with SPICE                         build steps 1-4 + brief
 Argus.Hardware/            HIL adapters                                        planned (README)
 ```
 
@@ -383,9 +383,9 @@ Argus.Hardware/            HIL adapters                                        p
 - [ ] Follower runner: `StateStreamClient` implements `ISimulationStateSource`; build the
       orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
-- [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse, the IMU and the
-      magnetometer on main; the Basilisk/SPICE team implements the light sensors, pacing and
-      actuators).
+- [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse and the P0 sensors on
+      main; the Basilisk/SPICE team implements pacing, actuators and the remaining sensor
+      noise).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream
       (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
