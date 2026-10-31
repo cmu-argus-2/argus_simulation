@@ -141,6 +141,13 @@ A sensor added later brings its own `payload_type`. That is an added payload typ
 
 ### `commands.jsonl`: one line per gateway command record (CORE-7)
 
+Under D11 the command fields change in v1 before HOST-5 (#29) closes
+([device-model.md](../../../../docs/device-model.md) §6, CORE-20 #112). In `requested`, `applied`
+and `producing_command`, the three body-frame vectors give way to `devices`, which maps each device
+ID to its values; `applied` lists every configured actuator, idle ones included. The manifest's
+`sensors` becomes `devices` (CORE-19, #111), and `states.jsonl` gains each device's per-step state
+as `devices` (BSK-8, #21).
+
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
 every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
 an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
