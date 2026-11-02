@@ -314,11 +314,9 @@ def _raise_first(problems: list[ValidationError]) -> None:
 
 
 def _check_real_time_factor(problems: _Problems, value: float, path: str) -> None:
+    # 0 is unpaced; > 0 paces the run with ClockSynch (README §5).
     if not math.isfinite(value) or value < 0.0:
         problems.invalid(path, "must be finite and >= 0", value)
-    elif value > 0.0:
-        # Lifted by BSK-7 (#20) when ClockSynch pacing is built (README §5).
-        problems.unimplemented(path, "pacing (ClockSynch) is not built yet; use 0", value)
 
 
 def _check_orbit(problems: _Problems, orbit, path: str) -> None:

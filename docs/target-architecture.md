@@ -266,7 +266,7 @@ recorder and Unity through `StateProduced`.
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. The full P0 run with sensors is HOST-5 (#29). |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). |
 
-**Not built yet:** the Basilisk service's pacing, actuators, and magnetometer and light-sensor
+**Not built yet:** the Basilisk service's actuators, and magnetometer and light-sensor
 noise (only spacecraft, SPICE, eclipse and the noise-free P0 sensors are built; `BasiliskEngine` is checked on real Basilisk without sensors, and the full P0 run is HOST-5 (#29)); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
@@ -384,7 +384,7 @@ Argus.Hardware/            HIL adapters                                        p
       orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
 - [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse and the P0 sensors on
-      main; the Basilisk/SPICE team implements pacing, actuators and the remaining sensor
+      main, with pacing; the Basilisk/SPICE team implements actuators and the remaining sensor
       noise).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream
@@ -403,8 +403,8 @@ the gateway.
   needs no contracts change. Proposed: the generic map, with each kind rejecting unknown,
   missing or out-of-range parameters, as the run file does today.
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
-  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service
-  rejects any other value until BSK-7 (#20) builds pacing); whether lockstep runs use it stays open.
+  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced) and > 0
+  (paced by ClockSynch, BSK-7 #20); whether lockstep runs use Basilisk unpaced stays open.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6) Answered by DATA-4 (#69) with the navigation owner: no.
   Dataset v1 replaces it, and the one reader moves to dataset v1. Layout and field mapping:
