@@ -50,7 +50,7 @@ kernels are skipped until `kernels/` is filled.
 
 The service is built in steps ([Argus.Basilisk/README.md §12](Argus.Basilisk/README.md#12-build-order)).
 It runs the full P0 sensor set (IMU, magnetometer and light sensors), so the host's P0 run below
-runs end to end. Magnetometer and light-sensor noise are rejected with UNIMPLEMENTED for now.
+runs end to end. Light-sensor noise is rejected with UNIMPLEMENTED for now.
 
 ## Build and test the headless core
 
