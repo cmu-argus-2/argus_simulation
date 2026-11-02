@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); pacing, non-zero commands, and magnetometer and light-sensor noise are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); magnetometer and light-sensor noise are drawn in the service; pacing and non-zero commands are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
