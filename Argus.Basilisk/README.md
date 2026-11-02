@@ -100,9 +100,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      and a walk bound > 0 needs random walk > 0 (the same bound would clip white noise);
    - `noise_std_tesla ≥ 0`; noise > 0 is added by the service from the `mag` seed stream,
      because bsk 2.11.1 ignores the magnetometer's `RNGSeed` (§9, BSK-9 #22);
-   - `noise_std_w_per_m2 > 0` is UNIMPLEMENTED: bsk 2.11.1 cannot set coarseSunSensor's A
-     matrix from Python, and its default A makes the noise a random walk instead of white
-     noise (§9);
+   - `noise_std_w_per_m2 ≥ 0`; noise > 0 is white noise added by the service from the `css`
+     seed stream, because bsk 2.11.1's would be a random walk (§9, BSK-13 #116);
    - `epoch_utc` is inside the kernel set's `coverage_utc`, and inside WMM2025 validity
      (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
@@ -117,8 +116,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
    `SUPPORTED_SENSOR_KINDS` holds the P0 kinds `"imu"` (BSK-4, #17), `"magnetometer"`
    (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). Pacing and non-zero commands stay
-   UNIMPLEMENTED until BSK-7 (#20) and BSK-8 (#21), and light-sensor noise until BSK-13
-   (#116). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   UNIMPLEMENTED until BSK-7 (#20) and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -436,15 +434,19 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   `albOutMsgs[i]`.
 - Subscribe a reader to `cssDataOutMsg` at build time (§6). The sensor measures on its first
   firing, at t = 0.
-- With zero noise, `OutputData = scale (cos θ × shadow × (1 AU / d)² + albedoAtInstrument)`,
-  clipped to [0, saturation], where θ is the angle between the boresight and the Sun and d
-  the spacecraft–Sun distance. The output is irradiance at the real distance, not at 1 AU.
-- Noise is not available yet. In bsk 2.11.1, `setAMatrix` cannot be called from Python: its
-  SWIG binding takes an `Eigen::VectorXd` and has no typemap for it, so `[0.0]`,
-  `np.array([0.0])` and `[[0.0]]` all raise `TypeError`. The default A makes the noise a
-  random walk (lag-1 autocorrelation 0.997, spread growing far past σ), and `walkBounds`
-  only clips it. ConfigureRun therefore rejects `noise_std_w_per_m2 > 0` until white
-  light-sensor noise exists, upstream or in the service.
+- The module runs with `senNoiseStd = 0`, `minOutput = −inf` and `maxOutput = +inf`, so
+  `OutputData = scale (cos θ × shadow × (1 AU / d)² + albedoAtInstrument) + bias`, where θ
+  is the angle between the boresight and the Sun and d the spacecraft–Sun distance. The
+  output is irradiance at the real distance, not at 1 AU.
+- In bsk 2.11.1, `setAMatrix` cannot be called from Python: its SWIG binding takes an
+  `Eigen::VectorXd` and has no typemap for it, so `[0.0]`, `np.array([0.0])` and `[[0.0]]`
+  all raise `TypeError`, and the default A makes the module's noise a random walk (lag-1
+  autocorrelation 0.997). So the service adds the noise (BSK-13, #116):
+  `LightSensor.measurement()` returns `clip(OutputData + σ z_k, 0, saturation)`, with `z_k`
+  from `sample_normals(seed, "css", k)` (§10). `cssDataOutMsg` therefore holds the
+  noise-free, unclipped irradiance: its reader is for freshness checks only, and the sensor's
+  output is `measurement()`. Once a bsk release can set A from Python, the module's own
+  noise can replace this.
 
 ## 10. Seeds
 
@@ -453,7 +455,7 @@ Every noisy module gets
 with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the shared default
 `0x1badcad1`. Acceptance: changing one seed changes exactly that module's noise stream.
 
-A stream bsk 2.11.1 cannot seed (`mag`, §9) is drawn by the service, one sample at a time:
+A stream bsk 2.11.1 cannot seed or make white (`mag` and `css`, §9) is drawn by the service, one sample at a time:
 `sensors.sample_normals(seed, stream, k)` returns standard normals from PCG64 seeded with
 `SeedSequence([tag, seed, k])`, where `tag` is the first 4 bytes, little-endian, of
 `sha256(f"sample:{stream}")` and `k = seeds.sample_index(t, sample_period_ns)`. A sample
@@ -469,7 +471,7 @@ The draws are fixed by the `numpy` pin in `uv.lock`.
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A non-zero command after Step(0); light-sensor noise not built yet; `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A non-zero command after Step(0); `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 

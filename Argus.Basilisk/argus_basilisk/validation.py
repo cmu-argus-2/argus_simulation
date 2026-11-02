@@ -559,19 +559,11 @@ def _check_light_sensor(problems: _Problems, light_sensor, path: str) -> None:
         # field adds negative irradiance from behind the aperture.
         problems.invalid(f"{path}.field_of_view_half_angle_rad", "must be in (0, pi/2]", half_angle)
     _check_finite_positive(problems, light_sensor.scale_factor, f"{path}.scale_factor")
-    noise_valid = _check_finite_non_negative(problems, light_sensor.noise_std_w_per_m2, f"{path}.noise_std_w_per_m2")
+    # Noise > 0 is white noise added in the service, since bsk 2.11.1's would be a random walk
+    # (README §9).
+    _check_finite_non_negative(problems, light_sensor.noise_std_w_per_m2, f"{path}.noise_std_w_per_m2")
     _check_finite(problems, light_sensor.bias_w_per_m2, f"{path}.bias_w_per_m2")
     _check_finite_positive(problems, light_sensor.saturation_w_per_m2, f"{path}.saturation_w_per_m2")
-
-    # bsk 2.11.1 cannot set coarseSunSensor's A matrix from Python (its SWIG binding has no
-    # Eigen::VectorXd typemap), and the default A makes the noise a random walk (README §9).
-    # Lifted when white light-sensor noise exists.
-    if noise_valid and light_sensor.noise_std_w_per_m2 > 0.0:
-        problems.unimplemented(
-            f"{path}.noise_std_w_per_m2",
-            "bsk 2.11.1 light-sensor noise would be a random walk, not white; use 0",
-            light_sensor.noise_std_w_per_m2,
-        )
 
 
 def _check_timestamp(problems: _Problems, timestamp, path: str) -> bool:

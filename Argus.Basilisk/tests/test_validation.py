@@ -312,13 +312,10 @@ def test_magnetometer_noise_is_valid():
     assert problems_of(request) == []
 
 
-def test_light_sensor_noise_is_unimplemented():
-    # bsk 2.11.1 cannot make coarseSunSensor noise white from Python (README §9).
+def test_light_sensor_noise_is_valid():
     request = p0_default_request()
     request.configuration.sensors[2].light_sensor.noise_std_w_per_m2 = 1.0
-    problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("configuration.sensors[2].light_sensor.noise_std_w_per_m2")
+    assert problems_of(request) == []
 
 
 def test_pacing_is_unimplemented():

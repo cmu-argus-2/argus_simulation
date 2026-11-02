@@ -452,16 +452,19 @@ def test_light_sensor_maps_the_profile_into_the_module():
     profile.bias_w_per_m2 = 3.0
     hub = make_hub()
     sun, eclipse, albedo = environment_messages([1, 0, 0], 1.0, 0.0)
-    module = LightSensor(sensor, configuration.random_seed, hub.scStateOutMsg, sun, eclipse, albedo).module
+    light = LightSensor(sensor, configuration.random_seed, hub.scStateOutMsg, sun, eclipse, albedo)
+    module = light.module
     scale = 0.9 * SOLAR_IRRADIANCE_W_PER_M2
 
     assert module.ModelTag == "css[light.px]"
-    assert module.RNGSeed == rng_seed(configuration.random_seed, "light.px", CSS)
+    assert light.rng_seed == rng_seed(configuration.random_seed, "light.px", CSS)
     assert module.scaleFactor == scale
-    assert module.senNoiseStd == 2.0 / scale
+    # The module never adds noise or clips: bsk 2.11.1's noise would be a random walk, so
+    # measurement() does both.
+    assert module.senNoiseStd == 0.0
     assert module.senBias == 3.0 / scale
     assert module.fov == profile.field_of_view_half_angle_rad
-    assert (module.minOutput, module.maxOutput) == (0.0, profile.saturation_w_per_m2)
+    assert (module.minOutput, module.maxOutput) == (-math.inf, math.inf)
     assert module.kellyFactor == 0.0
     assert module.faultState == coarseSunSensor.NOMINAL
     assert np.allclose(np.ravel(module.nHat_B), [1, 0, 0], atol=1e-15)
@@ -499,3 +502,82 @@ def test_noise_free_light_sensor_reads_direct_sun_plus_albedo(shadow_factor):
 
     expected = SOLAR_IRRADIANCE_W_PER_M2 * (math.cos(theta) * shadow_factor + 0.05)
     assert light.measurement().irradiance_w_per_m2 == pytest.approx(expected, rel=1e-9)
+
+
+def run_light_sensors(sensors, steps, sun_direction=(0.6, 0.8, 0.0), shadow_factor=1.0, albedo_ratio=0.05):
+    """Each light sensor's irradiance per step on a still hub, in a fixed Sun, eclipse and albedo."""
+    hub = make_hub()
+    hub.hub.omega_BN_BInit = [[0.0], [0.0], [0.0]]
+    hub.hub.r_CN_NInit = [[0.0], [0.0], [0.0]]
+    hub.hub.v_CN_NInit = [[0.0], [0.0], [0.0]]
+    sun, eclipse, albedo = environment_messages(list(sun_direction), shadow_factor, albedo_ratio)
+    lights = [LightSensor(sensor, 1, hub.scStateOutMsg, sun, eclipse, albedo) for sensor in sensors]
+    sim = SimulationBaseClass.SimBaseClass()
+    process = sim.CreateNewProcess("dynamics")
+    process.addTask(sim.CreateNewTask("dynamics", STEP_NS), 200)
+    process.addTask(sim.CreateNewTask("sensors", STEP_NS), 100)
+    sim.AddModelToTask("dynamics", hub)
+    for light in lights:
+        sim.AddModelToTask("sensors", light.module)
+    sim.InitializeSimulation()
+
+    outputs = {light.sensor_id: [] for light in lights}
+    for n in range(steps):
+        sim.ConfigureStopTime(n * STEP_NS)
+        sim.ExecuteSimulation()
+        for light in lights:
+            outputs[light.sensor_id].append(light.measurement().irradiance_w_per_m2)
+    return {sensor_id: np.array(values) for sensor_id, values in outputs.items()}
+
+
+def test_light_sensor_noise_is_white_with_the_configured_sigma():
+    """10,000 samples of a fixed geometry: the noise bsk 2.11.1 would make a random walk is white."""
+    sensor = light_sensors(p0_default_request().configuration)[0]
+    sensor.light_sensor.noise_std_w_per_m2 = 0.0
+    clean = run_light_sensors([sensor], steps=10_000)["light.px"]
+    sensor.light_sensor.noise_std_w_per_m2 = 2.0
+    error = run_light_sensors([sensor], steps=10_000)["light.px"] - clean
+
+    assert np.ptp(clean) == 0.0 and 0.0 < clean[0] < sensor.light_sensor.saturation_w_per_m2
+    assert abs(error.mean()) < 3 * 2.0 / math.sqrt(error.size)
+    assert error.std() == pytest.approx(2.0, rel=0.02)
+    assert abs(np.corrcoef(error[:-1], error[1:])[0, 1]) < 0.05
+
+
+def test_light_sensor_noise_is_added_then_clipped_to_zero_and_saturation():
+    sensor = light_sensors(p0_default_request().configuration)[0]
+    profile = sensor.light_sensor
+    profile.noise_std_w_per_m2 = 0.0
+    profile.saturation_w_per_m2 = 1e6
+    unlit = run_light_sensors([sensor], steps=50, shadow_factor=0.0, albedo_ratio=0.0)["light.px"]
+    lit = run_light_sensors([sensor], steps=50)["light.px"]
+    assert np.all(unlit == 0.0)
+
+    profile.noise_std_w_per_m2 = 5.0
+    noise = 5.0 * np.array([sample_normals(rng_seed(1, "light.px", CSS), CSS, k, size=1)[0] for k in range(50)])
+    noisy_unlit = run_light_sensors([sensor], steps=50, shadow_factor=0.0, albedo_ratio=0.0)["light.px"]
+    assert np.array_equal(noisy_unlit, np.maximum(noise, 0.0))
+    assert np.any(noisy_unlit == 0.0) and np.any(noisy_unlit > 0.0)
+
+    profile.saturation_w_per_m2 = lit[0]
+    noisy_lit = run_light_sensors([sensor], steps=50)["light.px"]
+    assert np.array_equal(noisy_lit, np.minimum(lit + noise, lit[0]))
+    assert np.any(noisy_lit == lit[0]) and np.any(noisy_lit < lit[0])
+
+
+def test_changing_one_light_sensor_seed_changes_only_its_noise():
+    sensors = light_sensors(p0_default_request().configuration)[:2]
+    for sensor in sensors:
+        sensor.light_sensor.noise_std_w_per_m2 = 2.0
+        sensor.light_sensor.saturation_w_per_m2 = 1e6
+    first_run = run_light_sensors(sensors, steps=20)
+
+    renamed = sensors[1].definition.sensor_id + ".spare"
+    sensors[1].definition.sensor_id = renamed
+    second_run = run_light_sensors(sensors, steps=20)
+
+    first_id = sensors[0].definition.sensor_id
+    assert np.array_equal(first_run[first_id], second_run[first_id])
+    (other_id,) = set(first_run) - {first_id}
+    assert not np.array_equal(first_run[other_id] - first_run[other_id].mean(),
+                              second_run[renamed] - second_run[renamed].mean())

@@ -1,7 +1,8 @@
 """P0 sensor modules (README §9).
 
 Build order steps 2 to 4 (README §12): the IMU, the magnetometer and the light sensors, which
-complete the P0 sensor set. Magnetometer noise is drawn in the service (BSK-9, #22).
+complete the P0 sensor set. Magnetometer and light-sensor noise are drawn in the service (BSK-9
+#22, BSK-13 #116).
 
 Each Argus sensor owns its Basilisk modules and the readers subscribed to their output messages
 at build time (§6). The Scenario adds the modules to the sensor task for their period, checks the
@@ -134,8 +135,11 @@ class Magnetometer:
 class LightSensor:
     """One Argus light sensor: a coarseSunSensor reporting irradiance in W/m2, with Earth albedo.
 
-    OutputData = scale (cos(theta) x shadow + albedo + noise + bias), clipped to [0, saturation],
+    OutputData = scale (cos(theta) x shadow + albedo + bias) + noise, clipped to [0, saturation],
     with scale = scale_factor x 1361 W/m2 and theta the angle between the boresight and the Sun.
+    bsk 2.11.1 cannot make coarseSunSensor noise white from Python, so the module runs noise-free
+    and unclipped, and measurement() adds the seeded noise from the "css" stream and clips (§9,
+    BSK-13 #116).
     """
 
     kind = "light_sensor"
@@ -145,12 +149,14 @@ class LightSensor:
         profile = sensor.light_sensor
         self.sensor_id = definition.sensor_id
         self.sample_period_ns = definition.sample_period_ns
+        self.rng_seed = seeds.rng_seed(random_seed, self.sensor_id, seeds.CSS)
+        self._noise_std = profile.noise_std_w_per_m2
+        self._saturation = profile.saturation_w_per_m2
         field_of_view, boresight_body, position_body = light_sensor_instrument(sensor)
         scale = profile.scale_factor * SOLAR_IRRADIANCE_W_PER_M2
 
         self.module = coarseSunSensor.CoarseSunSensor()
         self.module.ModelTag = f"css[{self.sensor_id}]"
-        self.module.RNGSeed = seeds.rng_seed(random_seed, self.sensor_id, seeds.CSS)
         self.module.stateInMsg.subscribeTo(spacecraft_state_msg)
         self.module.sunInMsg.subscribeTo(sun_msg)
         self.module.sunEclipseInMsg.subscribeTo(eclipse_msg)
@@ -160,13 +166,13 @@ class LightSensor:
         self.module.nHat_B = boresight_body
         self.module.r_B = position_body
         self.module.scaleFactor = scale
-        # Noise and bias are in units of the unscaled output, so the W/m2 profile values are divided
-        # by the scale. Validation keeps the noise at 0: setAMatrix cannot be called from Python in
-        # bsk 2.11.1, and the default A makes the noise a random walk (README §9).
-        self.module.senNoiseStd = profile.noise_std_w_per_m2 / scale
+        # The bias is in units of the unscaled output, so the W/m2 profile value is divided by the
+        # scale. Noise and clipping are applied in measurement(): setAMatrix cannot be called from
+        # Python in bsk 2.11.1, and the default A makes the module's noise a random walk.
+        self.module.senNoiseStd = 0.0
         self.module.senBias = profile.bias_w_per_m2 / scale
-        self.module.maxOutput = profile.saturation_w_per_m2
-        self.module.minOutput = 0.0
+        self.module.maxOutput = math.inf
+        self.module.minOutput = -math.inf
         self.module.kellyFactor = 0.0
         self._reader = self.module.cssDataOutMsg.addSubscriber()
 
@@ -176,6 +182,8 @@ class LightSensor:
 
     @property
     def readers(self) -> dict:
+        """For freshness checks only: cssDataOutMsg holds the noise-free, unclipped irradiance, and
+        the sensor's output is measurement()."""
         return {f"{self.module.ModelTag}.cssDataOutMsg": self._reader}
 
     @property
@@ -184,7 +192,12 @@ class LightSensor:
         return True
 
     def measurement(self) -> sensors_pb.LightSensorMeasurement:
-        return sensors_pb.LightSensorMeasurement(irradiance_w_per_m2=self._reader().OutputData)
+        irradiance = self._reader().OutputData
+        if self._noise_std > 0.0:
+            k = seeds.sample_index(self._reader.timeWritten(), self.sample_period_ns)
+            irradiance += self._noise_std * float(sample_normals(self.rng_seed, seeds.CSS, k, size=1)[0])
+        return sensors_pb.LightSensorMeasurement(
+            irradiance_w_per_m2=min(max(irradiance, 0.0), self._saturation))
 
 
 def light_sensor_instrument(sensor) -> tuple:
