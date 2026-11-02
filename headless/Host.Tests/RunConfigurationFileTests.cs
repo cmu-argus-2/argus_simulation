@@ -207,7 +207,7 @@ namespace Argus.Simulation.Host.Tests
             SensorConfiguration Light(string sensorId, string frameId, Vector3d position, Vector3d sensorX, Vector3d sensorY, Vector3d sensorZ) =>
                 SensorConfiguration.ForLightSensor(
                     Definition(sensorId, "placeholder-face-light-sensor", frameId, new SensorMount(position, Quaterniond.FromBasis(sensorX, sensorY, sensorZ))),
-                    new LightSensorProfile(Math.PI / 2.0, 1.0, 1.0, 0.0, 2000.0));
+                    new LightSensorProfile(Math.PI / 2.0, 1.0, 0.0, 0.0, 2000.0));
 
             SensorConfiguration[] sensors =
             {

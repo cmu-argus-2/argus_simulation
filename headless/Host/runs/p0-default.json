@@ -86,7 +86,7 @@
       "lightSensor": {
         "fieldOfViewHalfAngleRadians": 1.5707963267948966,
         "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
+        "noiseStdWattsPerSquareMeter": 0.0,
         "biasWattsPerSquareMeter": 0.0,
         "saturationWattsPerSquareMeter": 2000.0
       }
@@ -105,7 +105,7 @@
       "lightSensor": {
         "fieldOfViewHalfAngleRadians": 1.5707963267948966,
         "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
+        "noiseStdWattsPerSquareMeter": 0.0,
         "biasWattsPerSquareMeter": 0.0,
         "saturationWattsPerSquareMeter": 2000.0
       }
@@ -124,7 +124,7 @@
       "lightSensor": {
         "fieldOfViewHalfAngleRadians": 1.5707963267948966,
         "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
+        "noiseStdWattsPerSquareMeter": 0.0,
         "biasWattsPerSquareMeter": 0.0,
         "saturationWattsPerSquareMeter": 2000.0
       }
@@ -143,7 +143,7 @@
       "lightSensor": {
         "fieldOfViewHalfAngleRadians": 1.5707963267948966,
         "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
+        "noiseStdWattsPerSquareMeter": 0.0,
         "biasWattsPerSquareMeter": 0.0,
         "saturationWattsPerSquareMeter": 2000.0
       }
@@ -162,7 +162,7 @@
       "lightSensor": {
         "fieldOfViewHalfAngleRadians": 1.5707963267948966,
         "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
+        "noiseStdWattsPerSquareMeter": 0.0,
         "biasWattsPerSquareMeter": 0.0,
         "saturationWattsPerSquareMeter": 2000.0
       }
@@ -181,7 +181,7 @@
       "lightSensor": {
         "fieldOfViewHalfAngleRadians": 1.5707963267948966,
         "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
+        "noiseStdWattsPerSquareMeter": 0.0,
         "biasWattsPerSquareMeter": 0.0,
         "saturationWattsPerSquareMeter": 2000.0
       }

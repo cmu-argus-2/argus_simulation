@@ -103,10 +103,10 @@ flowchart TB
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a `SimulationState` with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor` | Adds camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (cameras planned) |
 | Simulation gateway | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` and `Step(command k)` over `ISimulationEngine` in the DATA-5 order; returns controller-visible observations, and truth only through `StateProduced`; owns the run's `SensorManager`; logs every command it receives, applied or rejected, through `CommandLogged` (`CommandRecord`); used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for HIL flight computers and other external controllers: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; limits CORE-10, authority CORE-9) |
-| BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; unverified against a real service, which is a skeleton | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (client; service planned) |
+| BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; checked on real Basilisk without sensors (HOST-4, #28) | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (full P0 run with sensors HOST-5, #29) |
 | Run recorder | `Core/Recording/RunRecorder.cs` (`IRunRecorder`) | Writes dataset v1 (manifest, states, sensors, commands, PNG images) off the step loop; `headless/Host --record` feeds it from the gateway's events | The single export route for run data: states, every `SensorFrame`, the gateway command log | main (v0; Unity capture UNITY-9) |
 | Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
-| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1), the IMU (step 2) and the magnetometer (step 3); light sensors, pacing and actuators UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-3 on main; Basilisk/SPICE team implements the rest |
+| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1), the IMU (step 2), the magnetometer (step 3) and the light sensors with albedo (step 4); pacing, actuators and sensor noise beyond the IMU UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-4 on main; Basilisk/SPICE team implements the rest |
 | Flight computer (HIL) | `Argus.Hardware/` | README placeholder | HIL hardware adapters talking to the gateway | planned |
 | Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` from a run configuration file (placeholder P0 data) and records it with `--record` | Hosts the headless core process (G2): recorder, gateway server, Unity state stream | main (host skeleton) |
 
@@ -127,6 +127,7 @@ tiles. It is not run data and sits outside D6.
 | D8 | Unity never sees Basilisk-specific types. | Keeps the backend replaceable. | All Basilisk data enters through `BasiliskEngine` as Argus contracts. |
 | D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. |
 | D10 | Sensors that Basilisk models (IMU, magnetometer, light sensor) keep their physics and cadence in Basilisk. | One implementation of each sensor's physics, timed by the clock that owns the run (D2). | `BasiliskEngine` maps each step's Basilisk sensor messages into `SimulationState.SensorMeasurements`; a `BackendSensorModel<T>` publishes a frame exactly when its sensor was sampled and never computes, holds or repeats a value. |
+| D11 | A spacecraft is a body plus a list of configured devices. Every sensor and actuator is a device: an instance of a generic device kind, registered by name and configured with an ID, mount, rate and that kind's parameters. Commands address actuators by device ID. | Argus is a platform for many spacecraft, not one, and their hardware is not fixed in advance. A team adopts its spacecraft by writing a profile, not by changing contracts or code. When the hardware is unknown, the device starts as an ideal kind and takes a real part's parameters later. | A spacecraft profile file (body and devices) is kept apart from the run file (orbit, epoch, initial conditions, seed). Kinds are physics models, not part numbers: gyroscope, accelerometer, magnetometer and light sensor; ideal body torque, momentum wheel, magnetic torquer and thruster. A specific part is a parameter set for its kind. Adding a kind adds one Core model and, when Basilisk models its physics (D10), one service builder, each registered by kind name. The gateway, recorder, command log and file formats do not change. Each kind validates its own parameters and command values, so actuator limits are per device (CORE-10). `SensorKind`, the sensor profile oneofs and the fixed three-vector `ActuatorCommandSet` are replaced (CON-4). Actuator kinds come after the sensor work, starting with ideal body torque. |
 
 ## 4. Run modes
 
@@ -236,7 +237,8 @@ recorder and Unity through `StateProduced`.
 | `ISpacecraftStateSource` | `Core/Abstractions/ISimulationStateSource.cs`, `IStepDrivenStateSource.cs` | Replaced by `ISimulationStateSource`, which carries the whole state; the analytic source is also `IStepDrivenStateSource` | D2, G2 | done (stream client planned) |
 | `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 | planned |
 | `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` (scenario = `SimulationConfiguration`) returns observation 0; `Step(command k)` returns observation k+1 (controller-visible frames, never `SimulationState`; §4); command log; authority and heartbeat | D7, G1 | observations and command log done; limits and authority planned (CORE-10, CORE-9) |
-| Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | An engine that applies them | G1 | planned |
+| Devices | `Core/Contracts/` (`DeviceConfiguration`, kind registry) | Sensors and actuators as configured devices of a spacecraft profile; kinds registered by name | D11, G5 | planned (CON-4) |
+| Actuator commands | `Core/Contracts/ActuatorCommandSet.cs` → `BasiliskEngine` | Per-device commands (device ID and the kind's values) in place of three fixed body-frame vectors, and an engine that applies them | D11, G1 | planned |
 
 ## 6. Frames, units and time
 
@@ -258,14 +260,14 @@ recorder and Unity through `StateProduced`.
 
 | # | Gap | Notes |
 |---|---|---|
-| G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state; `BasiliskEngine` sends it as `StepRequest.command`, and the v1 link defines a non-zero command as UNIMPLEMENTED until actuators exist. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. |
+| G1 | No backend applies actuator commands | `SimulationGateway.Step` already forwards `ActuatorCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state; `BasiliskEngine` sends it as `StepRequest.command`, and the v1 link defines a non-zero command as UNIMPLEMENTED until actuators exist. The gateway already rejects non-finite commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and always sends `ActuatorCommandSet.None`. Under D11, actuators become configured devices and commands address them by device ID, replacing the three fixed body-frame vectors; actuator kinds follow the sensor work, starting with ideal body torque (CON-4, #105). |
 | G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. `headless/Host` already runs the gateway, `BasiliskEngine`, the P0 sensors and the recorder; the gateway server and the state stream (`StateStreamServer`, `StateStreamClient`, `state_stream.proto`) are placeholders. |
 | G3 | Camera timing in real time | A Cesium render can take longer than a step. Decided (CORE-3 #38): stamp with capture time. `CameraModel` starts each exposure at its slot and publishes the frame on the step its render finishes, with the capture state's sequence and time, in sequence order. An exposure not rendered within the camera's latency limit (simulation time), or whose render fails, is published as `Unavailable`; frames are never dropped silently, marked `Stale`, or black. A step loop that must not outrun the renderer waits until `PendingExposureCount` is 0. With no `EnvironmentState` (analytic runs, D9) the camera still renders and the request records that it has no Sun position; the Sun is never approximated. |
-| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. None of it has run against a real Basilisk service yet. |
-| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). |
+| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. The full P0 run with sensors is HOST-5 (#29). |
+| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels. Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). |
 
-**Not built yet:** the Basilisk service's light sensors, pacing and actuators
-(only spacecraft, SPICE, eclipse, the IMU and the magnetometer are built, so `BasiliskEngine` is unverified against real Basilisk); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
+**Not built yet:** the Basilisk service's pacing, actuators, and magnetometer and light-sensor
+noise (only spacecraft, SPICE, eclipse and the noise-free P0 sensors are built; `BasiliskEngine` is checked on real Basilisk without sensors, and the full P0 run is HOST-5 (#29)); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
 the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe).
@@ -343,7 +345,7 @@ Assets/ArgusSimulation/
 └── Tests/                 EditMode (Core only), PlayMode (Unity)              main
 headless/                  dotnet build of Core + EditMode tests; Host/        main
 Argus.Contracts/           Protobuf schemas (v1 Basilisk link)                 main
-Argus.Basilisk/            Basilisk service with SPICE                         build steps 1-3 + brief
+Argus.Basilisk/            Basilisk service with SPICE                         build steps 1-4 + brief
 Argus.Hardware/            HIL adapters                                        planned (README)
 ```
 
@@ -381,9 +383,9 @@ Argus.Hardware/            HIL adapters                                        p
 - [ ] Follower runner: `StateStreamClient` implements `ISimulationStateSource`; build the
       orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
-- [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse, the IMU and the
-      magnetometer on main; the Basilisk/SPICE team implements the light sensors, pacing and
-      actuators).
+- [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse and the P0 sensors on
+      main; the Basilisk/SPICE team implements pacing, actuators and the remaining sensor
+      noise).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream
       (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
@@ -395,16 +397,23 @@ the gateway.
 
 ## 11. Open questions
 
+- How does the proto carry a device kind's parameters and command values? (D11) The options
+  are a typed message per kind, where the schema checks fields but each new kind needs a
+  contracts change, or one generic parameter map that each kind validates, where a new kind
+  needs no contracts change. Proposed: the generic map, with each kind rejecting unknown,
+  missing or out-of-range parameters, as the run file does today.
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
-  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service is
-  still a skeleton); whether lockstep runs use it stays open.
+  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service
+  rejects any other value until BSK-7 (#20) builds pacing); whether lockstep runs use it stays open.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6) Answered by DATA-4 (#69) with the navigation owner: no.
   Dataset v1 replaces it, and the one reader moves to dataset v1. Layout and field mapping:
   `Core/Recording/README.md`.
 - Does `SpacecraftState` stay canonical ITRF93 with conversion only at the Basilisk
-  boundary, or also carry inertial fields? (G4) Proposed: canonical Earth-fixed plus the
-  frame tag; inertial quantities are recoverable from `EnvironmentState` (q and ω).
+  boundary, or also carry inertial fields? (G4) Answered by HOST-4 (#28): canonical
+  ITRF93 plus the frame tag. Inertial quantities are recovered from `EnvironmentState`
+  (`J2000ToItrf93` and the Earth rate). On real data, that round trip reproduces CSPICE's
+  J2000-to-ITRF93 state transform to about 4e-16 relative, so no inertial fields are added.
 - Where does the gRPC client for `BasiliskEngine` live? (D1) Answered on `main`:
   `headless/Host`, with internal generated code, over the internal `Core/Basilisk`
   mapping, so Core never references Protobuf or gRPC.
