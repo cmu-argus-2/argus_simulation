@@ -14,6 +14,7 @@ namespace Argus.Simulation.Core
     // Frames are published in sequence order. An exposure that is not rendered within
     // MaximumLatencySeconds of simulation time, or whose render fails, is published as Unavailable;
     // a camera never publishes a black or approximated image. TrySample never waits for a render.
+    // An exposure still pending when the run ends or the camera resets is never published.
     public abstract class CameraModel : SensorModel<ImageFrame>
     {
         private const double TimeToleranceSeconds = 1e-9;
@@ -57,8 +58,9 @@ namespace Argus.Simulation.Core
         // PositiveInfinity waits for every render, for runs whose step loop waits for the camera.
         public double MaximumLatencySeconds { get; }
 
-        // Exposures started but not yet published; a step loop that must not outrun the renderer
-        // (lockstep runs) can wait until this is 0.
+        // Exposures started but not yet published. This is a queue depth, not something to wait on:
+        // it falls only inside TrySample, so a step loop that waits for 0 before stepping never
+        // finishes. Waiting for the renderer belongs with the first renderer (UNITY-4, #57).
         public int PendingExposureCount => _pending.Count;
 
         // Camera position and orientation for an exposure. The default is body-mounted: the mount's
@@ -75,6 +77,8 @@ namespace Argus.Simulation.Core
             cameraToEcef = (spacecraft.BodyToEcef * mount.SensorToBody).Normalized();
         }
 
+        // Cancels pending exposures without publishing them. A reset has no output path, and the
+        // frames belong to the run directory the reset just ended (G3).
         protected override void OnReset(SensorResetContext context)
         {
             while (_pending.Count > 0)
