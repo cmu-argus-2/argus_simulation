@@ -415,17 +415,12 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   `support_files` entry of `argus-2026-10-20` checked before the build, and never downloaded
   during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
   Basilisk v2.11.1's byte-identical copy (the file `dataFetcher` would download).
-- **Noise is seeded in the service (BSK-9, #22).** bsk 2.11.1 seeds the module's private
-  generator in its constructor with the default seed and ignores `RNGSeed` (checked: seeds
-  1234 and 99999 give the default stream), so every run and every magnetometer would get the
-  same noise. The choice was service-side noise rather than an upstream patch and a bsk pin
-  bump: it keeps `bsk==2.11.1` and the protobuf ≤ 7.35.0 constraint, and stays in the backend
-  (D10). The module runs noise-free and unclipped; `sensors.Magnetometer.measurement()` takes
-  its `tam_S = scale (C_SB C_BN B_N + bias)` and returns
-  `clip(tam_S + scale σ z_k, −R, +R)`, which is bsk's formula with σ moved out of the module.
-  `z_k` is three standard normals from `numpy.random.default_rng([seed, k])`, with `seed` the
-  §10 `mag` seed and `k = t / sample_period_ns` the sample index, so a sample depends only
-  on its seed and index. The stream is fixed by the `numpy` pin in `uv.lock`.
+- bsk 2.11.1 ignores the magnetometer's `RNGSeed`, so the service adds the noise (BSK-9,
+  #22): the module runs noise-free and unclipped, and `Magnetometer.measurement()` returns
+  `clip(tam_S + scale σ z_k, −R, +R)`, bsk's formula with σ moved out of the module. `z_k` is
+  `sample_normals(seed, "mag", k)` (§10). `tamDataOutMsg` therefore holds the noise-free,
+  unclipped field: its reader is for freshness checks only, and the sensor's output is
+  `measurement()`.
 
 **Light sensor** (`coarseSunSensor.CoarseSunSensor`):
 - `fov`; `scaleFactor = g × 1361` so the output is W/m²; `senNoiseStd = σ / scaleFactor`;
@@ -456,8 +451,15 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 Every noisy module gets
 `RNGSeed = int.from_bytes(sha256(f"{random_seed}:{sensor_id}:{stream}".encode()).digest()[:4], "little")`
 with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the shared default
-`0x1badcad1`. The `mag` seed is not given to bsk: it seeds the service-side magnetometer
-noise (§9). Acceptance: changing one seed changes exactly that module's noise stream.
+`0x1badcad1`. Acceptance: changing one seed changes exactly that module's noise stream.
+
+A stream bsk 2.11.1 cannot seed (`mag`, §9) is drawn by the service, one sample at a time:
+`sensors.sample_normals(seed, stream, k)` returns standard normals from PCG64 seeded with
+`SeedSequence([tag, seed, k])`, where `tag` is the first 4 bytes, little-endian, of
+`sha256(f"sample:{stream}")` and `k = seeds.sample_index(t, sample_period_ns)`. A sample
+depends only on its seed, stream and index; the tag keeps it apart from any generator seeded
+with `seed` alone, and an off-grid sample time raises (INTERNAL) instead of reusing an index.
+The draws are fixed by the `numpy` pin in `uv.lock`.
 
 ## 11. Error codes
 

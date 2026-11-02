@@ -17,8 +17,8 @@ from Basilisk.simulation import coarseSunSensor  # noqa: E402
 
 from argus_basilisk.seeds import ACCEL, CSS, GYRO, MAG, rng_seed  # noqa: E402
 from argus_basilisk.sensors import (  # noqa: E402
-    Imu, LightSensor, Magnetometer, SOLAR_IRRADIANCE_W_PER_M2, _magnetometer_noise, build_sensors,
-    light_sensor_instrument)
+    Imu, LightSensor, Magnetometer, SOLAR_IRRADIANCE_W_PER_M2, build_sensors, light_sensor_instrument,
+    sample_normals)
 from test_validation import p0_default_request, set_quaternion, set_vector  # noqa: E402
 
 STEP_NS = 100_000_000
@@ -347,7 +347,7 @@ def test_magnetometer_noise_is_scaled_then_clipped():
     noisy = run_magnetometers(configuration, steps=20)["mag.main"]
 
     seed = rng_seed(configuration.random_seed, "mag.main", MAG)
-    noise = np.array([_magnetometer_noise(seed, n) for n in range(20)])
+    noise = np.array([sample_normals(seed, MAG, n) for n in range(20)])
     expected = np.clip(unclipped + 1.1 * 1e-6 * noise, -3e-5, 3e-5)
     assert np.array_equal(noisy, expected)
     assert np.sum(np.abs(noisy) == 3e-5) > 0  # Some axes clip.
@@ -392,11 +392,16 @@ def test_changing_one_magnetometer_seed_changes_only_its_noise():
     assert not np.array_equal(first_run["mag.main"], reseeded["mag.main"])
 
 
-def test_magnetometer_noise_depends_only_on_seed_and_sample_index():
+def test_sample_normals_are_pinned_per_seed_stream_and_index():
+    """Pinned values (numpy 2.4.6 in uv.lock), so a change inside sample_normals fails here."""
     seed = rng_seed(1, "mag.main", MAG)
-    assert np.array_equal(_magnetometer_noise(seed, 5), _magnetometer_noise(seed, 5))
-    assert not np.array_equal(_magnetometer_noise(seed, 5), _magnetometer_noise(seed, 6))
-    assert not np.array_equal(_magnetometer_noise(seed, 5), _magnetometer_noise(seed + 1, 5))
+    assert sample_normals(seed, MAG, 7).tolist() == [-1.2898110306945079, 0.30201081627962734, -1.2967257220131292]
+    assert not np.array_equal(sample_normals(seed, MAG, 7), sample_normals(seed, MAG, 8))
+    assert not np.array_equal(sample_normals(seed, MAG, 7), sample_normals(seed + 1, MAG, 7))
+    assert not np.array_equal(sample_normals(seed, MAG, 7), sample_normals(seed, CSS, 7))
+    # The stream tag keeps sample 0 apart from a generator seeded with the seed alone.
+    assert not np.array_equal(sample_normals(seed, MAG, 0), np.random.default_rng(seed).standard_normal(3))
+    assert not np.array_equal(sample_normals(seed, MAG, 0), np.random.default_rng([seed, 0]).standard_normal(3))
 
 
 def test_magnetometer_needs_the_magnetic_field_message():

@@ -1,6 +1,8 @@
 """Per-module seeds (README §10); no Basilisk install."""
 
-from argus_basilisk.seeds import ACCEL, CSS, GYRO, MAG, rng_seed
+import pytest
+
+from argus_basilisk.seeds import ACCEL, CSS, GYRO, MAG, rng_seed, sample_index
 
 BASILISK_DEFAULT_SEED = 0x1BADCAD1
 
@@ -24,3 +26,10 @@ def test_each_input_changes_the_seed():
     }
     assert len(seeds) == 16
     assert BASILISK_DEFAULT_SEED not in seeds
+
+
+def test_sample_index_counts_periods_and_rejects_an_off_grid_time():
+    assert sample_index(0, 100_000_000) == 0
+    assert sample_index(300_000_000, 100_000_000) == 3
+    with pytest.raises(ValueError, match="150000000"):
+        sample_index(150_000_000, 100_000_000)

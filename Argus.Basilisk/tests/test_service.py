@@ -27,7 +27,7 @@ from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
 from argus_basilisk.seeds import MAG, rng_seed  # noqa: E402
-from argus_basilisk.sensors import _magnetometer_noise  # noqa: E402
+from argus_basilisk.sensors import sample_normals  # noqa: E402
 from test_validation import p0_default_request, set_quaternion, set_vector, zero_command  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -502,15 +502,19 @@ def test_noisy_magnetometer_adds_seeded_noise_to_the_noise_free_reading(service)
     servicer, stub = service
     stub.ConfigureRun(magnetometer_request())
     clean = [stub.Step(step_request(n)) for n in range(20)]
-    stub.ConfigureRun(noisy_magnetometer_request())
+    request = noisy_magnetometer_request()
+    stub.ConfigureRun(request)
     noisy = [stub.Step(step_request(n)) for n in range(20)]
 
-    seed = servicer._run.scenario.sensors[1].rng_seed
-    assert seed == rng_seed(1, "mag.main", MAG)
+    seed = rng_seed(request.configuration.random_seed, "mag.main", MAG)
+    assert servicer._run.scenario.sensors[1].rng_seed == seed
+    profile = request.configuration.sensors[1].magnetometer
+    sigma = profile.scale_factor * profile.noise_std_tesla
     for n, (before, after) in enumerate(zip(clean, noisy)):
         before_mag = xyz(before.sensor_samples[1].magnetometer.magnetic_field_sensor_tesla)
         after_mag = xyz(after.sensor_samples[1].magnetometer.magnetic_field_sensor_tesla)
-        assert np.allclose(np.subtract(after_mag, before_mag), 1e-7 * _magnetometer_noise(seed, n), rtol=0.0, atol=1e-18)
+        noise = sigma * sample_normals(seed, MAG, n)
+        assert np.allclose(np.subtract(after_mag, before_mag), noise, rtol=0.0, atol=1e-18)
         # The IMU and the dynamics are untouched.
         assert before.sensor_samples[0] == after.sensor_samples[0]
         assert before.spacecraft == after.spacecraft
@@ -528,7 +532,8 @@ def test_magnetometer_repeats_bit_for_bit_after_reset(service):
     first = run()
     assert all(len(response.sensor_samples) == 2 for response in first)
     readings = np.array([xyz(r.sensor_samples[1].magnetometer.magnetic_field_sensor_tesla) for r in first])
-    assert np.abs(np.diff(readings, axis=0)).min() > 0.0  # Noise is on.
+    # Noise is on. An axis clipped at +-range repeats exactly, so only some axis has to change.
+    assert np.any(np.diff(readings, axis=0) != 0.0)
     stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [

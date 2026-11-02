@@ -8,6 +8,7 @@ at build time (§6). The Scenario adds the modules to the sensor task for their 
 readers' freshness and reads each measurement.
 """
 
+import hashlib
 import math
 
 import numpy as np
@@ -17,7 +18,7 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from . import seeds
 from .contracts import sensors_pb, types_pb
 
-__all__ = ["Imu", "LightSensor", "Magnetometer", "build_sensors", "light_sensor_instrument"]
+__all__ = ["Imu", "LightSensor", "Magnetometer", "build_sensors", "light_sensor_instrument", "sample_normals"]
 
 # coarseSunSensor scaleFactor = scale_factor x this, so a face square to the Sun at 1 AU reads
 # W/m2 (sensors.proto LightSensorProfile).
@@ -112,6 +113,8 @@ class Magnetometer:
 
     @property
     def readers(self) -> dict:
+        """For freshness checks only: tamDataOutMsg holds the noise-free, unclipped field, and the
+        sensor's output is measurement()."""
         return {f"{self.module.ModelTag}.tamDataOutMsg": self._reader}
 
     @property
@@ -122,8 +125,8 @@ class Magnetometer:
     def measurement(self) -> sensors_pb.MagnetometerMeasurement:
         field = np.array(self._reader().tam_S)
         if self._noise_std > 0.0:
-            sample_index = self._reader.timeWritten() // self.sample_period_ns
-            field = field + self._scale * self._noise_std * _magnetometer_noise(self.rng_seed, sample_index)
+            k = seeds.sample_index(self._reader.timeWritten(), self.sample_period_ns)
+            field = field + self._scale * self._noise_std * sample_normals(self.rng_seed, seeds.MAG, k)
         return sensors_pb.MagnetometerMeasurement(
             magnetic_field_sensor_tesla=_vector(np.clip(field, -self._range, self._range)))
 
@@ -280,11 +283,16 @@ def _gauss_markov(noise_density: float, random_walk: float, period_s: float) -> 
     return noise_density / math.sqrt(period_s) * np.eye(3), np.zeros((3, 3))
 
 
-def _magnetometer_noise(rng_seed: int, sample_index: int) -> np.ndarray:
-    """Three standard normal draws for one magnetometer sample (§10): a PCG64 generator seeded
-    with SeedSequence([rng_seed, sample_index]), so each sample depends only on its seed and
-    index, never on how many samples were read before."""
-    return np.random.default_rng([rng_seed, sample_index]).standard_normal(3)
+def sample_normals(rng_seed: int, stream: str, k: int, size: int = 3) -> np.ndarray:
+    """size standard normals for sample k of a stream the service draws itself.
+
+    PCG64 seeded with SeedSequence([tag, rng_seed, k]), tag being the first 4 bytes,
+    little-endian, of sha256(f"sample:{stream}"). A sample depends only on its seed, stream and
+    index. The tag keeps every draw apart from a generator seeded with rng_seed alone, which
+    SeedSequence's zero padding would otherwise make equal to sample 0.
+    """
+    tag = int.from_bytes(hashlib.sha256(f"sample:{stream}".encode()).digest()[:4], "little")
+    return np.random.default_rng([tag, rng_seed, k]).standard_normal(size)
 
 
 def _array(vector) -> np.ndarray:
