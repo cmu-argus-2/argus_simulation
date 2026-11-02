@@ -51,8 +51,9 @@ ECLIPSE_PRIORITY = 100
 MAGNETIC_FIELD_PRIORITY = 90
 ALBEDO_PRIORITY = 80
 
-# The kernel-set support file MagneticFieldWMM reads (§8, §9).
+# The kernel-set support files MagneticFieldWMM and albedo read (§8, §9).
 WMM_FILE = "WMM2025.COF"
+ALBEDO_FILE = "Earth_ALB_2018_CERES_All_1x1.csv"
 
 
 class KernelLoadError(Exception):
@@ -140,17 +141,23 @@ class Scenario:
             self.sim.AddModelToTask(TASK_NAME, self.magnetic_field, MAGNETIC_FIELD_PRIORITY)
             magnetic_field_msg = self.magnetic_field.envOutMsgs[0]
 
-        # Albedo (§9), built only for light sensors: Earth's average albedo, one instrument per light
-        # sensor in configuration order, so albOutMsgs[i] belongs to the i-th light sensor.
+        # Albedo (§9), built only for light sensors: the CERES map from the kernel set's verified
+        # support file, one instrument per light sensor in configuration order, so albOutMsgs[i]
+        # belongs to the i-th light sensor. Nothing is downloaded.
         self.albedo = None
         albedo_msgs = ()
         light_sensors = [sensor for sensor in configuration.sensors if sensor.WhichOneof("profile") == "light_sensor"]
         if light_sensors:
+            albedo_path = kernel_set.support_files.get(ALBEDO_FILE)
+            if albedo_path is None:
+                raise KernelLoadError(
+                    f"kernel set {kernel_set.kernel_set_id!r} has no {ALBEDO_FILE}, which a light sensor needs")
             self.albedo = albedo.Albedo()
             self.albedo.ModelTag = "albedo"
             self.albedo.spacecraftStateInMsg.subscribeTo(self.spacecraft.scStateOutMsg)
             self.albedo.sunPositionInMsg.subscribeTo(self.spice.planetStateOutMsgs[SUN_INDEX])
-            self.albedo.addPlanetandAlbedoAverageModel(self.spice.planetStateOutMsgs[EARTH_INDEX])
+            self.albedo.addPlanetandAlbedoDataModel(
+                self.spice.planetStateOutMsgs[EARTH_INDEX], str(albedo_path.parent) + "/", albedo_path.name)
             for sensor in light_sensors:
                 self.albedo.addInstrumentConfig(*light_sensor_instrument(sensor))
             self.sim.AddModelToTask(TASK_NAME, self.albedo, ALBEDO_PRIORITY)

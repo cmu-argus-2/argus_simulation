@@ -33,7 +33,7 @@ From `Argus.Basilisk/`:
 ```bash
 uv sync --frozen --all-extras
 uv run --frozen python scripts/generate_protos.py
-uv run --frozen python scripts/fetch_kernels.py argus-2026-10-20
+uv run --frozen python scripts/fetch_kernels.py argus-2026-11-02
 uv run --frozen python -m argus_basilisk --endpoint 127.0.0.1:50051
 ```
 

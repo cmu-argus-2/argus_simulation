@@ -2,7 +2,7 @@
   "epochUtc": "2025-01-15T00:00:00Z",
   "fixedStepSeconds": 0.1,
   "randomSeed": 1,
-  "kernelSetId": "argus-2026-10-20",
+  "kernelSetId": "argus-2026-11-02",
   "initialOrbit": {
     "semiMajorAxisMeters": 6878137.0,
     "eccentricity": 0.0,
