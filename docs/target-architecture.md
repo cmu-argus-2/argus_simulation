@@ -299,8 +299,8 @@ recorder and Unity through `StateProduced`.
 | G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. HOST-5 (#29) ran the full P0 scenario (IMU, magnetometer, six light sensors; kernel set `argus-2026-11-02`) for 600 s: every sensor reports exactly on its period, also with mixed periods of 0.1 to 1.0 s; the IMU is Unavailable at t = 0 and Valid after; and against CSPICE and an independent propagation from the run file's elements (Earth point mass plus the Sun as a third body), the J2000-to-ITRF93 rotation, Sun and Earth rate agree to about 8e-16 relative, the orbit to 14 µm and 5e-8 m/s, and body to J2000 stays the initial attitude to 7e-16. Two runs with the same seed record identical states, frames and commands. |
 | G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels, and only the backend-modelled sensors are sent to it (CORE-18). Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). The run file names its profile by a path relative to itself ([device-model.md](device-model.md) §4, HOST-9 #113). |
 
-**Not built yet:** the Basilisk service's pacing (BSK-7, #20) and actuators (BSK-8, #21; spacecraft,
-SPICE, eclipse and the P0 sensors with their seeded noise are built, and the Basilisk path is
+**Not built yet:** the Basilisk service's actuators (BSK-8, #21; spacecraft, SPICE, eclipse,
+the P0 sensors with their seeded noise and ClockSynch pacing (BSK-7, #20) are built, and the Basilisk path is
 verified with the full P0 scenario, HOST-5 #29); camera rendering on request (UNITY-4, #57); the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
 replay of recorded runs; gateway safety (authority,
@@ -495,7 +495,7 @@ Argus.Hardware/            HIL adapters                                        p
       orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
 - [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse and the P0 sensors on
-      main; the Basilisk/SPICE team implements pacing, actuators and the remaining sensor
+      main, with pacing; the Basilisk/SPICE team implements actuators and the remaining sensor
       noise).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream

@@ -428,22 +428,19 @@ def test_an_unknown_kind_skips_the_parameter_checks():
     assert problem.details.startswith("configuration.devices[1].kind")
 
 
-def test_pacing_is_unimplemented():
+def test_pacing_is_valid():
     request = p0_default_request()
     request.real_time_factor = 1.0
-    problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("real_time_factor")
+    assert problems_of(request) == []
 
 
-def test_invalid_argument_outranks_unimplemented_and_out_of_range():
+def test_invalid_argument_outranks_out_of_range():
     request = p0_default_request()
-    request.real_time_factor = 2.0
     request.configuration.epoch_utc.FromDatetime(datetime(2027, 1, 1, tzinfo=timezone.utc))
     request.configuration.spacecraft.mass_kg = -1.0
 
     codes = [problem.code for problem in problems_of(request)]
-    assert codes == ["INVALID_ARGUMENT", "UNIMPLEMENTED", "OUT_OF_RANGE"]
+    assert codes == ["INVALID_ARGUMENT", "OUT_OF_RANGE"]
     with pytest.raises(ValidationError) as error:
         validate_configure_run(request, coverage_utc=COVERAGE)
     assert error.value.code == "INVALID_ARGUMENT"

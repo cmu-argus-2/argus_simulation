@@ -1,8 +1,8 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order steps 1 to 4 (README §12): spacecraft, SPICE, eclipse, and the P0 sensors: the IMU,
-the magnetometer with MagneticFieldWMM, and the light sensors with albedo. Pacing (§5) and
-actuators (G1) are rejected by validation before a Scenario is built.
+Build order steps 1 to 5 (README §12): spacecraft, SPICE, eclipse, the P0 sensors (the IMU, the
+magnetometer with MagneticFieldWMM, and the light sensors with albedo), and ClockSynch pacing
+(§5). Actuators (G1) are rejected by validation before a Scenario is built.
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
 pass. Each Scenario owns a fresh SimBaseClass and fresh modules; Reset builds a new one.
@@ -16,7 +16,8 @@ import numpy as np
 from Basilisk import __version__ as BASILISK_VERSION
 from Basilisk.architecture import astroConstants, messaging
 from Basilisk.architecture.bskLogging import BasiliskError
-from Basilisk.simulation import albedo, eclipse, gravityEffector, magneticFieldWMM, spacecraft, spiceInterface
+from Basilisk.simulation import (
+    albedo, eclipse, gravityEffector, magneticFieldWMM, simSynch, spacecraft, spiceInterface)
 from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
@@ -40,8 +41,11 @@ SUN_INDEX = 1
 
 PROCESS_NAME = "dynamics"
 TASK_NAME = "dynamics"
-# §6: the dynamics task runs before every sensor task at the same t_n. One sensor task per
-# distinct sample period, named sensors_<ns>.
+PACING_TASK_NAME = "pacing"
+# §6: the pacing task (only with real_time_factor > 0) runs first, then the dynamics task, then
+# every sensor task at the same t_n. One sensor task per distinct sample period, named
+# sensors_<ns>.
+PACING_TASK_PRIORITY = 1000
 DYNAMICS_TASK_PRIORITY = 200
 SENSOR_TASK_PRIORITY = 100
 # §6 tick order within the task: higher priority runs first.
@@ -50,6 +54,11 @@ SPACECRAFT_PRIORITY = 200
 ECLIPSE_PRIORITY = 100
 MAGNETIC_FIELD_PRIORITY = 90
 ALBEDO_PRIORITY = 80
+
+# §5: ClockSynch counts an overrun when a tick starts more than this far behind its wall-clock
+# target. The pacing task does no work, so this bounds how late a step may start, not how
+# long Basilisk takes.
+PACING_ACCURACY_NS = 5_000_000
 
 # The kernel-set support files MagneticFieldWMM and albedo read (§8, §9).
 WMM_FILE = "WMM2025.COF"
@@ -77,8 +86,10 @@ def format_epoch(timestamp) -> str:
 class Scenario:
     """One built and initialized Basilisk simulation for a validated RunConfiguration."""
 
-    def __init__(self, configuration, kernel_set: KernelSet):
+    def __init__(self, configuration, kernel_set: KernelSet, real_time_factor: float = 0.0):
         """Build every module from configuration and call InitializeSimulation (§3 step 3).
+
+        real_time_factor > 0 adds ClockSynch pacing (§5); 0 leaves the run unpaced.
 
         Raises:
             KernelLoadError: SPICE could not load a kernel.
@@ -87,6 +98,18 @@ class Scenario:
         self.sim = SimulationBaseClass.SimBaseClass()
         process = self.sim.CreateNewProcess(PROCESS_NAME)
         process.addTask(self.sim.CreateNewTask(TASK_NAME, self.fixed_step_ns), DYNAMICS_TASK_PRIORITY)
+
+        # Pacing (§5): ClockSynch on its own task, first at every t_n. It starts its wall clock at
+        # its first tick, Step(0), and then holds every t_n to start + t_n / factor, so the schedule
+        # is absolute and a new Scenario (Reset) re-arms it.
+        self.clock = None
+        if real_time_factor > 0.0:
+            process.addTask(self.sim.CreateNewTask(PACING_TASK_NAME, self.fixed_step_ns), PACING_TASK_PRIORITY)
+            self.clock = simSynch.ClockSynch()
+            self.clock.ModelTag = "clockSynch"
+            self.clock.accelFactor = real_time_factor
+            self.clock.accuracyNanos = PACING_ACCURACY_NS
+            self.sim.AddModelToTask(PACING_TASK_NAME, self.clock)
 
         # SPICE (§8). auto_configure_kernels=False stops bsk 2.11.1 from fetching its default
         # kernels (de430 and others) through pooch when the module is constructed.
@@ -190,6 +213,8 @@ class Scenario:
             self.readers["magneticFieldWMM.envOutMsgs[0]"] = magnetic_field_msg.addSubscriber()
         for index, message in enumerate(albedo_msgs.values()):
             self.readers[f"albedo.albOutMsgs[{index}]"] = message.addSubscriber()
+        if self.clock is not None:
+            self.readers["clockSynch.clockOutMsg"] = self.clock.clockOutMsg.addSubscriber()
 
         try:
             self.sim.InitializeSimulation()
@@ -247,8 +272,14 @@ class Scenario:
                 for sensor, ready in zip(self.sensors, was_ready)
                 if t_n % sensor.sample_period_ns == 0
             ],
-            pacing_overrun_count=0,
+            pacing_overrun_count=self._pacing_overrun_count(),
         )
+
+    def _pacing_overrun_count(self) -> int:
+        """clockOutMsg.overrunCounter since this Scenario was built (ConfigureRun or Reset); 0 unpaced."""
+        if self.clock is None:
+            return 0
+        return self.readers["clockSynch.clockOutMsg"]().overrunCounter
 
     def _sample(self, sensor, was_ready: bool, t_n: int) -> service_pb.BasiliskDeviceSample:
         """The sample of a sensor due at t_n (§7); its output is empty when it ran without data."""
