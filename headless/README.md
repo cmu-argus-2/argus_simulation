@@ -61,6 +61,11 @@ configured sensor, or `Unavailable` with no service), 2 on bad arguments or a ru
 configuration file that is unreadable or invalid. A bad file exits before the host connects
 to the service, and the message names the field.
 
+Against the service, the full P0 run (`--duration-s 600`, the default run file) exits 0 with
+no mapper, period or freshness error. HOST-5 (#29) checked its output against CSPICE and an
+independent orbit propagation (target-architecture G4), so the Basilisk path is verified and
+v1 is additive only (`Argus.Contracts/README.md`).
+
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
 including ground-truth sensors, and every command the gateway logged, applied or rejected
