@@ -102,8 +102,9 @@ file; the host gives each run its own.
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
 `runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
-light-sensor noise are 0 because the service rejects both in bsk 2.11.1: magnetometer noise
-cannot be seeded, and light-sensor noise would be a random walk (`Argus.Basilisk/README.md` §9).
+light-sensor noise are 0 until DATA-1 (#67) gives the sigmas. The service accepts magnetometer
+noise > 0; it rejects light-sensor noise, which would be a random walk in bsk 2.11.1, until
+BSK-13 (#116) (`Argus.Basilisk/README.md` §9).
 TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
 light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
 and epoch.

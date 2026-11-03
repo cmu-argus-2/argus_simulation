@@ -1,13 +1,14 @@
 """P0 sensor modules (README §9).
 
 Build order steps 2 to 4 (README §12): the IMU, the magnetometer and the light sensors, which
-complete the P0 sensor set.
+complete the P0 sensor set. Magnetometer noise is drawn in the service (BSK-9, #22).
 
 Each Argus sensor owns its Basilisk modules and the readers subscribed to their output messages
 at build time (§6). The Scenario adds the modules to the sensor task for their period, checks the
 readers' freshness and reads each measurement.
 """
 
+import hashlib
 import math
 
 import numpy as np
@@ -17,7 +18,7 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from . import seeds
 from .contracts import sensors_pb, types_pb
 
-__all__ = ["Imu", "LightSensor", "Magnetometer", "build_sensors", "light_sensor_instrument"]
+__all__ = ["Imu", "LightSensor", "Magnetometer", "build_sensors", "light_sensor_instrument", "sample_normals"]
 
 # coarseSunSensor scaleFactor = scale_factor x this, so a face square to the Sun at 1 AU reads
 # W/m2 (sensors.proto LightSensorProfile).
@@ -71,18 +72,23 @@ class Imu:
 class Magnetometer:
     """One Argus magnetometer (TAM) reading the MagneticFieldWMM field at the spacecraft.
 
-    tam_S = scale (C_SB C_BN B_N + bias), clipped to +-range. Noise is 0: bsk 2.11.1 seeds the
-    module's noise generator once in its constructor, so validation rejects noise_std_tesla > 0
-    until BSK-9 (#22), and RNGSeed is left alone.
+    tam_S = scale (C_SB C_BN B_N + noise + bias), clipped to +-range. bsk 2.11.1 seeds the
+    module's noise generator once in its constructor and ignores RNGSeed, so the module runs
+    noise-free and unclipped, and measurement() adds the seeded noise from the "mag" stream and
+    clips (§9, BSK-9 #22).
     """
 
     kind = "magnetometer"
 
-    def __init__(self, sensor, spacecraft_state_msg, magnetic_field_msg):
+    def __init__(self, sensor, random_seed: int, spacecraft_state_msg, magnetic_field_msg):
         definition = sensor.definition
         profile = sensor.magnetometer
         self.sensor_id = definition.sensor_id
         self.sample_period_ns = definition.sample_period_ns
+        self.rng_seed = seeds.rng_seed(random_seed, self.sensor_id, seeds.MAG)
+        self._noise_std = profile.noise_std_tesla
+        self._scale = profile.scale_factor
+        self._range = profile.range_tesla
 
         self.module = magnetometer.Magnetometer()
         self.module.ModelTag = f"magnetometer[{self.sensor_id}]"
@@ -91,14 +97,14 @@ class Magnetometer:
         rotation = definition.mount.sensor_to_body
         self.module.dcm_SB = rbk.EP2C(np.array([rotation.w, rotation.x, rotation.y, rotation.z]))
         # Every error term is set explicitly: the module defaults are a random walk (A = I) and
-        # noise -1.
-        self.module.senNoiseStd = np.full(3, profile.noise_std_tesla)
+        # noise -1. Noise and clipping are applied in measurement().
+        self.module.senNoiseStd = np.zeros(3)
         self.module.setAMatrix(np.zeros((3, 3)))
         self.module.walkBounds = np.zeros(3)
         self.module.senBias = _array(profile.constant_bias_sensor_tesla)
         self.module.scaleFactor = profile.scale_factor
-        self.module.maxOutput = profile.range_tesla
-        self.module.minOutput = -profile.range_tesla
+        self.module.maxOutput = math.inf
+        self.module.minOutput = -math.inf
         self._reader = self.module.tamDataOutMsg.addSubscriber()
 
     @property
@@ -107,6 +113,8 @@ class Magnetometer:
 
     @property
     def readers(self) -> dict:
+        """For freshness checks only: tamDataOutMsg holds the noise-free, unclipped field, and the
+        sensor's output is measurement()."""
         return {f"{self.module.ModelTag}.tamDataOutMsg": self._reader}
 
     @property
@@ -115,7 +123,12 @@ class Magnetometer:
         return True
 
     def measurement(self) -> sensors_pb.MagnetometerMeasurement:
-        return sensors_pb.MagnetometerMeasurement(magnetic_field_sensor_tesla=_vector(self._reader().tam_S))
+        field = np.array(self._reader().tam_S)
+        if self._noise_std > 0.0:
+            k = seeds.sample_index(self._reader.timeWritten(), self.sample_period_ns)
+            field = field + self._scale * self._noise_std * sample_normals(self.rng_seed, seeds.MAG, k)
+        return sensors_pb.MagnetometerMeasurement(
+            magnetic_field_sensor_tesla=_vector(np.clip(field, -self._range, self._range)))
 
 
 class LightSensor:
@@ -207,7 +220,7 @@ def build_sensors(
         elif kind == Magnetometer.kind:
             if magnetic_field_msg is None:
                 raise ValueError(f"magnetometer {sensor_id!r} needs the MagneticFieldWMM output")
-            built.append(Magnetometer(sensor, spacecraft_state_msg, magnetic_field_msg))
+            built.append(Magnetometer(sensor, configuration.random_seed, spacecraft_state_msg, magnetic_field_msg))
         elif kind == LightSensor.kind:
             if sun_msg is None or eclipse_msg is None or light_sensor_index >= len(albedo_msgs):
                 raise ValueError(f"light sensor {sensor_id!r} needs the Sun, eclipse and albedo outputs")
@@ -268,6 +281,18 @@ def _gauss_markov(noise_density: float, random_walk: float, period_s: float) -> 
     if random_walk > 0.0:
         return random_walk * math.sqrt(period_s) * np.eye(3), np.eye(3)
     return noise_density / math.sqrt(period_s) * np.eye(3), np.zeros((3, 3))
+
+
+def sample_normals(rng_seed: int, stream: str, k: int, size: int = 3) -> np.ndarray:
+    """size standard normals for sample k of a stream the service draws itself.
+
+    PCG64 seeded with SeedSequence([tag, rng_seed, k]), tag being the first 4 bytes,
+    little-endian, of sha256(f"sample:{stream}"). A sample depends only on its seed, stream and
+    index. The tag keeps every draw apart from a generator seeded with rng_seed alone, which
+    SeedSequence's zero padding would otherwise make equal to sample 0.
+    """
+    tag = int.from_bytes(hashlib.sha256(f"sample:{stream}".encode()).digest()[:4], "little")
+    return np.random.default_rng([tag, rng_seed, k]).standard_normal(size)
 
 
 def _array(vector) -> np.ndarray:

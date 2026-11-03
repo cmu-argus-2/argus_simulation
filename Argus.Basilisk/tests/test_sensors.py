@@ -1,4 +1,5 @@
-"""IMU, magnetometer and light-sensor modules (README §9, §10) without SPICE; needs bsk==2.11.1 but no kernels."""
+"""IMU, magnetometer and light-sensor modules and seeded magnetometer noise (README §9, §10)
+without SPICE; needs bsk==2.11.1 but no kernels."""
 
 import math
 
@@ -14,9 +15,10 @@ from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
 from Basilisk.simulation import coarseSunSensor  # noqa: E402
 
-from argus_basilisk.seeds import ACCEL, CSS, GYRO, rng_seed  # noqa: E402
+from argus_basilisk.seeds import ACCEL, CSS, GYRO, MAG, rng_seed  # noqa: E402
 from argus_basilisk.sensors import (  # noqa: E402
-    Imu, LightSensor, Magnetometer, SOLAR_IRRADIANCE_W_PER_M2, build_sensors, light_sensor_instrument)
+    Imu, LightSensor, Magnetometer, SOLAR_IRRADIANCE_W_PER_M2, build_sensors, light_sensor_instrument,
+    sample_normals)
 from test_validation import p0_default_request, set_quaternion, set_vector  # noqa: E402
 
 STEP_NS = 100_000_000
@@ -282,23 +284,124 @@ def magnetometer_configuration():
     return configuration
 
 
+# About 50 uT, so a 3e-5 T range clips some axes.
+MAGNETIC_FIELD_N_T = (2.0e-5, -3.5e-5, 2.5e-5)
+
+
+def run_magnetometers(configuration, steps):
+    """Each magnetometer's measurement per step, in a constant field on the tumbling hub."""
+    sim = SimulationBaseClass.SimBaseClass()
+    process = sim.CreateNewProcess("dynamics")
+    process.addTask(sim.CreateNewTask("dynamics", STEP_NS), 200)
+    process.addTask(sim.CreateNewTask("sensors", STEP_NS), 100)
+    hub = make_hub()
+    sim.AddModelToTask("dynamics", hub)
+    field = messaging.MagneticFieldMsgPayload()
+    field.magField_N = list(MAGNETIC_FIELD_N_T)
+    field_msg = messaging.MagneticFieldMsg().write(field)
+    magnetometers = build_sensors(configuration, hub.scStateOutMsg, field_msg)
+    for sensor in magnetometers:
+        sim.AddModelToTask("sensors", sensor.module)
+    sim.InitializeSimulation()
+
+    outputs = {sensor.sensor_id: [] for sensor in magnetometers}
+    for n in range(steps):
+        sim.ConfigureStopTime(n * STEP_NS)
+        sim.ExecuteSimulation()
+        for sensor in magnetometers:
+            reading = sensor.measurement().magnetic_field_sensor_tesla
+            outputs[sensor.sensor_id].append([reading.x, reading.y, reading.z])
+    return {sensor_id: np.array(rows) for sensor_id, rows in outputs.items()}
+
+
 def test_magnetometer_sets_every_error_term_explicitly():
     configuration = magnetometer_configuration()
     hub = make_hub()
     field = messaging.MagneticFieldMsg()
-    sensor = Magnetometer(configuration.sensors[0], hub.scStateOutMsg, field)
+    sensor = Magnetometer(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg, field)
     module = sensor.module
 
     assert module.ModelTag == "magnetometer[mag.main]"
     assert np.allclose(module.dcm_SB, rbk.EP2C(np.array([QUARTER_TURN_Z[3], *QUARTER_TURN_Z[:3]])), atol=1e-15)
-    # Defaults are a random walk (A = I) and noise -1; both are overridden.
+    # Defaults are a random walk (A = I) and noise -1; both are overridden. The module never
+    # adds noise or clips: bsk 2.11.1 ignores its RNGSeed, so measurement() does both.
     assert np.allclose(module.getAMatrix(), np.zeros((3, 3)))
     assert np.allclose(np.ravel(module.senNoiseStd), 0.0)
     assert np.allclose(np.ravel(module.walkBounds), 0.0)
     assert np.allclose(np.ravel(module.senBias), [1e-6, -2e-6, 3e-6])
     assert module.scaleFactor == 1.1
-    assert (module.minOutput, module.maxOutput) == (-6e-5, 6e-5)
+    assert (module.minOutput, module.maxOutput) == (-math.inf, math.inf)
+    assert sensor.rng_seed == rng_seed(configuration.random_seed, "mag.main", MAG)
     assert sensor.ready
+
+
+def test_magnetometer_noise_is_scaled_then_clipped():
+    """tam_S = clip(scale (B_S + noise + bias), +-range), with noise sigma z_k from the mag stream."""
+    configuration = magnetometer_configuration()
+    profile = configuration.sensors[0].magnetometer
+    profile.range_tesla = 1.0
+    unclipped = run_magnetometers(configuration, steps=20)["mag.main"]
+
+    profile.noise_std_tesla = 1e-6
+    profile.range_tesla = 3e-5
+    noisy = run_magnetometers(configuration, steps=20)["mag.main"]
+
+    seed = rng_seed(configuration.random_seed, "mag.main", MAG)
+    noise = np.array([sample_normals(seed, MAG, n) for n in range(20)])
+    expected = np.clip(unclipped + 1.1 * 1e-6 * noise, -3e-5, 3e-5)
+    assert np.array_equal(noisy, expected)
+    assert np.sum(np.abs(noisy) == 3e-5) > 0  # Some axes clip.
+    assert np.sum(np.abs(noisy) < 3e-5) > 0  # And some carry noise.
+
+
+def test_magnetometer_noise_is_white_with_the_configured_sigma():
+    configuration = magnetometer_configuration()
+    profile = configuration.sensors[0].magnetometer
+    profile.scale_factor = 1.0
+    profile.range_tesla = 1.0
+    clean = run_magnetometers(configuration, steps=400)["mag.main"]
+    profile.noise_std_tesla = 1e-7
+    error = run_magnetometers(configuration, steps=400)["mag.main"] - clean
+
+    assert np.allclose(error.std(axis=0), 1e-7, rtol=0.15)
+    assert np.all(np.abs(error.mean(axis=0)) < 4 * 1e-7 / math.sqrt(400))
+    # Successive samples and the three axes are uncorrelated.
+    assert abs(np.corrcoef(error[:-1, 0], error[1:, 0])[0, 1]) < 0.2
+    assert np.all(np.abs(np.corrcoef(error.T)[np.triu_indices(3, 1)]) < 0.2)
+
+
+def test_changing_one_magnetometer_seed_changes_only_its_noise():
+    configuration = magnetometer_configuration()
+    configuration.sensors[0].magnetometer.noise_std_tesla = 1e-7
+    configuration.sensors[0].magnetometer.range_tesla = 1.0
+    second = configuration.sensors.add()
+    second.CopyFrom(configuration.sensors[0])
+    second.definition.sensor_id = "mag.backup"
+    first_run = run_magnetometers(configuration, steps=10)
+
+    configuration.sensors[1].definition.sensor_id = "mag.spare"
+    second_run = run_magnetometers(configuration, steps=10)
+
+    # bsk's own generator would give every magnetometer the same stream.
+    assert not np.array_equal(first_run["mag.main"], first_run["mag.backup"])
+    assert np.array_equal(first_run["mag.main"], second_run["mag.main"])
+    assert not np.array_equal(first_run["mag.backup"], second_run["mag.spare"])
+
+    configuration.random_seed += 1
+    reseeded = run_magnetometers(configuration, steps=10)
+    assert not np.array_equal(first_run["mag.main"], reseeded["mag.main"])
+
+
+def test_sample_normals_are_pinned_per_seed_stream_and_index():
+    """Pinned values (numpy 2.4.6 in uv.lock), so a change inside sample_normals fails here."""
+    seed = rng_seed(1, "mag.main", MAG)
+    assert sample_normals(seed, MAG, 7).tolist() == [-1.2898110306945079, 0.30201081627962734, -1.2967257220131292]
+    assert not np.array_equal(sample_normals(seed, MAG, 7), sample_normals(seed, MAG, 8))
+    assert not np.array_equal(sample_normals(seed, MAG, 7), sample_normals(seed + 1, MAG, 7))
+    assert not np.array_equal(sample_normals(seed, MAG, 7), sample_normals(seed, CSS, 7))
+    # The stream tag keeps sample 0 apart from a generator seeded with the seed alone.
+    assert not np.array_equal(sample_normals(seed, MAG, 0), np.random.default_rng(seed).standard_normal(3))
+    assert not np.array_equal(sample_normals(seed, MAG, 0), np.random.default_rng([seed, 0]).standard_normal(3))
 
 
 def test_magnetometer_needs_the_magnetic_field_message():

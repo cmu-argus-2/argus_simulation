@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); pacing, non-zero commands, and magnetometer and light-sensor noise are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); magnetometer noise is drawn in the service; pacing, non-zero commands and light-sensor noise are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -98,9 +98,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      limits: an IMU channel
      cannot have both noise density and random walk > 0 (one Gauss-Markov state per axis),
      and a walk bound > 0 needs random walk > 0 (the same bound would clip white noise);
-   - `noise_std_tesla > 0` is UNIMPLEMENTED: bsk 2.11.1 seeds the magnetometer's private
-     noise generator in its constructor with the default seed and never re-seeds it, so
-     every seed and every magnetometer would get the same stream (§9);
+   - `noise_std_tesla ≥ 0`; noise > 0 is added by the service from the `mag` seed stream,
+     because bsk 2.11.1 ignores the magnetometer's `RNGSeed` (§9, BSK-9 #22);
    - `noise_std_w_per_m2 > 0` is UNIMPLEMENTED: bsk 2.11.1 cannot set coarseSunSensor's A
      matrix from Python, and its default A makes the noise a random walk instead of white
      noise (§9);
@@ -117,9 +116,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
    `SUPPORTED_SENSOR_KINDS` holds the P0 kinds `"imu"` (BSK-4, #17), `"magnetometer"`
-   (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). Pacing, magnetometer noise and non-zero
-   commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22) and BSK-8 (#21), and
-   light-sensor noise until white noise is available. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). Pacing and non-zero commands stay
+   UNIMPLEMENTED until BSK-7 (#20) and BSK-8 (#21), and light-sensor noise until BSK-13
+   (#116). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -134,7 +133,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 - MUST construct a new `SimBaseClass` and new modules from the stored request, then re-arm
   pacing. Reusing modules is wrong in bsk 2.11.1: `ImuSensor::Reset` keeps `NominalReady`,
   `PreviousTime` and the previous state (the next t = 0 sample underflows a uint64 time
-  difference), Gauss-Markov states carry over, and the magnetometer is never re-seeded.
+  difference), Gauss-Markov states carry over, and the magnetometer's own generator is never
+  re-seeded (the service keeps it off and draws magnetometer noise itself, §9).
 - Acceptance: 100 steps, Reset, 100 steps again gives bit-identical responses.
 
 ### Step(n)
@@ -398,9 +398,9 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   zero at the centre of mass, or anywhere on a non-rotating body.
 
 **Magnetometer** (`magnetometer.Magnetometer`):
-- `dcm_SB`, `senNoiseStd = [σ] * 3`, `setAMatrix(np.zeros((3, 3)))`,
-  `walkBounds = [0.0, 0.0, 0.0]`, `senBias`, `scaleFactor`, `maxOutput = +R`,
-  `minOutput = −R`.
+- `dcm_SB`, `senNoiseStd = [0.0, 0.0, 0.0]`, `setAMatrix(np.zeros((3, 3)))`,
+  `walkBounds = [0.0, 0.0, 0.0]`, `senBias`, `scaleFactor`, `maxOutput = +inf`,
+  `minOutput = −inf`. The service adds the noise and clips to ±R (below).
 - `stateInMsg` from `scStateOutMsg`; `magInMsg` from `MagneticFieldWMM.envOutMsgs[k]`, set up
   with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
   `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses WMM2025 only.
@@ -409,14 +409,18 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   set without `WMM2025.COF` cannot serve a magnetometer: ConfigureRun returns
   FAILED_PRECONDITION before SPICE loads anything.
 - The magnetometer measures on its first firing, at t = 0, since the field is written earlier in
-  the same t_n: `tam_S = scale (C_SB C_BN B_N + bias)`, clipped to ±range.
+  the same t_n: `tam_S = scale (C_SB C_BN B_N + noise + bias)`, clipped to ±range.
 - `WMM2025.COF` is not in the `bsk` wheel (its `supportData` is pruned, and
   `dataFetcher.get_path` downloads it on first use). It is pinned like the kernels, as a
   `support_files` entry of `argus-2026-10-20` checked before the build, and never downloaded
   during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
   Basilisk v2.11.1's byte-identical copy (the file `dataFetcher` would download).
-- Noise is not seedable in bsk 2.11.1 (§3). Until the team patches upstream or adds seeded
-  noise in the service, ConfigureRun rejects `noise_std_tesla > 0`.
+- bsk 2.11.1 ignores the magnetometer's `RNGSeed`, so the service adds the noise (BSK-9,
+  #22): the module runs noise-free and unclipped, and `Magnetometer.measurement()` returns
+  `clip(tam_S + scale σ z_k, −R, +R)`, bsk's formula with σ moved out of the module. `z_k` is
+  `sample_normals(seed, "mag", k)` (§10). `tamDataOutMsg` therefore holds the noise-free,
+  unclipped field: its reader is for freshness checks only, and the sensor's output is
+  `measurement()`.
 
 **Light sensor** (`coarseSunSensor.CoarseSunSensor`):
 - `fov`; `scaleFactor = g × 1361` so the output is W/m²; `senNoiseStd = σ / scaleFactor`;
@@ -449,6 +453,14 @@ Every noisy module gets
 with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the shared default
 `0x1badcad1`. Acceptance: changing one seed changes exactly that module's noise stream.
 
+A stream bsk 2.11.1 cannot seed (`mag`, §9) is drawn by the service, one sample at a time:
+`sensors.sample_normals(seed, stream, k)` returns standard normals from PCG64 seeded with
+`SeedSequence([tag, seed, k])`, where `tag` is the first 4 bytes, little-endian, of
+`sha256(f"sample:{stream}")` and `k = seeds.sample_index(t, sample_period_ns)`. A sample
+depends only on its seed, stream and index; the tag keeps it apart from any generator seeded
+with `seed` alone, and an off-grid sample time raises (INTERNAL) instead of reusing an index.
+The draws are fixed by the `numpy` pin in `uv.lock`.
+
 ## 11. Error codes
 
 | Code | When |
@@ -457,7 +469,7 @@ with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the sh
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A non-zero command after Step(0); magnetometer or light-sensor noise not built yet; `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A non-zero command after Step(0); light-sensor noise not built yet; `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 
