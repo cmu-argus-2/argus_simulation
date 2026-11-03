@@ -96,6 +96,19 @@ namespace Argus.Simulation.Core
 
         protected override bool IsValid(ImuProfile profile) => profile.IsValid;
 
+        // Names the channel, as the service does with the key (validation.py).
+        protected override string FindProfileProblem(ImuProfile profile)
+        {
+            if (!profile.Gyroscope.IsValid)
+            {
+                return "parameters[\"gyroscope.*\"]: is not a valid gyroscope profile (see GyroscopeProfile.IsValid)";
+            }
+
+            return profile.Accelerometer.IsValid
+                ? null
+                : "parameters[\"accelerometer.*\"]: is not a valid accelerometer profile (see AccelerometerProfile.IsValid)";
+        }
+
         protected override ImuMeasurement Read(DeviceValues output) =>
             new ImuMeasurement(output.Vector3(AngularVelocity), output.Vector3(SpecificForce));
     }

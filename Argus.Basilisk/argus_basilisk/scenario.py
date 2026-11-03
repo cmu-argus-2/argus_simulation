@@ -324,11 +324,12 @@ def _check_fresh(name: str, reader, t_n: int) -> None:
 
 
 def _check_finite_fields(message, name: str) -> None:
+    """Every float set in a message is finite; a DeviceValue's text or flag has none to check."""
     for field, value in message.ListFields():
         path = f"{name}.{field.name}"
         if field.message_type is not None:
             _check_finite_fields(value, path)
-        else:
+        elif field.type in (field.TYPE_DOUBLE, field.TYPE_FLOAT):
             _finite(value, path)
 
 

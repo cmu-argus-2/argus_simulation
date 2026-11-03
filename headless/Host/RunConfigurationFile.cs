@@ -182,15 +182,14 @@ namespace Argus.Simulation.Host
                 Boolean(element, "controllerVisible", path));
             Check(definition.IsValid, path, "needs non-blank deviceId, modelName, frameId and source, and samplePeriodSeconds > 0");
 
-            DeviceValues.Builder parameters = new DeviceValues.Builder();
-            ReadValues(Field(element, "parameters", path), Join(path, "parameters"), "", kind, parameters);
-            // No kind declares state yet, so an initial state may only be empty.
-            if (element.TryGetProperty("initialState", out JsonElement initialState))
-            {
-                Fields(initialState, Join(path, "initialState"));
-            }
+            DeviceValues parameters = ReadValues(
+                Field(element, "parameters", path), Join(path, "parameters"), kind.ParameterKeys, $"{kind.Name} parameter");
+            // Optional: a kind with no state (every kind so far) needs none.
+            DeviceValues initialState = element.TryGetProperty("initialState", out JsonElement state)
+                ? ReadValues(state, Join(path, "initialState"), kind.InitialStateKeys, $"{kind.Name} initial-state key")
+                : DeviceValues.Empty;
 
-            DeviceConfiguration configuration = new DeviceConfiguration(definition, kindName, parameters.Build());
+            DeviceConfiguration configuration = new DeviceConfiguration(definition, kindName, parameters, initialState);
             // The kind's problem starts with the field it names: parameters["noise_std_tesla"], ...
             string problem = configuration.FindProblem();
             if (problem != null)
@@ -205,9 +204,25 @@ namespace Argus.Simulation.Host
             return configuration;
         }
 
-        // Reads an object of the kind's parameter keys, typed as the kind declares them. A key's
-        // group (gyroscope.*) may be written as a nested object, which flattens with ".".
-        private static void ReadValues(JsonElement element, string path, string prefix, IDeviceKind kind, DeviceValues.Builder values)
+        // Reads an object of declared keys, typed as the kind declares them. A key's group
+        // (gyroscope.*) may be written as a nested object, which flattens with ".", but each key is
+        // given once: as a dotted key or inside its group, not both.
+        private static DeviceValues ReadValues(JsonElement element, string path, IReadOnlyList<DeviceKey> keys, string keyKind)
+        {
+            Dictionary<string, string> givenAt = new Dictionary<string, string>(StringComparer.Ordinal);
+            DeviceValues.Builder values = new DeviceValues.Builder();
+            ReadValues(element, path, "", keys, keyKind, values, givenAt);
+            return values.Build();
+        }
+
+        private static void ReadValues(
+            JsonElement element,
+            string path,
+            string prefix,
+            IReadOnlyList<DeviceKey> keys,
+            string keyKind,
+            DeviceValues.Builder values,
+            Dictionary<string, string> givenAt)
         {
             if (element.ValueKind != JsonValueKind.Object)
             {
@@ -217,26 +232,35 @@ namespace Argus.Simulation.Host
             foreach (JsonProperty property in element.EnumerateObject())
             {
                 string key = prefix + property.Name;
-                string valuePath = Join(path, property.Name);
-                DeviceValueType? type = DeclaredType(kind, key);
+                // A dotted key is quoted, so it reads apart from the same key inside its group.
+                string valuePath = property.Name.Contains(".")
+                    ? $"{path}[\"{property.Name}\"]"
+                    : Join(path, property.Name);
+                DeviceValueType? type = DeclaredType(keys, key);
                 if (type.HasValue)
                 {
+                    if (givenAt.TryGetValue(key, out string firstPath))
+                    {
+                        throw Error(valuePath, $"repeats {firstPath}");
+                    }
+
+                    givenAt.Add(key, valuePath);
                     values.Add(key, Value(property.Value, valuePath, type.Value));
                 }
-                else if (IsGroup(kind, key))
+                else if (IsGroup(keys, key))
                 {
-                    ReadValues(property.Value, valuePath, key + ".", kind, values);
+                    ReadValues(property.Value, valuePath, key + ".", keys, keyKind, values, givenAt);
                 }
                 else
                 {
-                    throw Error(valuePath, $"is not a {kind.Name} parameter");
+                    throw Error(valuePath, $"is not a {keyKind}");
                 }
             }
         }
 
-        private static DeviceValueType? DeclaredType(IDeviceKind kind, string key)
+        private static DeviceValueType? DeclaredType(IReadOnlyList<DeviceKey> keys, string key)
         {
-            foreach (DeviceKey declared in kind.ParameterKeys)
+            foreach (DeviceKey declared in keys)
             {
                 if (declared.Name == key)
                 {
@@ -247,9 +271,9 @@ namespace Argus.Simulation.Host
             return null;
         }
 
-        private static bool IsGroup(IDeviceKind kind, string key)
+        private static bool IsGroup(IReadOnlyList<DeviceKey> keys, string key)
         {
-            foreach (DeviceKey declared in kind.ParameterKeys)
+            foreach (DeviceKey declared in keys)
             {
                 if (declared.Name.StartsWith(key + ".", StringComparison.Ordinal))
                 {

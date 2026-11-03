@@ -94,7 +94,9 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("missing field", "initialOrbit.eccentricity: is required")]
         [TestCase("unknown field", "spacecraft.massKg: is not a known field")]
         [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
-        [TestCase("invalid profile", "devices[0].parameters: is not a valid imu profile (see ImuProfile.IsValid)")]
+        [TestCase("invalid profile", "devices[0].parameters[\"gyroscope.*\"]: is not a valid gyroscope profile (see GyroscopeProfile.IsValid)")]
+        [TestCase("repeated parameter", "devices[0].parameters.gyroscope.range_rad_per_s: repeats devices[0].parameters[\"gyroscope.range_rad_per_s\"]")]
+        [TestCase("unknown initial state", "devices[1].initialState.speed_rad_per_s: is not a magnetometer initial-state key")]
         [TestCase("duplicate device ID", "devices[1].deviceId: duplicates another device's ID")]
         [TestCase("unknown kind", "devices[2].kind: 'sun_sensor' is not a registered device kind")]
         [TestCase("unknown parameter", "devices[1].parameters.gain: is not a magnetometer parameter")]
@@ -103,7 +105,7 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("wrong type", "devices[0].mount.positionBodyMeters: must be an array of 3 numbers")]
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
-        [TestCase("invalid camera intrinsics", "devices[8].parameters: is not a valid camera profile")]
+        [TestCase("invalid camera intrinsics", "devices[8].parameters[\"intrinsics.*\"]: are not valid intrinsics")]
         [TestCase("fractional pixel count", "devices[8].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
         [TestCase("period off the step grid", "devices[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
         [TestCase("controller-visible camera", "devices[8].controllerVisible: must be false")]
@@ -124,6 +126,17 @@ namespace Argus.Simulation.Host.Tests
                     break;
                 case "invalid profile":
                     devices[0]["parameters"]["gyroscope"]["range_rad_per_s"] = -1.0;
+                    break;
+                case "repeated parameter":
+                    // Both spellings of one key: dotted, and inside its group.
+                    JsonObject imuParameters = devices[0]["parameters"].AsObject();
+                    JsonObject gyroscope = imuParameters["gyroscope"].AsObject();
+                    imuParameters.Remove("gyroscope");
+                    imuParameters["gyroscope.range_rad_per_s"] = 4.363;
+                    imuParameters["gyroscope"] = gyroscope;
+                    break;
+                case "unknown initial state":
+                    devices[1]["initialState"] = new JsonObject { ["speed_rad_per_s"] = 1.0 };
                     break;
                 case "duplicate device ID":
                     devices[1]["deviceId"] = "imu.main";

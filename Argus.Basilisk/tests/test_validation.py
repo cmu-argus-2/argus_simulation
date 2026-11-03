@@ -259,7 +259,7 @@ INVALID_CASES = [
     ("empty kind", lambda r: setattr(r.configuration.devices[0], "kind", ""),
      "configuration.devices[0].kind: must be a registered kind (imu, light_sensor, magnetometer), got ''"),
     ("initial state", lambda r: setattr(r.configuration.devices[0].initial_state["speed_rad_per_s"], "number", 1.0),
-     "configuration.devices[0].initial_state: must be empty: sensor kind 'imu' has no state, got ['speed_rad_per_s']"),
+     "configuration.devices[0].initial_state[\"speed_rad_per_s\"]: unknown initial-state key for kind 'imu', got 1.0"),
     # Parameter maps (the kind's declarations).
     ("unknown key", lambda r: setattr(parameter(r, 1, "noise_density_tesla"), "number", 1e-9),
      'configuration.devices[1].parameters["noise_density_tesla"]: unknown parameter for kind \'magnetometer\', got 1e-09'),

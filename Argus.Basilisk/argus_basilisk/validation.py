@@ -446,28 +446,35 @@ def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: st
                 f"{device_path}.kind", f"must be a registered kind ({', '.join(sorted(devices.KINDS))})", device.kind)
             continue
         _check_parameters(problems, kind, device.parameters, f"{device_path}.parameters")
-        if device.initial_state:
-            problems.invalid(
-                f"{device_path}.initial_state", f"must be empty: sensor kind {device.kind!r} has no state",
-                sorted(device.initial_state))
+        # A kind declares its state keys as STATE, the same way as PARAMETERS; none by default.
+        _check_values(
+            problems, kind, devices.state_keys(kind), device.initial_state, f"{device_path}.initial_state",
+            "initial-state key")
 
 
 def _check_parameters(problems: _Problems, kind, parameters, path: str) -> None:
     """Exactly the kind's declared keys, each of its declared type and finite; then the kind's own
     range checks over the keys that passed."""
+    values = _check_values(problems, kind, kind.PARAMETERS, parameters, path, "parameter")
+    kind.check(values, lambda key, reason, value: problems.invalid(f"{path}[{json.dumps(key)}]", reason, value))
+
+
+def _check_values(problems: _Problems, kind, declared: dict, given, path: str, what: str) -> dict:
+    """Check a DeviceValue map against declared keys and types; return the decoded values that
+    passed, by key."""
 
     def key_path(key: str) -> str:
         return f"{path}[{json.dumps(key)}]"
 
-    for key in sorted(set(parameters) - set(kind.PARAMETERS)):
-        problems.invalid(key_path(key), f"unknown parameter for kind {kind.KIND!r}", _decode(parameters[key]))
+    for key in sorted(set(given) - set(declared)):
+        problems.invalid(key_path(key), f"unknown {what} for kind {kind.KIND!r}", _decode(given[key]))
 
     values = {}
-    for key, value_type in kind.PARAMETERS.items():
-        if key not in parameters:
+    for key, value_type in declared.items():
+        if key not in given:
             problems.unset(key_path(key))
             continue
-        value = parameters[key]
+        value = given[key]
         case = value.WhichOneof("value")
         if case != value_type:
             problems.invalid(key_path(key), f"must be a {value_type}", "no value" if case is None else case)
@@ -477,8 +484,7 @@ def _check_parameters(problems: _Problems, kind, parameters, path: str) -> None:
             problems.invalid(key_path(key), "must be finite", decoded)
             continue
         values[key] = decoded
-
-    kind.check(values, lambda key, reason, value: problems.invalid(key_path(key), reason, value))
+    return values
 
 
 def _decode(value) -> object:

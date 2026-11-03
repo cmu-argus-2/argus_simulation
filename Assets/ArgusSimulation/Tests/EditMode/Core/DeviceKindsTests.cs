@@ -58,7 +58,10 @@ namespace Argus.Simulation.Tests
                 Is.EqualTo("parameters: is not a valid magnetometer profile (see MagnetometerProfile.IsValid)"));
             Assert.That(
                 new DeviceConfiguration(Definition("mag.main"), "magnetometer", valid, With(DeviceValues.Empty, "speed", DeviceValue.FromNumber(1.0))).FindProblem(),
-                Is.EqualTo("initialState: must be empty, because the magnetometer kind has no state"));
+                Is.EqualTo("initialState[\"speed\"]: is not a magnetometer key"));
+            Assert.That(
+                Problem("magnetometer", With(Without(valid, "range_tesla"), "range_tesla", DeviceValue.FromText(null))),
+                Is.EqualTo("parameters[\"range_tesla\"]: must be a Number, not a Text"));
             Assert.That(Problem("sun_sensor", valid), Does.StartWith("kind: 'sun_sensor' is not a registered device kind"));
         }
 

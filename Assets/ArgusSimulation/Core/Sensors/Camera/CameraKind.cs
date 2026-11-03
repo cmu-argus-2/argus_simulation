@@ -27,13 +27,16 @@ namespace Argus.Simulation.Core
                 DeviceRole.Sensor,
                 isBackendModelled: false,
                 mayBeControllerVisible: false,
-                new DeviceKey(Width, DeviceValueType.Number),
-                new DeviceKey(Height, DeviceValueType.Number),
-                new DeviceKey(FocalLengthX, DeviceValueType.Number),
-                new DeviceKey(FocalLengthY, DeviceValueType.Number),
-                new DeviceKey(PrincipalPointX, DeviceValueType.Number),
-                new DeviceKey(PrincipalPointY, DeviceValueType.Number),
-                new DeviceKey(ExposureDuration, DeviceValueType.Number))
+                new[]
+                {
+                    new DeviceKey(Width, DeviceValueType.Number),
+                    new DeviceKey(Height, DeviceValueType.Number),
+                    new DeviceKey(FocalLengthX, DeviceValueType.Number),
+                    new DeviceKey(FocalLengthY, DeviceValueType.Number),
+                    new DeviceKey(PrincipalPointX, DeviceValueType.Number),
+                    new DeviceKey(PrincipalPointY, DeviceValueType.Number),
+                    new DeviceKey(ExposureDuration, DeviceValueType.Number)
+                })
         {
         }
 
@@ -65,6 +68,18 @@ namespace Argus.Simulation.Core
             .Build();
 
         protected override bool IsValid(CameraProfile profile) => profile.IsValid;
+
+        protected override string FindProfileProblem(CameraProfile profile)
+        {
+            if (!profile.Intrinsics.IsValid)
+            {
+                return "parameters[\"intrinsics.*\"]: are not valid intrinsics (see CameraIntrinsics.IsValid)";
+            }
+
+            return profile.IsValid
+                ? null
+                : $"parameters[\"{ExposureDuration}\"]: must be finite and >= 0 (see CameraProfile.IsValid)";
+        }
 
         // Pixel counts are whole numbers that fit CameraIntrinsics' int.
         private static string FindPixelCountProblem(DeviceValues parameters, string key)
