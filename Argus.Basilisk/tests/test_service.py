@@ -28,7 +28,7 @@ from argus_basilisk import scenario as scenario_module  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
-from argus_basilisk.seeds import MAG, rng_seed  # noqa: E402
+from argus_basilisk.seeds import CSS, MAG, rng_seed  # noqa: E402
 from argus_basilisk.sensors import sample_normals  # noqa: E402
 from test_validation import p0_default_request, set_quaternion, set_vector, zero_command  # noqa: E402
 
@@ -593,13 +593,38 @@ def expected_direct(response, boresight_body):
     return 1361.0 * max(cos_theta, 0.0) * response.spacecraft_shadow_factor * (AU_M / np.linalg.norm(sun)) ** 2
 
 
-def test_light_sensor_noise_stays_unimplemented(service):
+def noisy_p0_request():
+    """The full P0 set with magnetometer noise (BSK-9) and light-sensor noise (BSK-13)."""
+    request = noisy_magnetometer_request()
+    full = light_sensor_request()
+    request.configuration.sensors.extend(full.configuration.sensors[2:])
+    for sensor in request.configuration.sensors[2:]:
+        sensor.light_sensor.noise_std_w_per_m2 = 1.0
+    return request
+
+
+@real_kernels
+def test_noisy_light_sensors_add_seeded_noise_to_the_noise_free_reading(service):
     _, stub = service
-    request = light_sensor_request()
-    request.configuration.sensors[2].light_sensor.noise_std_w_per_m2 = 1.0
-    code, details = status_of(stub.ConfigureRun, request)
-    assert code == grpc.StatusCode.UNIMPLEMENTED
-    assert "noise_std_w_per_m2" in details
+    stub.ConfigureRun(light_sensor_request())
+    clean = [stub.Step(step_request(n)) for n in range(20)]
+    request = noisy_p0_request()
+    stub.ConfigureRun(request)
+    noisy = [stub.Step(step_request(n)) for n in range(20)]
+
+    lit = 0
+    for sensor in request.configuration.sensors[2:]:
+        sensor_id = sensor.definition.sensor_id
+        profile = sensor.light_sensor
+        seed = rng_seed(request.configuration.random_seed, sensor_id, CSS)
+        for n, (before, after) in enumerate(zip(clean, noisy)):
+            before_light = {s.sensor_id: s for s in before.sensor_samples}[sensor_id].light_sensor.irradiance_w_per_m2
+            after_light = {s.sensor_id: s for s in after.sensor_samples}[sensor_id].light_sensor.irradiance_w_per_m2
+            assert before_light < profile.saturation_w_per_m2
+            noise = profile.noise_std_w_per_m2 * sample_normals(seed, CSS, n, size=1)[0]
+            assert after_light == pytest.approx(max(before_light + noise, 0.0), rel=0.0, abs=1e-9)
+            lit += before_light > 0.0
+    assert lit > 0
 
 
 @real_kernels
@@ -658,14 +683,17 @@ def test_stale_albedo_is_internal(service):
 
 @real_kernels
 def test_full_p0_set_repeats_bit_for_bit_after_reset(service):
+    """With magnetometer and light-sensor noise on: 100 steps, Reset, 100 steps is bit-identical."""
     _, stub = service
-    stub.ConfigureRun(light_sensor_request())
+    stub.ConfigureRun(noisy_p0_request())
 
     def run():
         return [stub.Step(step_request(n)) for n in range(100)]
 
     first = run()
     assert all(len(response.sensor_samples) == 8 for response in first[1:])
+    light = np.array([[s.light_sensor.irradiance_w_per_m2 for s in r.sensor_samples[2:]] for r in first[1:]])
+    assert np.any(np.diff(light, axis=0) != 0.0)  # Noise is on.
     stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [

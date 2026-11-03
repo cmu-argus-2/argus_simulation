@@ -94,9 +94,9 @@ message LightSensorProfile {
   double field_of_view_half_angle_rad = 1;
   // > 0.
   double scale_factor = 2;
-  // senNoiseStd = this / Basilisk scaleFactor, white (A = 0). bsk 2.11.1 cannot set coarseSunSensor's
-  // A from Python and its default A is a random walk, so the service rejects values > 0 with
-  // UNIMPLEMENTED for now.
+  // Per-sample white noise in W/m2, added before the clip to [0, saturation]. bsk 2.11.1 cannot
+  // make coarseSunSensor's noise white from Python, so the service draws it from the 'css' seed
+  // stream and runs the module noise-free (Argus.Basilisk/README.md §9).
   double noise_std_w_per_m2 = 3;
   // senBias = this / Basilisk scaleFactor.
   double bias_w_per_m2 = 4;
