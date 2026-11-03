@@ -107,7 +107,7 @@ consumer that feeds an agent or controller uses only frames whose sensor has `co
 | `velocity_ecef_m_s` | [3] | `VelocityEcefMetersPerSecond`, relative to the Earth-fixed frame |
 | `body_to_ecef_xyzw` | [4] | `BodyToEcef` |
 | `angular_velocity_body_rad_s` | [3] | `AngularVelocityBodyRadiansPerSecond`: the body rate relative to inertial, in body axes. In analytic runs (`AnalyticEarthFixed`) it is the fixture's (0, n, 0) instead until CORE-2 (PR #83) lands, a known issue (`CircularOrbitModel` TODO; `target-architecture.md`). |
-| `producing_command` | object or `null` | `AppliedCommands`: `sequence`, `apply_at_simulation_time_s`, `reaction_wheel_torque_body_n_m`, `magnetorquer_dipole_body_a_m2`, `thruster_force_body_n`. The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0, and in runs that apply no commands (Unity's `AnalyticStateSource`). The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `outcome` is not `Rejected`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
+| `producing_command` | object or `null` | `AppliedCommands` (a `DeviceCommandSet`): `sequence`, `apply_at_simulation_time_s` and `devices`, which maps each commanded actuator's device ID to its values in the manifest's value forms (`{}` while no actuator exists). The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0, and in runs that apply no commands (Unity's `AnalyticStateSource`). The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `outcome` is not `Rejected`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
 | `environment` | object or `null` | `EnvironmentState`: `sun_position_itrf93_m`, `j2000_to_itrf93_xyzw`, `earth_angular_velocity_itrf93_rad_s`, `spacecraft_shadow_factor` (Basilisk's illumination factor: 1 is fully sunlit, 0 is umbra). `null` in analytic runs (D9). |
 
 Backend sensor measurements (`SensorMeasurements`) are not repeated here. They appear in
@@ -141,11 +141,14 @@ A sensor added later brings its own `payload_type`. That is an added payload typ
 
 ### `commands.jsonl`: one line per gateway command record (CORE-7)
 
-Under D11 the command fields change in v1 before HOST-5 (#29) closes
-([device-model.md](../../../../docs/device-model.md) §6, CORE-20 #112). In `requested`, `applied`
-and `producing_command`, the three body-frame vectors give way to `devices`, which maps each device
-ID to its values; `applied` lists every configured actuator, idle ones included. `states.jsonl`
-gains each device's per-step state as `devices` (BSK-8, #21).
+Commands are per device (D11, [device-model.md](../../../../docs/device-model.md) §6, CORE-20 #112):
+`requested`, `applied` and `producing_command` carry `devices`, which maps each commanded
+device ID to its values. The set is complete, so an actuator it leaves out is idle and `{}`
+means no output. No actuator kind exists yet (CON-2, #34), so every applied command is `{}`,
+and a command naming any device is `Rejected`. Once actuator kinds exist, `applied` lists every
+configured actuator, idle ones included, and `states.jsonl` gains each device's per-step state
+as `devices` (BSK-8, #21). These fields replaced the three body-frame vectors before HOST-5
+(#29) freezes v1, so the schema stays at version 1.
 
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
 every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
@@ -163,8 +166,8 @@ Unity-driven runs, which bypass the gateway (G1).
 | `simulation_time_s` | number | `CommandRecord.SimulationTimeSeconds`: t_k |
 | `outcome` | string | `Applied`, `Clamped` or `Rejected` |
 | `reason` | string or `null` | why a command was clamped or rejected; `null` when `Applied` |
-| `requested` | object | the requested `ActuatorCommandSet` as the controller sent it, with the same fields as `producing_command` above; its own `sequence` and `apply_at_simulation_time_s` may differ from the line's when it was rejected |
-| `applied` | object or `null` | the `ActuatorCommandSet` the engine ran over [t_k, t_k+1), which state k+1 carries as `producing_command`; `null` when rejected |
+| `requested` | object | the requested `DeviceCommandSet` as the controller sent it, with the same fields as `producing_command` above; its own `sequence` and `apply_at_simulation_time_s` may differ from the line's when it was rejected |
+| `applied` | object or `null` | the `DeviceCommandSet` the engine ran over [t_k, t_k+1), which state k+1 carries as `producing_command`; `null` when rejected |
 
 In file order `sequence` never decreases. Several lines may share one, since every command
 rejected for a step is logged against it, but at most one line per `sequence` is `Applied` or

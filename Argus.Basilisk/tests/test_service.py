@@ -30,7 +30,8 @@ from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
 from argus_basilisk.devices import KINDS  # noqa: E402
 from argus_basilisk.seeds import CSS, MAG, rng_seed, sample_normals  # noqa: E402
-from test_validation import p0_default_request, set_parameter, set_quaternion, set_vector, zero_command  # noqa: E402
+from test_validation import (  # noqa: E402
+    p0_default_request, set_parameter, set_quaternion, set_vector, torque_command, zero_command)
 
 ROOT = Path(__file__).resolve().parents[1]
 STEP_NS = 100_000_000
@@ -107,12 +108,12 @@ def magnetometer_request():
 
 
 def step_request(sequence, run_id="p0-default", sim_time_ns=None):
-    """Step(n) carrying the zero command n-1, which acts over [t_n-1, t_n)."""
+    """Step(n) carrying the empty command n-1, which acts over [t_n-1, t_n)."""
     request = service_pb.StepRequest(
         run_id=run_id,
         sequence=sequence,
         sim_time_ns=sequence * STEP_NS if sim_time_ns is None else sim_time_ns,
-        command=zero_command(),
+        commands=zero_command(),
     )
     if sequence > 0:
         request.command_sequence = sequence - 1
@@ -279,11 +280,11 @@ def test_step_checks_run_id_sequence_time_command_and_coverage(service):
     assert "expected 0" in details
     assert status_of(stub.Step, step_request(0, sim_time_ns=1))[0] == grpc.StatusCode.INVALID_ARGUMENT
     unset = step_request(0)
-    unset.ClearField("command")
+    unset.ClearField("commands")
     assert status_of(stub.Step, unset)[0] == grpc.StatusCode.INVALID_ARGUMENT
-    # Step(0) follows no command, so a non-zero one is invalid even before actuators exist.
+    # Step(0) follows no command, so its set must be empty.
     pushing = step_request(0)
-    pushing.command.thruster_force_body_n.x = 1.0
+    pushing.commands.CopyFrom(torque_command())
     assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.INVALID_ARGUMENT
     assert stub.Step(step_request(0)).sequence == 0
     assert servicer.state == servicer_module.RUNNING
@@ -297,9 +298,13 @@ def test_step_checks_run_id_sequence_time_command_and_coverage(service):
     unnamed = step_request(1)
     unnamed.ClearField("command_time_ns")
     assert status_of(stub.Step, unnamed)[0] == grpc.StatusCode.INVALID_ARGUMENT
-    pushing = step_request(1)
-    pushing.command.thruster_force_body_n.x = 1.0
-    assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.UNIMPLEMENTED
+    # P0 configures no actuator, so a command naming any device is rejected (CORE-20).
+    for device_id in ("torque.body", "imu.main"):
+        pushing = step_request(1)
+        pushing.commands.CopyFrom(torque_command(device_id))
+        code, details = status_of(stub.Step, pushing)
+        assert code == grpc.StatusCode.INVALID_ARGUMENT
+        assert "is not an actuator this run configures" in details
     assert stub.Step(step_request(1)).sequence == 1
 
     # Configured 50 ms before coverage ends: Step(1) is outside it and must not execute, since

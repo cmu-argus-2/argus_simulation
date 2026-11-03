@@ -54,12 +54,18 @@ namespace Argus.Simulation.Host
             return message;
         }
 
-        public static PbSim.ActuatorCommand ToProto(ActuatorCommandSet commands) => new PbSim.ActuatorCommand
+        public static PbSim.DeviceCommandSet ToProto(DeviceCommandSet commands)
         {
-            ReactionWheelTorqueBodyNM = ToProto(commands.ReactionWheelTorqueBodyNewtonMeters),
-            MagnetorquerDipoleBodyAM2 = ToProto(commands.MagnetorquerDipoleBodyAmpereSquareMeters),
-            ThrusterForceBodyN = ToProto(commands.ThrusterForceBodyNewtons)
-        };
+            PbSim.DeviceCommandSet message = new PbSim.DeviceCommandSet();
+            foreach (DeviceCommand command in commands.Commands)
+            {
+                PbSim.DeviceCommand device = new PbSim.DeviceCommand { DeviceId = command.DeviceId };
+                AddAll(device.Values, command.Values);
+                message.Commands.Add(device);
+            }
+
+            return message;
+        }
 
         public static BasiliskStepState ToStepState(PbBasilisk.StepResponse response)
         {

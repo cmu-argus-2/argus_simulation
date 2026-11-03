@@ -5,7 +5,7 @@ namespace Argus.Simulation.Core
         public SimulationStepInput(
             long sequence,
             double simulationTimeSeconds,
-            ActuatorCommandSet commands)
+            DeviceCommandSet commands)
         {
             Sequence = sequence;
             SimulationTimeSeconds = simulationTimeSeconds;
@@ -14,7 +14,7 @@ namespace Argus.Simulation.Core
 
         public long Sequence { get; }
         public double SimulationTimeSeconds { get; }
-        public ActuatorCommandSet Commands { get; }
+        public DeviceCommandSet Commands { get; }
 
         public bool IsValid =>
             Sequence >= 0 &&

@@ -11,7 +11,7 @@ is generated or compiled into a committed artifact; each consumer generates its 
 proto/argus/
 ├── sim/v1/                     # Shared Argus messages (package argus.sim.v1)
 │   ├── types.proto             # Vector3, Quaternion, Matrix3
-│   ├── commands.proto          # ActuatorCommand
+│   ├── commands.proto          # DeviceCommand, DeviceCommandSet (D11)
 │   ├── devices.proto           # DeviceValue, DeviceMount, DeviceConfiguration (D11)
 │   └── run_configuration.proto # RunConfiguration (G5)
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)

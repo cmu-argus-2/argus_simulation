@@ -36,9 +36,15 @@ namespace Argus.Simulation.Tests
             {
                 SimulationGateway gateway = RecordedGateway(recorder);
                 gateway.Reset(3, Scenario(0.25));
-                Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-                Assert.Throws<ArgumentException>(() => gateway.Step(
-                    new ActuatorCommandSet(0, 0.0, new Vector3d(double.NaN, 0.0, 0.0), zero, zero)));
+                Assert.Throws<ArgumentException>(() => gateway.Step(new DeviceCommandSet(
+                    0,
+                    0.0,
+                    new[]
+                    {
+                        new DeviceCommand(
+                            "torque.body",
+                            new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(double.NaN, 0.0, 0.0)).Build())
+                    })));
                 for (int i = 0; i < steps; i++)
                 {
                     gateway.Step();
@@ -63,7 +69,7 @@ namespace Argus.Simulation.Tests
             string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
             Assert.That(commands.Length, Is.EqualTo(steps + 1));
             Assert.That(Field(commands[0], "outcome"), Is.EqualTo("\"Rejected\""));
-            Assert.That(commands[0], Does.Contain("\"reaction_wheel_torque_body_n_m\":[null,0,0]"));
+            Assert.That(commands[0], Does.Contain("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[null,0,0]}}"));
             Assert.That(commands[0], Does.EndWith("\"applied\":null}"));
             for (int i = 0; i < steps; i++)
             {
@@ -97,7 +103,7 @@ namespace Argus.Simulation.Tests
 
             stopwatch.Stop();
             // The queue is full of steps, but a refused command still has room.
-            Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(0, 0.0)));
+            Assert.Throws<ArgumentException>(() => gateway.Step(DeviceCommandSet.None(0, 0.0)));
             bool stillStalled = !release.IsSet;
             release.Set();
             recorder.Close();

@@ -26,8 +26,8 @@ namespace Argus.Simulation.Core
             long sequence,
             double simulationTimeSeconds,
             CommandOutcome outcome,
-            ActuatorCommandSet requested,
-            ActuatorCommandSet? applied,
+            DeviceCommandSet requested,
+            DeviceCommandSet? applied,
             string reason = null)
         {
             if (string.IsNullOrWhiteSpace(runId))
@@ -80,10 +80,10 @@ namespace Argus.Simulation.Core
         public CommandOutcome Outcome { get; }
 
         // As the controller sent it, even when it is invalid.
-        public ActuatorCommandSet Requested { get; }
+        public DeviceCommandSet Requested { get; }
 
         // What the engine ran over [t_k, t_k+1); none when Rejected.
-        public ActuatorCommandSet? Applied { get; }
+        public DeviceCommandSet? Applied { get; }
 
         // Why the command was clamped or rejected; null when Applied.
         public string Reason { get; }

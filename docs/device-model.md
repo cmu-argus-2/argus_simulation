@@ -2,7 +2,8 @@
 
 **Status:** design (CON-5, #110). The sensors are built (CORE-19, #111): §1 to §5 and §7 are
 in `Core/Contracts`, the kinds in `Core/Sensors`, `argus.sim.v1/devices.proto` and
-`argus_basilisk/devices/`. Still to build: the commands (CORE-20, #112) and the profile files
+`argus_basilisk/devices/`. So are the per-device commands of §6 (CORE-20, #112), except the
+per-step device state, which comes with the first actuator. Still to build: the profile files
 (HOST-9, #113; until then the devices live in the run file's `devices`). Actuator kinds follow in
 CON-2 (#34) and BSK-8 (#21).
 
@@ -226,8 +227,9 @@ message DeviceCommandSet {
 - **Each device appears at most once.** It must be a configured actuator, and its values must pass
   its kind's checks. The gateway logs anything else as Rejected and does not send it on (CORE-20).
   Limits clamp or reject per device (CORE-10).
-- **In Core**, `ActuatorCommandSet` becomes `DeviceCommandSet`: the sequence, the apply time and
-  the commands keyed by device ID.
+- **In Core**, `DeviceCommandSet` (which replaced `ActuatorCommandSet`) holds the sequence, the
+  apply time and the `DeviceCommand`s, each a device ID and its values. Until actuator kinds
+  exist, no device is a configured actuator, so only the empty set is applied.
 - **`commands.jsonl`**: `requested` and `applied` keep `sequence` and
   `apply_at_simulation_time_s`. The three vectors are replaced by `devices`, which maps each device
   ID to its values. `requested` is what the controller sent. `applied` lists every configured

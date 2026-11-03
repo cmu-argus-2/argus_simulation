@@ -832,9 +832,10 @@ namespace Argus.Simulation.Core
                 }
             }
 
-            // An ActuatorCommandSet, as in producing_command and commands.jsonl; a rejected command's
-            // non-finite values are written as null.
-            private static void WriteCommand(DatasetJsonWriter json, ActuatorCommandSet? command)
+            // A DeviceCommandSet, as in producing_command and commands.jsonl: devices maps each
+            // commanded device ID to its values (docs/device-model.md §6). A rejected command's
+            // non-finite values are written as null; a device it repeats keeps its first values.
+            private static void WriteCommand(DatasetJsonWriter json, DeviceCommandSet? command)
             {
                 if (!command.HasValue)
                 {
@@ -842,14 +843,22 @@ namespace Argus.Simulation.Core
                     return;
                 }
 
-                ActuatorCommandSet value = command.Value;
+                DeviceCommandSet value = command.Value;
                 json.BeginObject()
                     .Key("sequence").Value(value.Sequence)
                     .Key("apply_at_simulation_time_s").Value(value.ApplyAtSimulationTimeSeconds)
-                    .Key("reaction_wheel_torque_body_n_m").Value(value.ReactionWheelTorqueBodyNewtonMeters)
-                    .Key("magnetorquer_dipole_body_a_m2").Value(value.MagnetorquerDipoleBodyAmpereSquareMeters)
-                    .Key("thruster_force_body_n").Value(value.ThrusterForceBodyNewtons)
-                    .EndObject();
+                    .Key("devices").BeginObject();
+                HashSet<string> written = new HashSet<string>(StringComparer.Ordinal);
+                foreach (DeviceCommand device in value.Commands)
+                {
+                    if (device.DeviceId != null && written.Add(device.DeviceId))
+                    {
+                        json.Key(device.DeviceId);
+                        WriteDeviceValues(json, device.Values);
+                    }
+                }
+
+                json.EndObject().EndObject();
             }
 
             private static void WriteInitialOrbit(DatasetJsonWriter json, ClassicalOrbitElements? orbit)

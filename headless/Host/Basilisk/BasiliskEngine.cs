@@ -138,7 +138,7 @@ namespace Argus.Simulation.Host
                 PacingOverrunCount = 0;
             }
 
-            state = CallStep(0, ActuatorCommandSet.None(0, 0.0), appliedCommands: null);
+            state = CallStep(0, DeviceCommandSet.None(0, 0.0), appliedCommands: null);
             return true;
         }
 
@@ -162,7 +162,7 @@ namespace Argus.Simulation.Host
             return true;
         }
 
-        private SimulationState CallStep(long sequence, ActuatorCommandSet command, ActuatorCommandSet? appliedCommands)
+        private SimulationState CallStep(long sequence, DeviceCommandSet command, DeviceCommandSet? appliedCommands)
         {
             _hasStepped = true;
             PbBasilisk.StepRequest request = new PbBasilisk.StepRequest
@@ -170,8 +170,9 @@ namespace Argus.Simulation.Host
                 RunId = _configuration.RunId,
                 Sequence = (ulong)sequence,
                 SimTimeNs = (ulong)checked(sequence * _fixedStepNanoseconds),
-                // TODO(G1): the service rejects non-zero commands until Basilisk actuators exist.
-                Command = BasiliskProtoMapper.ToProto(command)
+                // TODO(G1): the gateway rejects a command naming any device until actuator kinds
+                // exist (CON-2), so only the empty set reaches the service before BSK-8 applies them.
+                Commands = BasiliskProtoMapper.ToProto(command)
             };
             // Step(n) carries command n-1 and names its step, so the service rejects a command sent
             // in the wrong request; Step(0) follows no command and names none.

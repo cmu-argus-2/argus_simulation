@@ -4,6 +4,7 @@ Each Basilisk-modelled kind is one module in this package, registered by name in
 module defines:
 
 - KIND: its name, the DeviceConfiguration.kind that selects it;
+- ROLE (optional): ACTUATOR for an actuator kind; a module without it is a sensor kind;
 - PARAMETERS: each parameter key and its DeviceValue type (_common.NUMBER, VECTOR3, ...). Every
   key is required;
 - OUTPUTS: each key and type of its BasiliskDeviceSample.output;
@@ -22,9 +23,21 @@ so validation runs without the basilisk extra.
 from . import imu, light_sensor, magnetometer
 from ._common import Inputs
 
-__all__ = ["KINDS", "build_sensors", "of_kind"]
+__all__ = ["ACTUATOR", "KINDS", "SENSOR", "actuator_ids", "build_sensors", "of_kind"]
+
+# A kind module's ROLE; a module without one is a sensor kind.
+SENSOR = "sensor"
+ACTUATOR = "actuator"
 
 KINDS = {module.KIND: module for module in (imu, magnetometer, light_sensor)}
+
+
+def actuator_ids(configuration) -> frozenset:
+    """The device IDs of the run's actuators, the only devices a Step command may name. Every
+    registered kind is a sensor until the first actuator kind (CON-2 #34), so this is empty."""
+    return frozenset(
+        device.device_id for device in configuration.devices
+        if getattr(KINDS.get(device.kind), "ROLE", SENSOR) == ACTUATOR)
 
 
 def of_kind(devices, kind: str) -> list:
