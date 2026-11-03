@@ -41,8 +41,11 @@ uv run --frozen python -m argus_basilisk --endpoint 127.0.0.1:50051
    same on every machine. Without uv, use the hashed `requirements.txt` in a Python 3.12 venv
    instead (see [Argus.Basilisk/README.md §2](Argus.Basilisk/README.md#2-install-and-run)).
 2. `generate_protos.py` writes the gRPC code from `Argus.Contracts/` into `generated/`.
-3. `fetch_kernels.py` downloads the P0 kernel set's SPICE kernels and `WMM2025.COF` into
-   `kernels/` and checks their SHA-256 and coverage.
+3. `fetch_kernels.py` downloads the P0 kernel set's SPICE kernels, `WMM2025.COF` and the
+   CERES albedo map into `kernels/`, and checks their SHA-256 and coverage. A run's epoch must
+   lie inside the set's coverage: `argus-2026-11-02` ends on 2026-08-06, its Earth PCK's last
+   measured day, so a later `epochUtc` is refused with OUT_OF_RANGE until a newer kernel set is
+   published ([Argus.Basilisk/README.md §8](Argus.Basilisk/README.md#8-spice-and-kernels)).
 4. The last command serves on loopback until Ctrl+C.
 
 Run the service tests with `uv run --frozen python -m pytest -q`. Tests that need the real
@@ -62,8 +65,19 @@ dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 
 ```
 
 The first command needs only the .NET SDK. The second runs the host against a Basilisk
-service that is already serving. See [headless/README.md](headless/README.md) for the options
-and exit codes.
+service that is already serving, with the P0 run file `headless/Host/runs/p0-default.json`.
+To keep the run, add `--record <dir>`:
+
+```bash
+dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 600 --basilisk-endpoint 127.0.0.1:50051 --record runs-out
+```
+
+It writes dataset v1 to `runs-out/<run_id>_0/`: `manifest.json` (the configuration and its
+devices), then `states.jsonl` (truth), `sensors.jsonl` (every sensor frame) and
+`commands.jsonl` (every command), one JSON object per line. The fields are described in
+[Core/Recording/README.md](Assets/ArgusSimulation/Core/Recording/README.md). See
+[headless/README.md](headless/README.md) for the other options, the exit codes and the run-file
+format.
 
 ## Run the Unity visualization
 
