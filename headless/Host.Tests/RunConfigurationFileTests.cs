@@ -306,7 +306,7 @@ namespace Argus.Simulation.Host.Tests
                 0.1,
                 initialOrbit: new ClassicalOrbitElements(6_878_137.0, 0.0, 51.6, 0.0, 0.0, 0.0),
                 randomSeed: 1,
-                kernelSetId: "argus-2026-10-20",
+                kernelSetId: "argus-2026-11-02",
                 spacecraft: new SpacecraftConfiguration(
                     1.33,
                     new Matrix3d(

@@ -2,7 +2,7 @@
 the magnetometer (BSK-5).
 
 Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
-argus-2026-10-20 in kernels/, and the SPICE reference test needs argus-2026-09-25
+argus-2026-11-02 in kernels/, and the SPICE reference test needs argus-2026-09-25
 (scripts/fetch_kernels.py); each is skipped without its files.
 """
 
@@ -21,8 +21,10 @@ import pytest
 pytest.importorskip("Basilisk")
 
 from Basilisk.architecture import astroConstants, messaging  # noqa: E402
+from Basilisk.simulation import albedo  # noqa: E402
 from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 
+from argus_basilisk import scenario as scenario_module  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
@@ -33,7 +35,7 @@ from test_validation import p0_default_request, set_quaternion, set_vector, zero
 ROOT = Path(__file__).resolve().parents[1]
 STEP_NS = 100_000_000
 
-P0_KERNEL_SET = "argus-2026-10-20"
+P0_KERNEL_SET = "argus-2026-11-02"
 # README §13: the reference values below come from this set's Earth PCK.
 REFERENCE_KERNEL_SET = "argus-2026-09-25"
 
@@ -668,3 +670,59 @@ def test_full_p0_set_repeats_bit_for_bit_after_reset(service):
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [
         r.SerializeToString(deterministic=True) for r in second]
+
+
+# --- CERES albedo (BSK-14) -----------------------------------------------------------------
+
+
+def test_light_sensors_need_the_albedo_map_in_the_kernel_set(service, monkeypatch, tmp_path):
+    """A kernel set without the CERES map cannot serve a light sensor; checked before SPICE loads."""
+    _, stub = service
+    window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
+    no_map = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
+    monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: no_map)
+    request = light_sensor_request()
+    del request.configuration.sensors[1]  # No magnetometer, so only the albedo map is missing.
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.FAILED_PRECONDITION
+    assert scenario_module.ALBEDO_FILE in details
+
+
+def one_orbit_albedo(stub, servicer):
+    """Per 10 s step over one P0 orbit: (sum of albedoAtInstrument over the six faces, shadow)."""
+    request = light_sensor_request()
+    configuration = request.configuration
+    configuration.fixed_step_ns = 10_000_000_000
+    for sensor in configuration.sensors:
+        sensor.definition.sample_period_ns = configuration.fixed_step_ns
+    stub.ConfigureRun(request)
+    readers = servicer._run.scenario.readers
+    rows = []
+    for n in range(580):
+        request = step_request(n, sim_time_ns=n * configuration.fixed_step_ns)
+        if n > 0:
+            request.command_time_ns = (n - 1) * configuration.fixed_step_ns
+        stub.Step(request)
+        rows.append(sum(readers[f"albedo.albOutMsgs[{i}]"]().albedoAtInstrument for i in range(6)))
+    return np.array(rows)
+
+
+@real_kernels
+def test_ceres_albedo_is_darker_over_open_ocean_and_brighter_over_clouds_than_the_average(
+        service, monkeypatch):
+    """One P0 orbit against the uniform average model BSK-6 used: the CERES map reads about half
+    the average over the equatorial Pacific (4.7 S, 141.5 W at t = 5580 s) and a third more over the
+    Southern Ocean cloud deck (50.8 S, 124.7 E at t = 4120 s)."""
+    servicer, stub = service
+    ceres = one_orbit_albedo(stub, servicer)
+    monkeypatch.setattr(
+        albedo.Albedo, "addPlanetandAlbedoDataModel",
+        lambda self, planet_msg, data_path, file_name: self.addPlanetandAlbedoAverageModel(planet_msg))
+    average = one_orbit_albedo(stub, servicer)
+
+    sunlit = average > 1e-3
+    ratio = ceres[sunlit] / average[sunlit]
+    assert ratio.min() < 0.6
+    assert ratio.max() > 1.25
+    assert ceres[558] / average[558] < 0.6  # t = 5580 s, open ocean.
+    assert ceres[412] / average[412] > 1.25  # t = 4120 s, cloud deck.

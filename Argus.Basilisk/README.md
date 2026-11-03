@@ -259,7 +259,8 @@ manifest, field or file. Filenames must be local basenames; paths resolving outs
 kernel directory, duplicates and kernel/support overlap are rejected.
 
 Support files use the agreed format in [Manifest format](#manifest-format); the verifier
-reads only `file` and `sha256`. `argus-2026-10-20` pins `WMM2025.COF` this way.
+reads only `file` and `sha256`. `argus-2026-11-02` pins `WMM2025.COF` and the CERES albedo
+map this way.
 `ConfigureRun` calls `load_kernel_set` before building anything (BSK-3, #16).
 
 Run the synthetic, offline verifier tests from `Argus.Basilisk/`:
@@ -270,13 +271,15 @@ python -m pytest tests -q
 
 Install the `test` extra to obtain pytest (`pip install -e '.[test]'`); Basilisk and
 generated protobuf modules are not needed by these tests. `tests/test_service.py` needs the
-`basilisk` extra. Its live-run tests also need the P0 set `argus-2026-10-20` in `kernels/`,
+`basilisk` extra. Its live-run tests also need the P0 set `argus-2026-11-02` in `kernels/`,
 and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped without its files.
 
 ### Scenario integration
 
 - Kernel manifests live in `kernel_sets/<id>.json`. P0 (`headless/Host/runs/p0-default.json`)
-  uses `argus-2026-10-20`; `argus-2026-09-25` stays for the §13 SPICE check. An ID is
+  uses `argus-2026-11-02` (the kernels of `argus-2026-10-20` plus the CERES albedo map);
+  `argus-2026-10-20` still serves runs without light sensors, and `argus-2026-09-25` the §13
+  SPICE check. An ID is
   immutable: changing any file needs a new ID. `coverage_utc` bounds every run.
 - Before loading, check that each file exists in `kernels/` and matches its SHA-256;
   otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
@@ -305,7 +308,7 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
 ### Fetching a kernel set
 
 ```bash
-.venv/bin/python scripts/fetch_kernels.py argus-2026-10-20
+.venv/bin/python scripts/fetch_kernels.py argus-2026-11-02
 ```
 
 - For every `kernels` and `support_files` entry missing from `kernels/`, the tool tries
@@ -329,7 +332,7 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
   August). Superseded versions move to `a_old_versions/` and stay there, so each entry lists
   both URLs and the set stays downloadable.
 - Runs use measured Earth orientation only: `coverage_utc.end` equals `reconstructed_end`
-  (the PCK's last datum, 2026-08-06 for `argus-2026-10-20`), not the two extrapolated days
+  (the PCK's last datum, 2026-08-06 for `argus-2026-11-02`), not the two extrapolated days
   after it, so a later epoch is OUT_OF_RANGE.
 - Not decided yet: who publishes the next set and when, and whether runs will ever need
   epochs after the last datum. If they do, the option is a daily PCK hosted by the team,
@@ -412,8 +415,8 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   the same t_n: `tam_S = scale (C_SB C_BN B_N + noise + bias)`, clipped to ±range.
 - `WMM2025.COF` is not in the `bsk` wheel (its `supportData` is pruned, and
   `dataFetcher.get_path` downloads it on first use). It is pinned like the kernels, as a
-  `support_files` entry of `argus-2026-10-20` checked before the build, and never downloaded
-  during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
+  `support_files` entry of `argus-2026-10-20` and later sets, checked before the build, and
+  never downloaded during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
   Basilisk v2.11.1's byte-identical copy (the file `dataFetcher` would download).
 - bsk 2.11.1 ignores the magnetometer's `RNGSeed`, so the service adds the noise (BSK-9,
   #22): the module runs noise-free and unclipped, and `Magnetometer.measurement()` returns
@@ -430,10 +433,20 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 - `sunInMsg` from the SPICE Sun; `sunEclipseInMsg` from `eclipseOutMsgs[0]`; `albedoInMsg`
   from `albedo.albOutMsgs[i]`. The scenario builds one `albedo.Albedo` in the dynamics task
   after eclipse, only when light sensors are configured, with `spacecraftStateInMsg`,
-  `sunPositionInMsg` from the SPICE Sun, `addPlanetandAlbedoAverageModel(earth)`, and one
-  `addInstrumentConfig(fov, nHat_B, r_B)` per light sensor in configuration order, so
+  `sunPositionInMsg` from the SPICE Sun,
+  `addPlanetandAlbedoDataModel(earth, <kernels dir>/, "Earth_ALB_2018_CERES_All_1x1.csv")`,
+  and one `addInstrumentConfig(fov, nHat_B, r_B)` per light sensor in configuration order, so
   `albOutMsgs[i]` belongs to the i-th light sensor. Freshness is asserted on every
   `albOutMsgs[i]`.
+- The albedo map (BSK-14, #117) is CERES 2018 all-sky (clouds included) at 1° × 1°, a
+  `support_files` entry of `argus-2026-11-02` pinned like `WMM2025.COF` (Basilisk v2.11.1's
+  copy and its backup). A kernel set without it cannot serve a light sensor: ConfigureRun
+  returns FAILED_PRECONDITION before SPICE loads anything. All-sky, because clouds are what
+  make Earth bright; 1° × 1°, because it costs no more than the uniform average model it
+  replaces, which also sums a 1° grid (600 s P0 run through `headless/Host`: 17.7 s before,
+  16.7 s after; 5° × 5° and 10° × 10° are faster but coarser than a light sensor's footprint
+  needs). Over one P0 orbit the map reads about half the average over the open equatorial
+  Pacific and a third more over the Southern Ocean cloud deck.
 - Subscribe a reader to `cssDataOutMsg` at build time (§6). The sensor measures on its first
   firing, at t = 0.
 - With zero noise, `OutputData = scale (cos θ × shadow × (1 AU / d)² + albedoAtInstrument)`,

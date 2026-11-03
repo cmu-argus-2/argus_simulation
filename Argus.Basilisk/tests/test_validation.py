@@ -26,7 +26,7 @@ from argus.sim.v1 import commands_pb2, run_configuration_pb2, sensors_pb2
 
 ALL_KINDS = frozenset({"imu", "magnetometer", "light_sensor"})
 
-# coverage_utc of kernel_sets/argus-2026-10-20.json, the P0 kernel set.
+# coverage_utc of kernel_sets/argus-2026-11-02.json, the P0 kernel set.
 COVERAGE = UtcWindow(
     start=datetime(1962, 1, 20, tzinfo=timezone.utc),
     end=datetime(2026, 8, 6, tzinfo=timezone.utc),
@@ -96,7 +96,7 @@ def p0_default_request():
         run_id="p0-default",
         fixed_step_ns=100_000_000,
         random_seed=1,
-        kernel_set_id="argus-2026-10-20",
+        kernel_set_id="argus-2026-11-02",
     )
     configuration.epoch_utc.FromDatetime(datetime(2025, 1, 15, tzinfo=timezone.utc))
 
