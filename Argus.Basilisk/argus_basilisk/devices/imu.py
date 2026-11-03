@@ -151,7 +151,8 @@ def _imu_module(model_tag: str, device, period_s: float, random_seed: int, strea
     module.setWalkBoundsGyro(np.full(3, number("gyroscope.bias_random_walk_bound_rad_per_s")))
     module.setWalkBoundsAccel(np.full(3, number("accelerometer.bias_random_walk_bound_m_per_s2")))
 
-    # Deterministic errors: scale (true + noise + bias), quantised, then clipped.
+    # Deterministic errors: scale (true + noise + bias), quantised, then clipped. setLSBs truncates
+    # toward zero, so ±1 LSB reads 0 (README §9).
     module.senRotBias = vector("gyroscope.constant_bias_sensor_rad_per_s")
     module.senTransBias = vector("accelerometer.constant_bias_sensor_m_per_s2")
     module.gyroScale = vector("gyroscope.scale_factor_per_axis")
