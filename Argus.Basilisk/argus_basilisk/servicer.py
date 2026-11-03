@@ -8,7 +8,7 @@ import threading
 import grpc
 
 from .contracts import service_grpc, service_pb
-from .devices import magnetometer, of_kind
+from .devices import actuator_ids, magnetometer, of_kind
 from .kernels import KernelSet, KernelSetError, load_kernel_set
 from .scenario import BASILISK_VERSION, KernelLoadError, Scenario, StaleMessageError
 from .validation import (
@@ -180,9 +180,10 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 "INVALID_ARGUMENT",
                 f"sim_time_ns: expected {t_n} (sequence x fixed_step_ns), got {request.sim_time_ns}")
 
-        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, and zero.
+        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, and naming only the
+        # run's actuators, of which there are none until actuator kinds exist (CON-2).
         try:
-            validate_step_request(request, configuration.fixed_step_ns)
+            validate_step_request(request, configuration.fixed_step_ns, actuator_ids(configuration))
             # 4. epoch + t_n inside coverage, before executing: CSPICE aborts the process outside it.
             has_magnetometer = bool(of_kind(configuration.devices, magnetometer.KIND))
             check_utc_in_range(

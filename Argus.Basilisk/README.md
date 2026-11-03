@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); magnetometer and light-sensor noise are drawn in the service; pacing and non-zero commands are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); magnetometer and light-sensor noise are drawn in the service; pacing is UNIMPLEMENTED, and Step accepts only the empty command set until actuator kinds exist
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -123,8 +123,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    Device checks walk `devices.KINDS`. A device problem names its path, for example
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
-   Pacing and non-zero commands stay
-   UNIMPLEMENTED until BSK-7 (#20) and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   Pacing stays UNIMPLEMENTED until BSK-7 (#20). No actuator kind is registered yet (CON-2,
+   #34), so a Step command may name no device, and applying commands waits for BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -148,12 +148,17 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 1. `run_id` matches and n equals the next sequence; otherwise FAILED_PRECONDITION naming
    the expected value.
 2. `sim_time_ns == n × fixed_step_ns`; otherwise INVALID_ARGUMENT.
-3. `command` is command n-1, for [t_n-1, t_n). It has all three vectors and they are
-   finite, and for n > 0 `command_sequence == n − 1` and `command_time_ns == (n − 1) ×
-   fixed_step_ns`; otherwise INVALID_ARGUMENT, so a command sent in the wrong request is
-   rejected instead of acting a step off. Step(0) follows no command: both fields are unset
-   and the command is zero, or INVALID_ARGUMENT (no interval ends at t = 0). For n > 0 a
-   non-zero command is UNIMPLEMENTED until actuators exist (G1).
+3. `commands` is command n-1, for [t_n-1, t_n): a `DeviceCommandSet` (D11,
+   `docs/device-model.md` §6). It is set, and for n > 0 `command_sequence == n − 1` and
+   `command_time_ns == (n − 1) × fixed_step_ns`; otherwise INVALID_ARGUMENT, so a command
+   sent in the wrong request is rejected instead of acting a step off. The set is complete:
+   an actuator it leaves out is idle, so the empty set is no output. Each command names a
+   configured actuator once, with set, finite values; otherwise INVALID_ARGUMENT
+   (`commands.commands[0].device_id: is not an actuator this run configures`). Until actuator
+   kinds exist (CON-2, #34) a run has no actuators, so only the empty set is valid. Step(0)
+   follows no command: both fields are unset and the set is empty, or INVALID_ARGUMENT (no
+   interval ends at t = 0). A command for a configured actuator is UNIMPLEMENTED until BSK-8
+   (#21) applies it (G1).
 4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
    otherwise OUT_OF_RANGE, checked before executing.
 5. For n > 0, write the request's command (command n-1) into the actuator input messages
@@ -545,11 +550,11 @@ The draws are fixed by the `numpy` pin in `uv.lock`.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, or a non-zero command in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A non-zero command after Step(0); `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A command for a configured actuator after Step(0) (none can be configured yet); `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 

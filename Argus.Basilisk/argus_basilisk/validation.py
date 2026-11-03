@@ -148,18 +148,19 @@ def configure_run_problems(
     return problems.ranked()
 
 
-def validate_step_request(request, fixed_step_ns: int) -> None:
-    """Raise for a StepRequest whose command is unset, non-finite, for the wrong step, or
-    non-zero (README §3 Step 3). The caller has checked run_id, sequence and sim_time_ns."""
-    _raise_first(step_request_problems(request, fixed_step_ns))
+def validate_step_request(request, fixed_step_ns: int, actuator_ids=frozenset()) -> None:
+    """Raise for a StepRequest whose commands are unset, malformed, for the wrong step, or for a
+    device that is not a configured actuator (README §3 Step 3). The caller has checked run_id,
+    sequence and sim_time_ns."""
+    _raise_first(step_request_problems(request, fixed_step_ns, actuator_ids))
 
 
-def step_request_problems(request, fixed_step_ns: int) -> list[ValidationError]:
-    """Return every problem with a StepRequest's command, INVALID_ARGUMENT first.
+def step_request_problems(request, fixed_step_ns: int, actuator_ids=frozenset()) -> list[ValidationError]:
+    """Return every problem with a StepRequest's commands, INVALID_ARGUMENT first.
 
     Step(n) carries command n-1, which acts over [t_n-1, t_n) (target-architecture §4), so
     command_sequence and command_time_ns must name step n-1. Step(0) follows no command: both
-    are unset and the command is zero.
+    are unset and the command set is empty. actuator_ids are the run's configured actuators.
     """
     problems = _Problems()
     sequence = request.sequence
@@ -178,44 +179,58 @@ def step_request_problems(request, fixed_step_ns: int) -> list[ValidationError]:
                     name, f"expected {expected[name]}, since Step({sequence}) carries command {sequence - 1}",
                     getattr(request, name))
 
-    if not request.HasField("command"):
-        problems.unset("command")
+    if not request.HasField("commands"):
+        problems.unset("commands")
     else:
-        problems.extend(step_command_problems(request.command, first_step=sequence == 0))
+        problems.extend(step_command_problems(
+            request.commands, actuator_ids=actuator_ids, first_step=sequence == 0))
     return problems.ranked()
 
 
-def validate_step_command(command, path: str = "command", *, first_step: bool = False) -> None:
-    """Raise for a Step ActuatorCommand that is unset, non-finite or non-zero (README §3 Step 3)."""
-    _raise_first(step_command_problems(command, path, first_step=first_step))
+def validate_step_command(
+        commands, path: str = "commands", *, actuator_ids=frozenset(), first_step: bool = False) -> None:
+    """Raise for a Step DeviceCommandSet that is malformed or names a device that is not a
+    configured actuator (README §3 Step 3)."""
+    _raise_first(step_command_problems(commands, path, actuator_ids=actuator_ids, first_step=first_step))
 
 
-def step_command_problems(command, path: str = "command", *, first_step: bool = False) -> list[ValidationError]:
-    """Return every problem with a Step ActuatorCommand, INVALID_ARGUMENT first.
+def step_command_problems(
+        commands, path: str = "commands", *, actuator_ids=frozenset(), first_step: bool = False
+) -> list[ValidationError]:
+    """Return every problem with a Step DeviceCommandSet, INVALID_ARGUMENT first.
 
-    first_step: the command of Step(0), which acts over no interval, so a non-zero value is
-    INVALID_ARGUMENT rather than UNIMPLEMENTED.
+    The set is complete (docs/device-model.md §6): an actuator it leaves out is idle, so the
+    empty set is no output and always valid. Each device appears at most once, with set, finite
+    values, and must be one of the run's actuators. first_step: the command of Step(0), which acts
+    over no interval, so it must be empty.
     """
     problems = _Problems()
-    non_zero = []
-    for name in ("reaction_wheel_torque_body_n_m", "magnetorquer_dipole_body_a_m2", "thruster_force_body_n"):
-        if not command.HasField(name):
-            problems.unset(f"{path}.{name}")
-            continue
-        vector = getattr(command, name)
-        if _check_finite_vector(problems, vector, f"{path}.{name}") and _components(vector) != (0.0, 0.0, 0.0):
-            non_zero.append(name)
-
-    for name in non_zero:
-        if first_step:
-            problems.invalid(
-                f"{path}.{name}", "must be zero in Step(0), since no interval ends at t = 0",
-                _components(getattr(command, name)))
+    seen = {}
+    for index, command in enumerate(commands.commands):
+        command_path = f"{path}.commands[{index}]"
+        device_id = command.device_id
+        if not device_id:
+            problems.unset(f"{command_path}.device_id")
+        elif device_id in seen:
+            problems.invalid(f"{command_path}.device_id", f"repeats commands[{seen[device_id]}]", device_id)
         else:
-            # Lifted by BSK-8 (#21) when actuators exist (G1).
-            problems.unimplemented(
-                f"{path}.{name}", "non-zero actuator commands are not built yet",
-                _components(getattr(command, name)))
+            seen[device_id] = index
+        for key in sorted(command.values):
+            value = command.values[key]
+            key_path = f"{command_path}.values[{json.dumps(key)}]"
+            if value.WhichOneof("value") is None:
+                problems.unset(key_path)
+            elif not all(math.isfinite(component) for component in _numeric_components(_decode(value))):
+                problems.invalid(key_path, "must be finite", _decode(value))
+
+        if first_step:
+            problems.invalid(command_path, "must not exist in Step(0), since no interval ends at t = 0", device_id)
+        elif device_id and device_id not in actuator_ids:
+            # No actuator kind is registered yet (CON-2 #34), so no device ID is valid here.
+            problems.invalid(f"{command_path}.device_id", "is not an actuator this run configures", device_id)
+        elif device_id:
+            # Lifted by BSK-8 (#21), which applies the commands of configured actuators (G1).
+            problems.unimplemented(command_path, "applying actuator commands is not built yet", device_id)
     return problems.ranked()
 
 

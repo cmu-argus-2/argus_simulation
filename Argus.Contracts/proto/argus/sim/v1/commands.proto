@@ -1,16 +1,24 @@
-// Actuator command values. Spacecraft body frame B, SI units.
+// Per-device commands (D11, docs/device-model.md §6). SI units; each kind declares its command
+// keys and types, as it declares its parameters.
 syntax = "proto3";
 
 package argus.sim.v1;
 
-import "argus/sim/v1/types.proto";
+import "argus/sim/v1/devices.proto";
 
 option csharp_namespace = "Argus.Contracts.Sim.V1";
 
-// The values of Core ActuatorCommandSet; its sequence and time travel in the enclosing request.
-// All three are required; zero means no output.
-message ActuatorCommand {
-  Vector3 reaction_wheel_torque_body_n_m = 1;
-  Vector3 magnetorquer_dipole_body_a_m2 = 2;
-  Vector3 thruster_force_body_n = 3;
+// One configured actuator's command values.
+message DeviceCommand {
+  // A configured actuator's DeviceConfiguration.device_id. Any other ID: INVALID_ARGUMENT.
+  string device_id = 1;
+  // Exactly the kind's command keys.
+  map<string, DeviceValue> values = 2;
+}
+
+// The values of Core DeviceCommandSet; its sequence and time travel in the enclosing request. A
+// step's command is complete: an actuator it leaves out uses its kind's idle values, so the empty
+// set means no output. Each device appears at most once.
+message DeviceCommandSet {
+  repeated DeviceCommand commands = 1;
 }

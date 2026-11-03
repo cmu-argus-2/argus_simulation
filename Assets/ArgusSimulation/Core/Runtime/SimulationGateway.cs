@@ -102,16 +102,16 @@ namespace Argus.Simulation.Core
             return Publish(state);
         }
 
-        // A zero command for the next step.
+        // The empty command for the next step: no output (D11).
         public Observation Step()
         {
-            return Step(ActuatorCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
+            return Step(DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
         }
 
         // Applies command k over [t_k, t_k+1) and returns observation k+1. A backend failure ends
         // the run with a BackendFailed observation instead of throwing; Failure keeps the cause.
         // Every command is logged first (CommandLogged), including one Step then rejects.
-        public Observation Step(ActuatorCommandSet command)
+        public Observation Step(DeviceCommandSet command)
         {
             if (!_isRunning)
             {
@@ -131,7 +131,7 @@ namespace Argus.Simulation.Core
                 throw new ArgumentException(rejection, nameof(command));
             }
 
-            ActuatorCommandSet applied = command;
+            DeviceCommandSet applied = command;
             Log(new CommandRecord(
                 _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Applied, command, applied));
 
@@ -234,11 +234,14 @@ namespace Argus.Simulation.Core
         }
 
         // Why Step refuses a command for step k, or null when it is valid and for k at t_k.
-        private string Rejection(ActuatorCommandSet command)
+        private string Rejection(DeviceCommandSet command)
         {
             if (!command.IsValid)
             {
-                return "The command is invalid: its sequence or time is negative, or a value is not finite.";
+                string problem = command.FindProblem();
+                return problem != null
+                    ? $"The command is invalid: {problem}."
+                    : "The command is invalid: its sequence or time is negative or not finite.";
             }
 
             if (command.Sequence != _nextSequence)
@@ -260,10 +263,35 @@ namespace Argus.Simulation.Core
                     _nextSimulationTimeSeconds);
             }
 
+            // Only the run's actuators take commands, and none is configured until the first
+            // actuator kind exists (CON-2, #34), so every command naming a device is rejected and
+            // never reaches the engine. TODO(G1): check each command's values against its kind and
+            // limits (CORE-10, #46).
+            foreach (DeviceCommand device in command.Commands)
+            {
+                if (!IsConfiguredActuator(device.DeviceId))
+                {
+                    return $"Device '{device.DeviceId}' is not an actuator this run configures.";
+                }
+            }
+
             return null;
         }
 
-        private CommandRecord Rejected(ActuatorCommandSet command, string reason) =>
+        private bool IsConfiguredActuator(string deviceId)
+        {
+            foreach (DeviceConfiguration device in _scenario.Devices)
+            {
+                if (device.Definition.SensorId == deviceId)
+                {
+                    return device.KindDefinition?.Role == DeviceRole.Actuator;
+                }
+            }
+
+            return false;
+        }
+
+        private CommandRecord Rejected(DeviceCommandSet command, string reason) =>
             new CommandRecord(
                 _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Rejected, command, null, reason);
 
@@ -339,7 +367,7 @@ namespace Argus.Simulation.Core
             SimulationState state,
             long sequence,
             double simulationTimeSeconds,
-            ActuatorCommandSet? command)
+            DeviceCommandSet? command)
         {
             if (!state.IsValid ||
                 state.RunId != _scenario.RunId ||

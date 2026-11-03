@@ -461,43 +461,56 @@ def _timestamp(value):
 
 
 def zero_command():
-    command = commands_pb2.ActuatorCommand()
-    for name in ("reaction_wheel_torque_body_n_m", "magnetorquer_dipole_body_a_m2", "thruster_force_body_n"):
-        set_vector(getattr(command, name), (0.0, 0.0, 0.0))
-    return command
+    """The empty DeviceCommandSet: no output (docs/device-model.md §6)."""
+    return commands_pb2.DeviceCommandSet()
 
 
-def test_zero_step_command_is_valid():
+def torque_command(device_id="torque.body", x=1e-4):
+    commands = commands_pb2.DeviceCommandSet()
+    command = commands.commands.add(device_id=device_id)
+    set_vector(command.values["torque_body_n_m"].vector3, (x, 0.0, 0.0))
+    return commands
+
+
+def test_empty_step_command_is_valid():
     validate_step_command(zero_command())
 
 
-def test_step_command_needs_every_vector():
-    command = zero_command()
-    command.ClearField("thruster_force_body_n")
+def test_step_command_for_a_device_that_is_not_a_configured_actuator_is_invalid():
+    # P0 configures sensors only, and no actuator kind exists yet (CON-2), so no ID is valid.
     with pytest.raises(ValidationError) as error:
-        validate_step_command(command)
+        validate_step_command(torque_command("imu.main"))
     assert error.value.code == "INVALID_ARGUMENT"
-    assert error.value.details == "command.thruster_force_body_n: required field is not set"
+    assert error.value.details.startswith("commands.commands[0].device_id: is not an actuator this run configures")
 
 
-def test_non_finite_step_command_is_invalid():
-    command = zero_command()
-    command.magnetorquer_dipole_body_a_m2.z = math.nan
-    problems = step_command_problems(command)
-    assert [problem.code for problem in problems] == ["INVALID_ARGUMENT"]
-
-
-def test_non_zero_step_command_is_unimplemented():
-    command = zero_command()
-    command.reaction_wheel_torque_body_n_m.x = 1e-4
+def test_step_command_for_a_configured_actuator_is_unimplemented():
     with pytest.raises(ValidationError) as error:
-        validate_step_command(command)
+        validate_step_command(torque_command(), actuator_ids=frozenset({"torque.body"}))
     assert error.value.code == "UNIMPLEMENTED"
-    assert error.value.details.startswith("command.reaction_wheel_torque_body_n_m")
+    assert error.value.details.startswith("commands.commands[0]: applying actuator commands is not built yet")
+
+
+def test_malformed_step_commands_are_invalid():
+    unnamed = torque_command(device_id="")
+    repeated = torque_command()
+    repeated.commands.add().CopyFrom(repeated.commands[0])
+    non_finite = torque_command(x=math.nan)
+    unset = torque_command()
+    unset.commands[0].values["torque_body_n_m"].ClearField("vector3")
+    actuators = frozenset({"torque.body"})
+    assert step_command_problems(unnamed, actuator_ids=actuators)[0].details == (
+        "commands.commands[0].device_id: required field is not set")
+    assert step_command_problems(repeated, actuator_ids=actuators)[0].details.startswith(
+        "commands.commands[1].device_id: repeats commands[0]")
+    assert step_command_problems(non_finite, actuator_ids=actuators)[0].details.startswith(
+        'commands.commands[0].values["torque_body_n_m"]: must be finite')
+    assert step_command_problems(unset, actuator_ids=actuators)[0].details == (
+        'commands.commands[0].values["torque_body_n_m"]: required field is not set')
 
 
 def step(sequence, command_sequence=None, command_time_ns=None):
-    request = service_pb.StepRequest(sequence=sequence, sim_time_ns=sequence * 100_000_000, command=zero_command())
+    request = service_pb.StepRequest(sequence=sequence, sim_time_ns=sequence * 100_000_000, commands=zero_command())
     if command_sequence is not None:
         request.command_sequence = command_sequence
     if command_time_ns is not None:
@@ -522,18 +535,24 @@ def test_step_command_timing_and_zero_step_zero():
     assert step_request_problems(step(0), 100_000_000) == []
     assert step_request_problems(step(3, 2, 200_000_000), 100_000_000) == []
 
+    actuators = frozenset({"torque.body"})
     first = step(0)
-    first.command.thruster_force_body_n.x = 1.0
-    assert [problem.code for problem in step_request_problems(first, 100_000_000)] == ["INVALID_ARGUMENT"]
+    first.commands.CopyFrom(torque_command())
+    assert [problem.code for problem in step_request_problems(first, 100_000_000, actuators)] == ["INVALID_ARGUMENT"]
 
     later = step(3, 2, 200_000_000)
-    later.command.thruster_force_body_n.x = 1.0
-    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == ["UNIMPLEMENTED"]
+    later.commands.CopyFrom(torque_command())
+    assert [problem.code for problem in step_request_problems(later, 100_000_000, actuators)] == ["UNIMPLEMENTED"]
+    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == ["INVALID_ARGUMENT"]
 
-    # A command for the wrong step outranks the non-zero command it carries.
+    # A command for the wrong step outranks the actuator command it carries.
     later.command_sequence = 3
-    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == [
+    assert [problem.code for problem in step_request_problems(later, 100_000_000, actuators)] == [
         "INVALID_ARGUMENT", "UNIMPLEMENTED"]
+
+    unset = step(3, 2, 200_000_000)
+    unset.ClearField("commands")
+    assert step_request_problems(unset, 100_000_000)[0].details == "commands: required field is not set"
 
 
 def test_validation_never_imports_basilisk():

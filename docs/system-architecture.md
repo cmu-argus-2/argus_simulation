@@ -146,8 +146,8 @@ assembly dependency.
 - `SimulationConfiguration`: run ID, UTC epoch and fixed simulation step, plus the optional
   Basilisk inputs: initial orbit, spacecraft, random seed, kernel-set ID and sensors.
 - `SimulationStepInput`: target sequence/time plus actuator commands.
-- `ActuatorCommandSet`: reaction-wheel torque, magnetorquer dipole, and thruster force
-  in SI units and the spacecraft body frame.
+- `DeviceCommandSet`: per-device commands for configured actuators, each a device ID and
+  its kind's values in SI units (D11, `docs/device-model.md` §6); the empty set is no output.
 - `SimulationState`: backend-neutral spacecraft truth, applied commands, and in Basilisk
   runs the SPICE `EnvironmentState` and backend sensor measurements.
 - `SimulationGateway`: deterministic in-process session and future transport boundary.
