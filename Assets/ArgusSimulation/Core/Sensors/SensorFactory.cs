@@ -2,10 +2,15 @@ using System;
 
 namespace Argus.Simulation.Core
 {
-    // Builds the Argus sensor for each backend-modelled sensor of a run configuration.
+    // Builds the Argus sensor for each sensor of a run configuration. Backend-modelled sensors publish
+    // what the engine measured (D10); Argus-computed ones get their dependencies from the host or Unity
+    // (CORE-18).
     public static class SensorFactory
     {
-        public static ISensor Create(SensorConfiguration configuration)
+        // Without a renderer, every camera exposure is Unavailable (D5).
+        public static ISensor Create(SensorConfiguration configuration) => Create(configuration, null);
+
+        public static ISensor Create(SensorConfiguration configuration, IImageRenderer imageRenderer)
         {
             if (!configuration.IsValid)
             {
@@ -20,6 +25,8 @@ namespace Argus.Simulation.Core
                     return new MagnetometerSensor(configuration);
                 case SensorKind.LightSensor:
                     return new LightSensor(configuration);
+                case SensorKind.Camera:
+                    return new ArducamImx708CameraModel(configuration, imageRenderer);
                 default:
                     throw new ArgumentException(
                         $"Unsupported sensor kind {configuration.Kind}.",

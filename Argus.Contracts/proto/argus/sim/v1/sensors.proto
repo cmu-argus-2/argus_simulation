@@ -93,7 +93,9 @@ message LightSensorProfile {
   double field_of_view_half_angle_rad = 1;
   // > 0.
   double scale_factor = 2;
-  // senNoiseStd = this / Basilisk scaleFactor; setAMatrix([0]).
+  // senNoiseStd = this / Basilisk scaleFactor, white (A = 0). bsk 2.11.1 cannot set coarseSunSensor's
+  // A from Python and its default A is a random walk, so the service rejects values > 0 with
+  // UNIMPLEMENTED for now.
   double noise_std_w_per_m2 = 3;
   // senBias = this / Basilisk scaleFactor.
   double bias_w_per_m2 = 4;
@@ -102,6 +104,8 @@ message LightSensorProfile {
 }
 
 // Mirrors Core SensorConfiguration; the oneof case is Core SensorKind. Unset: INVALID_ARGUMENT.
+// ConfigureRun carries only backend-modelled kinds (Core SensorConfiguration.IsBackendModelled):
+// sensors Argus computes, such as cameras, never reach the Basilisk service (D10, CORE-18).
 message SensorConfiguration {
   SensorDefinition definition = 1;
   oneof profile {

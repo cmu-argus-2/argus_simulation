@@ -70,6 +70,45 @@ namespace Argus.Simulation.Tests
             }
         }
 
+        // A camera frame carries the true camera pose (its RenderRequest) even when Unavailable, so
+        // a scenario that shows a camera to the controller is rejected before anything runs (D7).
+        [Test]
+        public void ResetRejectsAControllerVisibleCamera()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            int runsStarted = 0;
+            gateway.RunStarted += (run, sensors) => runsStarted++;
+
+            Assert.Throws<ArgumentException>(
+                () => gateway.Reset(0, Scenario(0.1, Camera("cam.px", isControllerVisible: true))));
+            Assert.That(runsStarted, Is.EqualTo(0));
+            Assert.That(gateway.IsRunning, Is.False);
+        }
+
+        // The default factory builds the camera; with no renderer every exposure is Unavailable.
+        // Its frames reach the recorder at every step but never an observation (D7).
+        [Test]
+        public void CameraFramesReachTheRecorderButNeverTheController()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation[] observations =
+            {
+                gateway.Reset(0, Scenario(0.1, Camera("cam.px", isControllerVisible: false))),
+                gateway.Step()
+            };
+
+            for (int index = 0; index < observations.Length; index++)
+            {
+                Assert.That(observations[index].Frames, Is.Empty);
+                Assert.That(outputs[index].Frames.Count, Is.EqualTo(1));
+                Assert.That(outputs[index].Frames[0].SensorId, Is.EqualTo("cam.px"));
+                Assert.That(outputs[index].Frames[0].Status, Is.EqualTo(SensorFrameStatus.Unavailable));
+            }
+        }
+
         [Test]
         public void ResetRestartsSequenceAndTime()
         {
@@ -221,6 +260,12 @@ namespace Argus.Simulation.Tests
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params SensorConfiguration[] sensors) =>
             new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, sensors: sensors);
+
+        // A camera at the fixed step's period, so it samples at every step.
+        private static SensorConfiguration Camera(string sensorId, bool isControllerVisible) =>
+            SensorConfiguration.ForCamera(
+                new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
+                new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
 
         // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
         private static SensorConfiguration Rate(string sensorId, bool isControllerVisible)

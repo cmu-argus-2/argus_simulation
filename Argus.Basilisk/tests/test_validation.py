@@ -10,6 +10,7 @@ import pytest
 
 from argus_basilisk.contracts import service_pb
 from argus_basilisk.validation import (
+    SUPPORTED_SENSOR_KINDS,
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
@@ -83,7 +84,7 @@ def light_sensor(sensor_id, position, sensor_x, sensor_y, sensor_z):
     profile = sensor.light_sensor
     profile.field_of_view_half_angle_rad = math.pi / 2.0
     profile.scale_factor = 1.0
-    profile.noise_std_w_per_m2 = 1.0
+    profile.noise_std_w_per_m2 = 0.0
     profile.bias_w_per_m2 = 0.0
     profile.saturation_w_per_m2 = 2000.0
     return sensor
@@ -155,21 +156,10 @@ def only_problem(request, kinds=ALL_KINDS):
     return problems[0]
 
 
-def test_p0_default_fails_only_with_unimplemented_sensor_kinds():
-    request = p0_default_request()
-    problems = configure_run_problems(request, coverage_utc=COVERAGE)
-
-    # The IMU (BSK-4) and the magnetometer (BSK-5) are built; the six light sensors are not.
-    assert [problem.code for problem in problems] == ["UNIMPLEMENTED"] * 6
-    kinds = ["light_sensor"] * 6
-    for index, (problem, kind) in enumerate(zip(problems, kinds), start=2):
-        assert problem.details.startswith(f"configuration.sensors[{index}].{kind}: sensor kind {kind!r}")
-        assert request.configuration.sensors[index].definition.sensor_id in problem.details
-
-    with pytest.raises(ValidationError) as error:
-        validate_configure_run(request, coverage_utc=COVERAGE)
-    assert error.value.code == "UNIMPLEMENTED"
-    assert error.value.details.count("is not built yet") == 6
+def test_service_builds_every_p0_sensor_kind():
+    # The IMU (BSK-4), the magnetometer (BSK-5) and the light sensors (BSK-6) complete the P0 set.
+    assert SUPPORTED_SENSOR_KINDS == ALL_KINDS
+    assert configure_run_problems(p0_default_request(), coverage_utc=COVERAGE) == []
 
 
 def test_p0_default_passes_once_every_kind_is_built():
@@ -322,6 +312,15 @@ def test_magnetometer_noise_is_unimplemented():
     problem = only_problem(request)
     assert problem.code == "UNIMPLEMENTED"
     assert problem.details.startswith("configuration.sensors[1].magnetometer.noise_std_tesla")
+
+
+def test_light_sensor_noise_is_unimplemented():
+    # bsk 2.11.1 cannot make coarseSunSensor noise white from Python (README §9).
+    request = p0_default_request()
+    request.configuration.sensors[2].light_sensor.noise_std_w_per_m2 = 1.0
+    problem = only_problem(request)
+    assert problem.code == "UNIMPLEMENTED"
+    assert problem.details.startswith("configuration.sensors[2].light_sensor.noise_std_w_per_m2")
 
 
 def test_pacing_is_unimplemented():

@@ -1,7 +1,7 @@
 """P0 sensor modules (README §9).
 
-Build order steps 2 and 3 (README §12): the IMU and the magnetometer. The light sensors (BSK-6,
-#19) are rejected by validation until they are built.
+Build order steps 2 to 4 (README §12): the IMU, the magnetometer and the light sensors, which
+complete the P0 sensor set.
 
 Each Argus sensor owns its Basilisk modules and the readers subscribed to their output messages
 at build time (§6). The Scenario adds the modules to the sensor task for their period, checks the
@@ -11,13 +11,17 @@ readers' freshness and reads each measurement.
 import math
 
 import numpy as np
-from Basilisk.simulation import imuSensor, magnetometer
+from Basilisk.simulation import coarseSunSensor, imuSensor, magnetometer
 from Basilisk.utilities import RigidBodyKinematics as rbk
 
 from . import seeds
 from .contracts import sensors_pb, types_pb
 
-__all__ = ["Imu", "Magnetometer", "build_sensors"]
+__all__ = ["Imu", "LightSensor", "Magnetometer", "build_sensors", "light_sensor_instrument"]
+
+# coarseSunSensor scaleFactor = scale_factor x this, so a face square to the Sun at 1 AU reads
+# W/m2 (sensors.proto LightSensorProfile).
+SOLAR_IRRADIANCE_W_PER_M2 = 1361.0
 
 
 class Imu:
@@ -114,23 +118,105 @@ class Magnetometer:
         return sensors_pb.MagnetometerMeasurement(magnetic_field_sensor_tesla=_vector(self._reader().tam_S))
 
 
-def build_sensors(configuration, spacecraft_state_msg, magnetic_field_msg=None) -> list:
+class LightSensor:
+    """One Argus light sensor: a coarseSunSensor reporting irradiance in W/m2, with Earth albedo.
+
+    OutputData = scale (cos(theta) x shadow + albedo + noise + bias), clipped to [0, saturation],
+    with scale = scale_factor x 1361 W/m2 and theta the angle between the boresight and the Sun.
+    """
+
+    kind = "light_sensor"
+
+    def __init__(self, sensor, random_seed: int, spacecraft_state_msg, sun_msg, eclipse_msg, albedo_msg):
+        definition = sensor.definition
+        profile = sensor.light_sensor
+        self.sensor_id = definition.sensor_id
+        self.sample_period_ns = definition.sample_period_ns
+        field_of_view, boresight_body, position_body = light_sensor_instrument(sensor)
+        scale = profile.scale_factor * SOLAR_IRRADIANCE_W_PER_M2
+
+        self.module = coarseSunSensor.CoarseSunSensor()
+        self.module.ModelTag = f"css[{self.sensor_id}]"
+        self.module.RNGSeed = seeds.rng_seed(random_seed, self.sensor_id, seeds.CSS)
+        self.module.stateInMsg.subscribeTo(spacecraft_state_msg)
+        self.module.sunInMsg.subscribeTo(sun_msg)
+        self.module.sunEclipseInMsg.subscribeTo(eclipse_msg)
+        self.module.albedoInMsg.subscribeTo(albedo_msg)
+        self.module.fov = field_of_view
+        # nHat_B is set directly; setUnitDirectionVectorWithPerturbation is never used.
+        self.module.nHat_B = boresight_body
+        self.module.r_B = position_body
+        self.module.scaleFactor = scale
+        # Noise and bias are in units of the unscaled output, so the W/m2 profile values are divided
+        # by the scale. Validation keeps the noise at 0: setAMatrix cannot be called from Python in
+        # bsk 2.11.1, and the default A makes the noise a random walk (README §9).
+        self.module.senNoiseStd = profile.noise_std_w_per_m2 / scale
+        self.module.senBias = profile.bias_w_per_m2 / scale
+        self.module.maxOutput = profile.saturation_w_per_m2
+        self.module.minOutput = 0.0
+        self.module.kellyFactor = 0.0
+        self._reader = self.module.cssDataOutMsg.addSubscriber()
+
+    @property
+    def modules(self) -> tuple:
+        return (self.module,)
+
+    @property
+    def readers(self) -> dict:
+        return {f"{self.module.ModelTag}.cssDataOutMsg": self._reader}
+
+    @property
+    def ready(self) -> bool:
+        """Always: the sensor measures on its first firing, from the Sun, eclipse and albedo at t_n."""
+        return True
+
+    def measurement(self) -> sensors_pb.LightSensorMeasurement:
+        return sensors_pb.LightSensorMeasurement(irradiance_w_per_m2=self._reader().OutputData)
+
+
+def light_sensor_instrument(sensor) -> tuple:
+    """(fov, nHat_B, r_B) of a light sensor, for coarseSunSensor and albedo addInstrumentConfig.
+
+    The boresight is sensor +z, so nHat_B is the third row of C_SB = EP2C(sensor_to_body).
+    """
+    rotation = sensor.definition.mount.sensor_to_body
+    c_sb = rbk.EP2C(np.array([rotation.w, rotation.x, rotation.y, rotation.z]))
+    return (
+        sensor.light_sensor.field_of_view_half_angle_rad,
+        np.array(c_sb[2, :]),
+        _array(sensor.definition.mount.position_body_m),
+    )
+
+
+def build_sensors(
+        configuration, spacecraft_state_msg, magnetic_field_msg=None, *,
+        sun_msg=None, eclipse_msg=None, albedo_msgs=()) -> list:
     """The Argus sensors of a validated configuration, in configuration order.
 
-    magnetic_field_msg is the MagneticFieldWMM output for the spacecraft; it is required when a
-    magnetometer is configured.
+    magnetic_field_msg is the MagneticFieldWMM output for the spacecraft, required with a
+    magnetometer. Light sensors need the SPICE Sun, the eclipse output and one albedo output each,
+    albedo_msgs[i] for the i-th light sensor in configuration order.
     """
     built = []
+    light_sensor_index = 0
     for sensor in configuration.sensors:
         kind = sensor.WhichOneof("profile")
+        sensor_id = sensor.definition.sensor_id
         if kind == Imu.kind:
             built.append(Imu(sensor, configuration.random_seed, spacecraft_state_msg))
         elif kind == Magnetometer.kind:
             if magnetic_field_msg is None:
-                raise ValueError(f"magnetometer {sensor.definition.sensor_id!r} needs the MagneticFieldWMM output")
+                raise ValueError(f"magnetometer {sensor_id!r} needs the MagneticFieldWMM output")
             built.append(Magnetometer(sensor, spacecraft_state_msg, magnetic_field_msg))
+        elif kind == LightSensor.kind:
+            if sun_msg is None or eclipse_msg is None or light_sensor_index >= len(albedo_msgs):
+                raise ValueError(f"light sensor {sensor_id!r} needs the Sun, eclipse and albedo outputs")
+            built.append(LightSensor(
+                sensor, configuration.random_seed, spacecraft_state_msg, sun_msg, eclipse_msg,
+                albedo_msgs[light_sensor_index]))
+            light_sensor_index += 1
         else:
-            raise ValueError(f"sensor kind {kind!r} is not built yet (sensor_id {sensor.definition.sensor_id!r})")
+            raise ValueError(f"sensor kind {kind!r} is not built yet (sensor_id {sensor_id!r})")
     return built
 
 
