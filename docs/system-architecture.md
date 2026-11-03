@@ -385,8 +385,8 @@ force), magnetometer and light sensors are Basilisk-sourced models that publish 
 the Basilisk service measures, and that service does not build sensors yet. GNSS, fine Sun sensor,
 star-tracker, power, thermal, radio and radiation models are unavailable until their physics
 and hardware profiles are implemented, and the camera models are placeholders. The v1
-Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's sensors,
-pacing and actuators, the run recorder, the other network transports and the physical hardware adapters are not
+Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's sensors
+and actuators, the run recorder, the other network transports and the physical hardware adapters are not
 implemented yet.
 
 ## References

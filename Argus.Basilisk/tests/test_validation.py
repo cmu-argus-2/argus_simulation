@@ -323,24 +323,23 @@ def test_light_sensor_noise_is_unimplemented():
     assert problem.details.startswith("configuration.sensors[2].light_sensor.noise_std_w_per_m2")
 
 
-def test_pacing_is_unimplemented():
+def test_pacing_is_valid():
     request = p0_default_request()
     request.real_time_factor = 1.0
-    problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("real_time_factor")
+    assert problems_of(request) == []
 
 
 def test_invalid_argument_outranks_unimplemented_and_out_of_range():
     request = p0_default_request()
-    request.real_time_factor = 2.0
+    del request.configuration.sensors[3:]  # One light sensor, an unsupported kind below.
+    kinds = frozenset({"imu", "magnetometer"})
     request.configuration.epoch_utc.FromDatetime(datetime(2027, 1, 1, tzinfo=timezone.utc))
     request.configuration.spacecraft.mass_kg = -1.0
 
-    codes = [problem.code for problem in problems_of(request)]
+    codes = [problem.code for problem in problems_of(request, kinds)]
     assert codes == ["INVALID_ARGUMENT", "UNIMPLEMENTED", "OUT_OF_RANGE"]
     with pytest.raises(ValidationError) as error:
-        validate_configure_run(request, coverage_utc=COVERAGE, supported_sensor_kinds=ALL_KINDS)
+        validate_configure_run(request, coverage_utc=COVERAGE, supported_sensor_kinds=kinds)
     assert error.value.code == "INVALID_ARGUMENT"
     assert "configuration.spacecraft.mass_kg" in error.value.details
 
