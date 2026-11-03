@@ -16,8 +16,10 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   cameras. `SensorFactory` builds it from a `Camera` sensor configuration,
   whose `CameraProfile` holds the intrinsics and exposure duration (CORE-18). Cameras are
   computed by Argus, so they are never sent to Basilisk. The renderer comes from the host or
-  Unity; `headless/Host` has none yet, so its camera frames are `Unavailable`. CORE-6 adds
-  the DATA-6 distortion and noise and the four mounts.
+  Unity; `headless/Host` has none yet, so its camera frames are `Unavailable`. A camera
+  frame carries the true camera pose, so a run may not make a camera controller-visible
+  (`SensorConfiguration.MayBeControllerVisible`, D7) until CORE-6 decides what a controller
+  sees of one. CORE-6 adds the DATA-6 distortion and noise and the four mounts.
 - `NadirGroundTruthCameraModel` (CORE-8): follows spacecraft position with a north-up nadir
   orientation that ignores attitude, by overriding `ComputePose`.
 

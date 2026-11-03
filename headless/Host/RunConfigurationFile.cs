@@ -135,6 +135,8 @@ namespace Argus.Simulation.Host
             {
                 string sensorPath = $"{path}[{index}]";
                 sensors[index] = Sensor(sensor, sensorPath);
+                // Sensor() has checked everything else IsValid checks for one sensor, so only the
+                // period can fail here.
                 Check(
                     new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, sensors: new[] { sensors[index] }).IsValid,
                     Join(sensorPath, "samplePeriodSeconds"),
@@ -231,6 +233,10 @@ namespace Argus.Simulation.Host
             }
 
             Check(configuration.IsValid, profilePath, "is not a valid profile (see the Core profile's IsValid)");
+            Check(
+                !definition.IsControllerVisible || configuration.MayBeControllerVisible,
+                Join(path, "controllerVisible"),
+                $"must be false, because {configuration.Kind} frames carry truth a controller may not see (D7; cameras until CORE-6, #42)");
             return configuration;
         }
 

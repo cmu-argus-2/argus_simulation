@@ -101,6 +101,7 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("invalid kernel set", "kernelSetId: must match")]
         [TestCase("invalid camera intrinsics", "sensors[8].camera.intrinsics: needs")]
         [TestCase("period off the step grid", "sensors[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
+        [TestCase("controller-visible camera", "sensors[8].controllerVisible: must be false")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
@@ -143,6 +144,11 @@ namespace Argus.Simulation.Host.Tests
                     JsonObject offGrid = CameraNode("cam.px");
                     offGrid["samplePeriodSeconds"] = 0.25;
                     sensors.Add(offGrid);
+                    break;
+                case "controller-visible camera":
+                    JsonObject visible = CameraNode("cam.px");
+                    visible["controllerVisible"] = true;
+                    sensors.Add(visible);
                     break;
             }
 
@@ -222,7 +228,8 @@ namespace Argus.Simulation.Host.Tests
 
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
 
-        // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount.
+        // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
+        // controller-visible: a camera frame carries truth (D7).
         private static JsonObject CameraNode(string sensorId) => new JsonObject
         {
             ["sensorId"] = sensorId,
@@ -230,7 +237,7 @@ namespace Argus.Simulation.Host.Tests
             ["frameId"] = sensorId.Replace('.', '_'),
             ["samplePeriodSeconds"] = 1.0,
             ["source"] = "argus",
-            ["controllerVisible"] = true,
+            ["controllerVisible"] = false,
             ["mount"] = new JsonObject
             {
                 ["positionBodyMeters"] = new JsonArray(0.05116, -0.000198, -0.02927),

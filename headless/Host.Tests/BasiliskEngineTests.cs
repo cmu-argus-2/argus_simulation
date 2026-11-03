@@ -42,7 +42,7 @@ namespace Argus.Simulation.Host.Tests
             SimulationConfiguration p0 = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, "host-test");
             List<SensorConfiguration> sensors = new List<SensorConfiguration>(p0.Sensors);
             sensors.Insert(1, SensorConfiguration.ForCamera(
-                new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, "argus", SensorMount.Identity),
+                new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, "argus", SensorMount.Identity, isControllerVisible: false),
                 new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005)));
             return new SimulationConfiguration(
                 p0.RunId,

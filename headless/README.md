@@ -89,7 +89,9 @@ file; the host gives each run its own.
   `focalLengthXPixels`, `focalLengthYPixels`, `principalPointXPixels`,
   `principalPointYPixels`) and `exposureDurationSeconds`. `controllerVisible` is
   `false` for a ground-truth sensor: the gateway never returns its frames to a controller,
-  though the recorder still receives them (D7). The list may hold any subset of the
+  though the recorder still receives them (D7). It must be `false` for a camera, whose
+  frames carry the true camera pose, until CORE-6 (#42) decides what a controller sees of
+  one. The list may hold any subset of the
   sensors, including none, so a staged run against a partly built service needs only a
   different file.
 - **Validation:** every field is required and unknown fields are rejected. Each part is

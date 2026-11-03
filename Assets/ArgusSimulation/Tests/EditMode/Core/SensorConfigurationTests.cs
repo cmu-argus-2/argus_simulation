@@ -7,18 +7,19 @@ namespace Argus.Simulation.Tests
 {
     public sealed class SensorConfigurationTests
     {
-        // Each kind declares whether the backend models it; Argus never computes a kind the backend
-        // models (D10). A new kind fails here until it has a row with its expected answer, and
-        // IsBackendModelled throws for a kind it does not list (CORE-18).
+        // Each kind declares whether the backend models it, so Argus never computes a kind the
+        // backend models (D10, CORE-18). Each kind also declares whether a controller may see its
+        // frames, which a kind whose frames carry truth may not (D7). A new kind fails here until it
+        // has a row with both answers, and both properties throw for a kind they do not list.
         [Test]
-        public void EveryKindDeclaresWhetherTheBackendModelsIt()
+        public void EveryKindDeclaresWhoModelsItAndWhetherAControllerMaySeeIt()
         {
-            (SensorConfiguration Sensor, bool IsBackendModelled)[] kinds =
+            (SensorConfiguration Sensor, bool IsBackendModelled, bool MayBeControllerVisible)[] kinds =
             {
-                (SensorConfiguration.ForImu(Definition("imu.main"), default), true),
-                (SensorConfiguration.ForMagnetometer(Definition("mag.main"), default), true),
-                (SensorConfiguration.ForLightSensor(Definition("light.px"), default), true),
-                (Camera(4608, 3548.0, 0.0005), false)
+                (SensorConfiguration.ForImu(Definition("imu.main"), default), true, true),
+                (SensorConfiguration.ForMagnetometer(Definition("mag.main"), default), true, true),
+                (SensorConfiguration.ForLightSensor(Definition("light.px"), default), true, true),
+                (Camera(4608, 3548.0, 0.0005), false, false)
             };
             SensorKind[] declared = Enum.GetValues(typeof(SensorKind))
                 .Cast<SensorKind>()
@@ -26,12 +27,14 @@ namespace Argus.Simulation.Tests
                 .ToArray();
 
             Assert.That(kinds.Select(row => row.Sensor.Kind), Is.EquivalentTo(declared));
-            foreach ((SensorConfiguration sensor, bool isBackendModelled) in kinds)
+            foreach ((SensorConfiguration sensor, bool isBackendModelled, bool mayBeControllerVisible) in kinds)
             {
                 Assert.That(sensor.IsBackendModelled, Is.EqualTo(isBackendModelled), sensor.Kind.ToString());
+                Assert.That(sensor.MayBeControllerVisible, Is.EqualTo(mayBeControllerVisible), sensor.Kind.ToString());
             }
 
             Assert.That(default(SensorConfiguration).IsBackendModelled, Is.False);
+            Assert.That(default(SensorConfiguration).MayBeControllerVisible, Is.False);
         }
 
         // The profile accepts exactly what the CameraModel constructor accepts.

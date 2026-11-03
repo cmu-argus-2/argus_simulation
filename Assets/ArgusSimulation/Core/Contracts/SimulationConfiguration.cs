@@ -68,7 +68,9 @@ namespace Argus.Simulation.Core
 
         // Every sensor samples only at step states, so its period must be a whole number of steps:
         // otherwise an Argus sensor samples unevenly under a period it never keeps (CORE-18). Basilisk
-        // also needs whole steps; BasiliskEngine checks those in exact nanoseconds.
+        // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor whose
+        // frames carry truth may not be controller-visible, because the gateway forwards those frames
+        // unchanged (D7, SensorConfiguration.MayBeControllerVisible).
         private static bool AreSensorsValid(IReadOnlyList<SensorConfiguration> sensors, double fixedStepSeconds)
         {
             HashSet<string> sensorIds = new HashSet<string>(StringComparer.Ordinal);
@@ -76,6 +78,7 @@ namespace Argus.Simulation.Core
             {
                 if (!sensor.IsValid ||
                     !IsWholeNumberOfSteps(sensor.Definition.SamplePeriodSeconds, fixedStepSeconds) ||
+                    (sensor.Definition.IsControllerVisible && !sensor.MayBeControllerVisible) ||
                     !sensorIds.Add(sensor.Definition.SensorId))
                 {
                     return false;

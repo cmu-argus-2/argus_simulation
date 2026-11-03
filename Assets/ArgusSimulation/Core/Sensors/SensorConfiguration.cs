@@ -60,6 +60,23 @@ namespace Argus.Simulation.Core
                 $"Sensor kind {Kind} does not declare whether the backend models it (D10).")
         };
 
+        // Whether a controller may see this kind's frames (D7). The gateway forwards a controller-
+        // visible frame unchanged, so a kind whose frames carry truth may not be visible:
+        // SimulationConfiguration.IsValid rejects it. A camera frame carries the RenderRequest it was
+        // rendered for, even when Unavailable: the true camera position and attitude, and the Sun in
+        // Basilisk runs. Every kind must be listed, as for IsBackendModelled. The check covers the
+        // configured kinds only: a custom gateway sensorFactory that builds a camera from another
+        // kind's configuration bypasses it (only tests pass one).
+        // TODO(D7): CORE-6 (#42) decides what a controller sees of a camera; CORE-8 (#44)'s nadir
+        // ground-truth camera kind stays false.
+        public bool MayBeControllerVisible => Kind switch
+        {
+            SensorKind.Imu or SensorKind.Magnetometer or SensorKind.LightSensor => true,
+            SensorKind.Camera or SensorKind.Unknown => false,
+            _ => throw new InvalidOperationException(
+                $"Sensor kind {Kind} does not declare whether a controller may see its frames (D7).")
+        };
+
         public static SensorConfiguration ForImu(SensorDefinition definition, ImuProfile profile) =>
             new SensorConfiguration(definition, SensorKind.Imu, profile, default, default, default);
 
