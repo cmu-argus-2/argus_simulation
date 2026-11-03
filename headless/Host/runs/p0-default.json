@@ -2,7 +2,7 @@
   "epochUtc": "2025-01-15T00:00:00Z",
   "fixedStepSeconds": 0.1,
   "randomSeed": 1,
-  "kernelSetId": "argus-2026-10-20",
+  "kernelSetId": "argus-2026-11-02",
   "initialOrbit": {
     "semiMajorAxisMeters": 6878137.0,
     "eccentricity": 0.0,
@@ -14,16 +14,17 @@
   "spacecraft": {
     "massKilograms": 1.33,
     "inertiaBodyKilogramSquareMeters": [
-      [2.536e-3, 0.0, 0.0],
-      [0.0, 2.536e-3, 0.0],
-      [0.0, 0.0, 2.217e-3]
+      [0.002536, 0.0, 0.0],
+      [0.0, 0.002536, 0.0],
+      [0.0, 0.0, 0.002217]
     ],
     "initialBodyToJ2000": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
     "initialAngularVelocityBodyRadiansPerSecond": [0.0, 0.0, 0.0]
   },
-  "sensors": [
+  "devices": [
     {
-      "sensorId": "imu.main",
+      "deviceId": "imu.main",
+      "kind": "imu",
       "modelName": "placeholder-mems-imu",
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
@@ -31,31 +32,32 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
-        "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+        "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
       },
-      "imu": {
+      "parameters": {
         "gyroscope": {
-          "noiseDensityRadiansPerSecondPerRootHertz": 1.2e-4,
-          "biasRandomWalkRadiansPerSecondPerRootSecond": 0.0,
-          "biasRandomWalkBoundRadiansPerSecond": 0.0,
-          "constantBiasSensorRadiansPerSecond": [0.0, 0.0, 0.0],
-          "scaleFactorPerAxis": [1.0, 1.0, 1.0],
-          "rangeRadiansPerSecond": 4.363,
-          "resolutionRadiansPerSecond": 1.33e-4
+          "noise_density_rad_per_s_per_sqrt_hz": 0.00012,
+          "bias_random_walk_rad_per_s_per_sqrt_s": 0.0,
+          "bias_random_walk_bound_rad_per_s": 0.0,
+          "constant_bias_sensor_rad_per_s": [0.0, 0.0, 0.0],
+          "scale_factor_per_axis": [1.0, 1.0, 1.0],
+          "range_rad_per_s": 4.363,
+          "resolution_rad_per_s": 0.000133
         },
         "accelerometer": {
-          "noiseDensityMetersPerSecondSquaredPerRootHertz": 1.8e-3,
-          "biasRandomWalkMetersPerSecondSquaredPerRootSecond": 0.0,
-          "biasRandomWalkBoundMetersPerSecondSquared": 0.0,
-          "constantBiasSensorMetersPerSecondSquared": [0.0, 0.0, 0.0],
-          "scaleFactorPerAxis": [1.0, 1.0, 1.0],
-          "rangeMetersPerSecondSquared": 19.61,
-          "resolutionMetersPerSecondSquared": 6.0e-4
+          "noise_density_m_per_s2_per_sqrt_hz": 0.0018,
+          "bias_random_walk_m_per_s2_per_sqrt_s": 0.0,
+          "bias_random_walk_bound_m_per_s2": 0.0,
+          "constant_bias_sensor_m_per_s2": [0.0, 0.0, 0.0],
+          "scale_factor_per_axis": [1.0, 1.0, 1.0],
+          "range_m_per_s2": 19.61,
+          "resolution_m_per_s2": 0.0006
         }
       }
     },
     {
-      "sensorId": "mag.main",
+      "deviceId": "mag.main",
+      "kind": "magnetometer",
       "modelName": "placeholder-magnetometer",
       "frameId": "mag_main",
       "samplePeriodSeconds": 0.1,
@@ -63,17 +65,18 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
-        "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+        "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
       },
-      "magnetometer": {
-        "noiseStdTesla": 0.0,
-        "constantBiasSensorTesla": [0.0, 0.0, 0.0],
-        "scaleFactor": 1.0,
-        "rangeTesla": 1.3e-3
+      "parameters": {
+        "noise_std_tesla": 0.0,
+        "constant_bias_sensor_tesla": [0.0, 0.0, 0.0],
+        "scale_factor": 1.0,
+        "range_tesla": 0.0013
       }
     },
     {
-      "sensorId": "light.px",
+      "deviceId": "light.px",
+      "kind": "light_sensor",
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_px",
       "samplePeriodSeconds": 0.1,
@@ -81,18 +84,19 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.05, 0.0, 0.0],
-        "sensorToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": 0.5 }
+        "deviceToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": 0.5 }
       },
-      "lightSensor": {
-        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
-        "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
-        "biasWattsPerSquareMeter": 0.0,
-        "saturationWattsPerSquareMeter": 2000.0
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
       }
     },
     {
-      "sensorId": "light.mx",
+      "deviceId": "light.mx",
+      "kind": "light_sensor",
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_mx",
       "samplePeriodSeconds": 0.1,
@@ -100,18 +104,19 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [-0.05, 0.0, 0.0],
-        "sensorToBody": { "x": -0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
+        "deviceToBody": { "x": -0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
       },
-      "lightSensor": {
-        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
-        "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
-        "biasWattsPerSquareMeter": 0.0,
-        "saturationWattsPerSquareMeter": 2000.0
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
       }
     },
     {
-      "sensorId": "light.py",
+      "deviceId": "light.py",
+      "kind": "light_sensor",
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_py",
       "samplePeriodSeconds": 0.1,
@@ -119,18 +124,19 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.05, 0.0],
-        "sensorToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
+        "deviceToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": -0.5 }
       },
-      "lightSensor": {
-        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
-        "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
-        "biasWattsPerSquareMeter": 0.0,
-        "saturationWattsPerSquareMeter": 2000.0
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
       }
     },
     {
-      "sensorId": "light.my",
+      "deviceId": "light.my",
+      "kind": "light_sensor",
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_my",
       "samplePeriodSeconds": 0.1,
@@ -138,18 +144,19 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, -0.05, 0.0],
-        "sensorToBody": { "x": -0.5, "y": -0.5, "z": 0.5, "w": -0.5 }
+        "deviceToBody": { "x": -0.5, "y": -0.5, "z": 0.5, "w": -0.5 }
       },
-      "lightSensor": {
-        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
-        "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
-        "biasWattsPerSquareMeter": 0.0,
-        "saturationWattsPerSquareMeter": 2000.0
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
       }
     },
     {
-      "sensorId": "light.pz",
+      "deviceId": "light.pz",
+      "kind": "light_sensor",
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_pz",
       "samplePeriodSeconds": 0.1,
@@ -157,18 +164,19 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.05675],
-        "sensorToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+        "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
       },
-      "lightSensor": {
-        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
-        "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
-        "biasWattsPerSquareMeter": 0.0,
-        "saturationWattsPerSquareMeter": 2000.0
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
       }
     },
     {
-      "sensorId": "light.mz",
+      "deviceId": "light.mz",
+      "kind": "light_sensor",
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_mz",
       "samplePeriodSeconds": 0.1,
@@ -176,14 +184,14 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, -0.05675],
-        "sensorToBody": { "x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0 }
+        "deviceToBody": { "x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0 }
       },
-      "lightSensor": {
-        "fieldOfViewHalfAngleRadians": 1.5707963267948966,
-        "scaleFactor": 1.0,
-        "noiseStdWattsPerSquareMeter": 1.0,
-        "biasWattsPerSquareMeter": 0.0,
-        "saturationWattsPerSquareMeter": 2000.0
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
       }
     }
   ]

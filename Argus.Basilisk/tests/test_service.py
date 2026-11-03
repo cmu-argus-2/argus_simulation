@@ -2,7 +2,7 @@
 the magnetometer (BSK-5).
 
 Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
-argus-2026-10-20 in kernels/, and the SPICE reference test needs argus-2026-09-25
+argus-2026-11-02 in kernels/, and the SPICE reference test needs argus-2026-09-25
 (scripts/fetch_kernels.py); each is skipped without its files.
 """
 
@@ -20,18 +20,23 @@ import pytest
 
 pytest.importorskip("Basilisk")
 
-from Basilisk.architecture import messaging  # noqa: E402
+from Basilisk.architecture import astroConstants, messaging  # noqa: E402
+from Basilisk.simulation import albedo  # noqa: E402
 from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 
+from argus_basilisk import scenario as scenario_module  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
-from test_validation import p0_default_request, set_quaternion, set_vector, zero_command  # noqa: E402
+from argus_basilisk.devices import KINDS  # noqa: E402
+from argus_basilisk.seeds import CSS, MAG, rng_seed, sample_normals  # noqa: E402
+from test_validation import (  # noqa: E402
+    p0_default_request, set_parameter, set_quaternion, set_vector, torque_command, zero_command)
 
 ROOT = Path(__file__).resolve().parents[1]
 STEP_NS = 100_000_000
 
-P0_KERNEL_SET = "argus-2026-10-20"
+P0_KERNEL_SET = "argus-2026-11-02"
 # README §13: the reference values below come from this set's Earth PCK.
 REFERENCE_KERNEL_SET = "argus-2026-09-25"
 
@@ -77,33 +82,38 @@ def service():
 
 
 def configure_request():
-    """The P0 default without sensors."""
+    """The P0 default without devices."""
     request = p0_default_request()
-    del request.configuration.sensors[:]
+    del request.configuration.devices[:]
     return request
 
 
 def imu_request():
     """The P0 default with only its IMU."""
     request = p0_default_request()
-    del request.configuration.sensors[1:]
+    del request.configuration.devices[1:]
     return request
+
+
+def light_sensor_request():
+    """The full P0 set: IMU, magnetometer and six light sensors (all noise-free light sensors)."""
+    return p0_default_request()
 
 
 def magnetometer_request():
     """The P0 default with its IMU and magnetometer; BSK-6 (#19) adds the light sensors."""
     request = p0_default_request()
-    del request.configuration.sensors[2:]
+    del request.configuration.devices[2:]
     return request
 
 
 def step_request(sequence, run_id="p0-default", sim_time_ns=None):
-    """Step(n) carrying the zero command n-1, which acts over [t_n-1, t_n)."""
+    """Step(n) carrying the empty command n-1, which acts over [t_n-1, t_n)."""
     request = service_pb.StepRequest(
         run_id=run_id,
         sequence=sequence,
         sim_time_ns=sequence * STEP_NS if sim_time_ns is None else sim_time_ns,
-        command=zero_command(),
+        commands=zero_command(),
     )
     if sequence > 0:
         request.command_sequence = sequence - 1
@@ -125,6 +135,18 @@ def xyz(vector):
     return [vector.x, vector.y, vector.z]
 
 
+def samples_by_id(response):
+    return {sample.device_id: sample for sample in response.device_samples}
+
+
+def output_vector(sample, key):
+    return xyz(sample.output[key].vector3)
+
+
+def output_number(sample, key):
+    return sample.output[key].number
+
+
 def test_quaternion_rules():
     """README §4: Argus (x, y, z, w) is Basilisk [w, x, y, z]; EP2MRP needs a NumPy array."""
     half = np.sqrt(0.5)
@@ -142,11 +164,6 @@ def test_calls_need_a_configured_run(service):
 
 def test_configure_run_rejects_before_building(service):
     _, stub = service
-    # The light sensors are still UNIMPLEMENTED.
-    code, details = status_of(stub.ConfigureRun, p0_default_request())
-    assert code == grpc.StatusCode.UNIMPLEMENTED
-    assert "'light_sensor'" in details and "'magnetometer'" not in details and "'imu'" not in details
-
     unknown = configure_request()
     unknown.configuration.kernel_set_id = "no-such-set"
     code, details = status_of(stub.ConfigureRun, unknown)
@@ -168,20 +185,32 @@ def test_kernel_load_failure_is_failed_precondition(service, monkeypatch, tmp_pa
     assert "vanished.bsp" in details
 
 
-def test_configure_run_echoes_sensor_ids_in_request_order(service, monkeypatch, tmp_path):
-    """Sensor IDs live in SensorConfiguration.definition; checked before any kind is built."""
+def test_configure_run_echoes_device_ids_in_request_order(service, monkeypatch, tmp_path):
     _, stub = service
     window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
     kernel_set = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
     monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: kernel_set)
-    monkeypatch.setattr(servicer_module, "SUPPORTED_SENSOR_KINDS", frozenset({"imu", "magnetometer", "light_sensor"}))
     monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set: SimpleNamespace(
         spice_earth_frame="ITRF93"))
     request = p0_default_request()
     response = stub.ConfigureRun(request)
-    assert list(response.configured_sensor_ids) == [
-        sensor.definition.sensor_id for sensor in request.configuration.sensors]
-    assert response.configured_sensor_ids[:2] == ["imu.main", "mag.main"]
+    assert list(response.configured_device_ids) == [device.device_id for device in request.configuration.devices]
+    assert response.configured_device_ids[:2] == ["imu.main", "mag.main"]
+
+
+def test_configure_run_rejects_a_bad_device_with_its_path(service):
+    _, stub = service
+    request = imu_request()
+    request.configuration.devices[0].parameters.pop("gyroscope.range_rad_per_s")
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.INVALID_ARGUMENT
+    assert details == 'configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not set'
+
+    request = imu_request()
+    request.configuration.devices[0].kind = "star_tracker"
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.INVALID_ARGUMENT
+    assert details.startswith("configuration.devices[0].kind: must be a registered kind")
 
 
 def test_concurrent_call_is_resource_exhausted(service):
@@ -210,7 +239,7 @@ from test_validation import p0_default_request
 window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
 vanished = KernelSet("x", (Path(sys.argv[1]) / "vanished.bsp",), window, {})
 configuration = p0_default_request().configuration
-del configuration.sensors[1:]  # The IMU; the other P0 kinds are not built yet.
+del configuration.devices[1:]  # The IMU.
 try:
     Scenario(configuration, vanished)
 except KernelLoadError:
@@ -235,7 +264,7 @@ def test_configure_run_echoes_every_field(service):
     assert response.run_id == "p0-default"
     assert response.kernel_set_id == P0_KERNEL_SET
     assert response.fixed_step_ns == STEP_NS
-    assert list(response.configured_sensor_ids) == []
+    assert list(response.configured_device_ids) == []
     assert response.basilisk_version == "2.11.1"
     assert response.spice_earth_frame == "ITRF93"
     assert servicer.state == servicer_module.READY
@@ -251,11 +280,11 @@ def test_step_checks_run_id_sequence_time_command_and_coverage(service):
     assert "expected 0" in details
     assert status_of(stub.Step, step_request(0, sim_time_ns=1))[0] == grpc.StatusCode.INVALID_ARGUMENT
     unset = step_request(0)
-    unset.ClearField("command")
+    unset.ClearField("commands")
     assert status_of(stub.Step, unset)[0] == grpc.StatusCode.INVALID_ARGUMENT
-    # Step(0) follows no command, so a non-zero one is invalid even before actuators exist.
+    # Step(0) follows no command, so its set must be empty.
     pushing = step_request(0)
-    pushing.command.thruster_force_body_n.x = 1.0
+    pushing.commands.CopyFrom(torque_command())
     assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.INVALID_ARGUMENT
     assert stub.Step(step_request(0)).sequence == 0
     assert servicer.state == servicer_module.RUNNING
@@ -269,9 +298,13 @@ def test_step_checks_run_id_sequence_time_command_and_coverage(service):
     unnamed = step_request(1)
     unnamed.ClearField("command_time_ns")
     assert status_of(stub.Step, unnamed)[0] == grpc.StatusCode.INVALID_ARGUMENT
-    pushing = step_request(1)
-    pushing.command.thruster_force_body_n.x = 1.0
-    assert status_of(stub.Step, pushing)[0] == grpc.StatusCode.UNIMPLEMENTED
+    # P0 configures no actuator, so a command naming any device is rejected (CORE-20).
+    for device_id in ("torque.body", "imu.main"):
+        pushing = step_request(1)
+        pushing.commands.CopyFrom(torque_command(device_id))
+        code, details = status_of(stub.Step, pushing)
+        assert code == grpc.StatusCode.INVALID_ARGUMENT
+        assert "is not an actuator this run configures" in details
     assert stub.Step(step_request(1)).sequence == 1
 
     # Configured 50 ms before coverage ends: Step(1) is outside it and must not execute, since
@@ -343,7 +376,7 @@ def test_stale_message_is_internal_and_fails_the_run(service):
 @real_kernels
 def test_configure_run_with_an_imu_is_accepted(service):
     _, stub = service
-    assert list(stub.ConfigureRun(imu_request()).configured_sensor_ids) == ["imu.main"]
+    assert list(stub.ConfigureRun(imu_request()).configured_device_ids) == ["imu.main"]
 
 
 @real_kernels
@@ -354,38 +387,38 @@ def test_noise_free_imu_reads_the_body_rate_and_free_fall(service):
     # Tumbling with unequal inertia, so the body rate changes every step.
     set_vector(configuration.spacecraft.inertia_body_kg_m2.row1, (0.0, 3.0e-3, 0.0))
     set_vector(configuration.spacecraft.initial_angular_velocity_body_rad_per_s, (0.05, -0.2, 0.1))
-    imu = configuration.sensors[0].imu
-    imu.gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
-    imu.gyroscope.resolution_rad_per_s = 0.0
-    imu.accelerometer.noise_density_m_per_s2_per_sqrt_hz = 0.0
-    imu.accelerometer.resolution_m_per_s2 = 0.0
+    imu = configuration.devices[0]
+    set_parameter(imu, "gyroscope.noise_density_rad_per_s_per_sqrt_hz", 0.0)
+    set_parameter(imu, "gyroscope.resolution_rad_per_s", 0.0)
+    set_parameter(imu, "accelerometer.noise_density_m_per_s2_per_sqrt_hz", 0.0)
+    set_parameter(imu, "accelerometer.resolution_m_per_s2", 0.0)
     # A quarter turn about body z: (x, y, z)_sensor = (y, -x, z)_body.
-    set_quaternion(configuration.sensors[0].definition.mount.sensor_to_body, (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)))
+    set_quaternion(imu.mount.device_to_body, (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)))
     stub.ConfigureRun(request)
     responses = [stub.Step(step_request(n)) for n in range(20)]
 
-    # The first firing has no data (README §9).
-    first = responses[0].sensor_samples
-    assert [(sample.sensor_id, sample.sample_time_ns) for sample in first] == [("imu.main", 0)]
-    assert first[0].WhichOneof("measurement") is None
+    # The first firing has no data (README §9): an empty output.
+    first = responses[0].device_samples
+    assert [(sample.device_id, sample.sample_time_ns) for sample in first] == [("imu.main", 0)]
+    assert len(first[0].output) == 0
 
     rates = np.array([xyz(response.spacecraft.omega_bn_body_rad_per_s) for response in responses[1:]])
     assert np.abs(np.diff(rates, axis=0)).min() > 1e-6
     for response, rate in zip(responses[1:], rates):
-        (sample,) = response.sensor_samples
+        (sample,) = response.device_samples
         assert sample.sample_time_ns == response.sim_time_ns
         expected = [rate[1], -rate[0], rate[2]]
-        assert np.allclose(xyz(sample.imu.angular_velocity_sensor_rad_per_s), expected, rtol=0.0, atol=1e-15)
-        assert np.abs(xyz(sample.imu.specific_force_sensor_m_per_s2)).max() < 1e-12
+        assert np.allclose(output_vector(sample, "angular_velocity_sensor_rad_per_s"), expected, rtol=0.0, atol=1e-15)
+        assert np.abs(output_vector(sample, "specific_force_sensor_m_per_s2")).max() < 1e-12
 
 
 @real_kernels
 def test_imu_samples_only_on_its_period(service):
     _, stub = service
     request = imu_request()
-    request.configuration.sensors[0].definition.sample_period_ns = 2 * STEP_NS
+    request.configuration.devices[0].sample_period_ns = 2 * STEP_NS
     stub.ConfigureRun(request)
-    counts = [len(stub.Step(step_request(n)).sensor_samples) for n in range(6)]
+    counts = [len(stub.Step(step_request(n)).device_samples) for n in range(6)]
     assert counts == [1, 0, 1, 0, 1, 0]
 
 
@@ -398,7 +431,7 @@ def test_imu_noise_repeats_bit_for_bit_after_reset(service):
         return [stub.Step(step_request(n)) for n in range(100)]
 
     first = run()
-    gyro = np.array([xyz(r.sensor_samples[0].imu.angular_velocity_sensor_rad_per_s) for r in first[1:]])
+    gyro = np.array([output_vector(r.device_samples[0], "angular_velocity_sensor_rad_per_s") for r in first[1:]])
     assert np.unique(gyro, axis=0).shape[0] > 1  # Noise is on.
     stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
     second = run()
@@ -420,13 +453,11 @@ def test_magnetometer_needs_the_wmm_file_in_the_kernel_set(service, monkeypatch,
     assert "WMM2025.COF" in details
 
 
-def test_magnetometer_noise_stays_unimplemented(service):
-    _, stub = service
+def noisy_magnetometer_request():
+    """magnetometer_request() with 100 nT magnetometer noise (BSK-9)."""
     request = magnetometer_request()
-    request.configuration.sensors[1].magnetometer.noise_std_tesla = 1e-7
-    code, details = status_of(stub.ConfigureRun, request)
-    assert code == grpc.StatusCode.UNIMPLEMENTED
-    assert "noise_std_tesla" in details
+    set_parameter(request.configuration.devices[1], "noise_std_tesla", 1e-7)
+    return request
 
 
 @real_kernels
@@ -441,7 +472,7 @@ def test_epoch_outside_wmm2025_is_out_of_range_only_with_a_magnetometer(service)
 
     without_magnetometer = imu_request()
     without_magnetometer.configuration.epoch_utc.FromDatetime(before_wmm)
-    assert list(stub.ConfigureRun(without_magnetometer).configured_sensor_ids) == ["imu.main"]
+    assert list(stub.ConfigureRun(without_magnetometer).configured_device_ids) == ["imu.main"]
 
 
 # magField_N (J2000, tesla) at Step(0) of magnetometer_request(): the P0 orbit at 2025-01-15T00:00Z
@@ -463,7 +494,7 @@ def test_magnetic_field_at_step_zero_matches_the_reference(service):
 @real_kernels
 def test_configure_run_with_a_magnetometer_is_accepted(service):
     _, stub = service
-    assert list(stub.ConfigureRun(magnetometer_request()).configured_sensor_ids) == ["imu.main", "mag.main"]
+    assert list(stub.ConfigureRun(magnetometer_request()).configured_device_ids) == ["imu.main", "mag.main"]
 
 
 @real_kernels
@@ -472,13 +503,13 @@ def test_noise_free_magnetometer_reads_the_wmm_field_in_sensor_axes(service):
     request = magnetometer_request()
     configuration = request.configuration
     set_vector(configuration.spacecraft.initial_angular_velocity_body_rad_per_s, (0.05, -0.2, 0.1))
-    sensor = configuration.sensors[1]
+    device = configuration.devices[1]
     quarter_turn_z = (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5))
-    set_quaternion(sensor.definition.mount.sensor_to_body, quarter_turn_z)
+    set_quaternion(device.mount.device_to_body, quarter_turn_z)
     bias = np.array([1e-6, -2e-6, 3e-6])
-    set_vector(sensor.magnetometer.constant_bias_sensor_tesla, bias)
-    sensor.magnetometer.scale_factor = 1.1
-    sensor.magnetometer.range_tesla = 1.5e-5  # Below the ~24 uT field, so some axes clip.
+    set_parameter(device, "constant_bias_sensor_tesla", tuple(bias))
+    set_parameter(device, "scale_factor", 1.1)
+    set_parameter(device, "range_tesla", 1.5e-5)  # Below the ~24 uT field, so some axes clip.
     stub.ConfigureRun(request)
     field = servicer._run.scenario.readers["magneticFieldWMM.envOutMsgs[0]"]
     c_sb = rbk.EP2C(np.array([quarter_turn_z[3], *quarter_turn_z[:3]]))
@@ -486,27 +517,54 @@ def test_noise_free_magnetometer_reads_the_wmm_field_in_sensor_axes(service):
     clipped = 0
     for n in range(20):
         response = stub.Step(step_request(n))
-        sample = {sample.sensor_id: sample for sample in response.sensor_samples}["mag.main"]
+        sample = samples_by_id(response)["mag.main"]
         assert sample.sample_time_ns == response.sim_time_ns
         sigma = response.spacecraft.sigma_bn
         c_bn = rbk.MRP2C(np.array([sigma.x, sigma.y, sigma.z]))
         expected = np.clip(1.1 * (c_sb @ c_bn @ np.array(field().magField_N) + bias), -1.5e-5, 1.5e-5)
-        measured = xyz(sample.magnetometer.magnetic_field_sensor_tesla)
+        measured = output_vector(sample, "magnetic_field_sensor_tesla")
         assert np.allclose(measured, expected, rtol=0.0, atol=1e-18)
         clipped += int(np.sum(np.isclose(np.abs(measured), 1.5e-5, rtol=0.0, atol=0.0)))
     assert clipped > 0
 
 
 @real_kernels
-def test_magnetometer_repeats_bit_for_bit_after_reset(service):
-    _, stub = service
+def test_noisy_magnetometer_adds_seeded_noise_to_the_noise_free_reading(service):
+    servicer, stub = service
     stub.ConfigureRun(magnetometer_request())
+    clean = [stub.Step(step_request(n)) for n in range(20)]
+    request = noisy_magnetometer_request()
+    stub.ConfigureRun(request)
+    noisy = [stub.Step(step_request(n)) for n in range(20)]
+
+    seed = rng_seed(request.configuration.random_seed, "mag.main", MAG)
+    assert servicer._run.scenario.sensors[1].rng_seed == seed
+    parameters = request.configuration.devices[1].parameters
+    sigma = parameters["scale_factor"].number * parameters["noise_std_tesla"].number
+    for n, (before, after) in enumerate(zip(clean, noisy)):
+        before_mag = output_vector(before.device_samples[1], "magnetic_field_sensor_tesla")
+        after_mag = output_vector(after.device_samples[1], "magnetic_field_sensor_tesla")
+        noise = sigma * sample_normals(seed, MAG, n)
+        assert np.allclose(np.subtract(after_mag, before_mag), noise, rtol=0.0, atol=1e-18)
+        # The IMU and the dynamics are untouched.
+        assert before.device_samples[0] == after.device_samples[0]
+        assert before.spacecraft == after.spacecraft
+
+
+@real_kernels
+def test_magnetometer_repeats_bit_for_bit_after_reset(service):
+    """With noise on (BSK-9): 100 steps, Reset, 100 steps is bit-identical."""
+    _, stub = service
+    stub.ConfigureRun(noisy_magnetometer_request())
 
     def run():
         return [stub.Step(step_request(n)) for n in range(100)]
 
     first = run()
-    assert all(len(response.sensor_samples) == 2 for response in first)
+    assert all(len(response.device_samples) == 2 for response in first)
+    readings = np.array([output_vector(r.device_samples[1], "magnetic_field_sensor_tesla") for r in first])
+    # Noise is on. An axis clipped at +-range repeats exactly, so only some axis has to change.
+    assert np.any(np.diff(readings, axis=0) != 0.0)
     stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [
@@ -529,7 +587,7 @@ from argus_basilisk.kernels import load_kernel_set
 from argus_basilisk.scenario import Scenario
 from test_validation import p0_default_request
 configuration = p0_default_request().configuration
-del configuration.sensors[2:]
+del configuration.devices[2:]
 scenario = Scenario(configuration, load_kernel_set(configuration.kernel_set_id))
 for n in range(3):
     scenario.step(n)
@@ -540,3 +598,203 @@ assert not any("dataFetcher" in name for name in sys.modules), "dataFetcher was 
     environment = dict(os.environ, BSK_SUPPORT_DATA_CACHE=str(cache))
     subprocess.run([sys.executable, "-c", script], cwd=ROOT, env=environment, check=True)
     assert not cache.exists() or not any(path.is_file() for path in cache.rglob("*"))
+
+
+# --- Light sensors and albedo (BSK-6) ------------------------------------------------------
+
+AU_M = astroConstants.AU * 1000.0
+P0_LIGHT_SENSOR_IDS = ["light.px", "light.mx", "light.py", "light.my", "light.pz", "light.mz"]
+# P0 true anomaly that starts the orbit in full umbra at the P0 epoch (shadow 0 from about 60 to 180 deg).
+UMBRA_TRUE_ANOMALY_DEG = 120.0
+
+
+def light_samples(response):
+    return {sample.device_id: output_number(sample, "irradiance_w_per_m2")
+            for sample in response.device_samples if "irradiance_w_per_m2" in sample.output}
+
+
+def expected_direct(response, boresight_body):
+    """1361 W/m2 x cos(theta) x shadow x (1 AU / d)^2 for a boresight in body axes, at this step."""
+    sun = np.array(xyz(response.sun.position_inertial_m)) - xyz(response.spacecraft.position_bn_inertial_m)
+    sigma = response.spacecraft.sigma_bn
+    sun_body = rbk.MRP2C(np.array([sigma.x, sigma.y, sigma.z])) @ sun
+    cos_theta = float(np.dot(boresight_body, sun_body / np.linalg.norm(sun_body)))
+    return 1361.0 * max(cos_theta, 0.0) * response.spacecraft_shadow_factor * (AU_M / np.linalg.norm(sun)) ** 2
+
+
+def noisy_p0_request():
+    """The full P0 set with magnetometer noise (BSK-9) and light-sensor noise (BSK-13)."""
+    request = noisy_magnetometer_request()
+    full = light_sensor_request()
+    request.configuration.devices.extend(full.configuration.devices[2:])
+    for device in request.configuration.devices[2:]:
+        set_parameter(device, "noise_std_w_per_m2", 1.0)
+    return request
+
+
+@real_kernels
+def test_noisy_light_sensors_add_seeded_noise_to_the_noise_free_reading(service):
+    _, stub = service
+    stub.ConfigureRun(light_sensor_request())
+    clean = [stub.Step(step_request(n)) for n in range(20)]
+    request = noisy_p0_request()
+    stub.ConfigureRun(request)
+    noisy = [stub.Step(step_request(n)) for n in range(20)]
+
+    lit = 0
+    for device in request.configuration.devices[2:]:
+        device_id = device.device_id
+        parameters = device.parameters
+        seed = rng_seed(request.configuration.random_seed, device_id, CSS)
+        for n, (before, after) in enumerate(zip(clean, noisy)):
+            before_light = output_number(samples_by_id(before)[device_id], "irradiance_w_per_m2")
+            after_light = output_number(samples_by_id(after)[device_id], "irradiance_w_per_m2")
+            assert before_light < parameters["saturation_w_per_m2"].number
+            noise = parameters["noise_std_w_per_m2"].number * sample_normals(seed, CSS, n, size=1)[0]
+            assert after_light == pytest.approx(max(before_light + noise, 0.0), rel=0.0, abs=1e-9)
+            lit += before_light > 0.0
+    assert lit > 0
+
+
+@real_kernels
+def test_configure_run_accepts_the_full_p0_sensor_set(service):
+    _, stub = service
+    assert list(stub.ConfigureRun(light_sensor_request()).configured_device_ids) == [
+        "imu.main", "mag.main", *P0_LIGHT_SENSOR_IDS]
+
+
+@real_kernels
+def test_every_output_has_exactly_its_kind_keys_and_types(service):
+    """Step(0) has an empty IMU output (no data yet); every other sample carries the kind's OUTPUTS."""
+    _, stub = service
+    request = light_sensor_request()
+    stub.ConfigureRun(request)
+    kinds = {device.device_id: KINDS[device.kind] for device in request.configuration.devices}
+    for n in range(3):
+        response = stub.Step(step_request(n))
+        assert [sample.device_id for sample in response.device_samples] == list(kinds)
+        for sample in response.device_samples:
+            declared = {} if (n, sample.device_id) == (0, "imu.main") else kinds[sample.device_id].OUTPUTS
+            assert {key: value.WhichOneof("value") for key, value in sample.output.items()} == declared
+
+
+@real_kernels
+def test_noise_free_light_sensors_read_the_sun_plus_albedo(service):
+    servicer, stub = service
+    stub.ConfigureRun(light_sensor_request())
+    boresights = {"light.px": [1, 0, 0], "light.mx": [-1, 0, 0], "light.py": [0, 1, 0],
+                  "light.my": [0, -1, 0], "light.pz": [0, 0, 1], "light.mz": [0, 0, -1]}
+    sunlit_faces = 0
+    for n in range(10):
+        response = stub.Step(step_request(n))
+        assert response.spacecraft_shadow_factor == 1.0
+        readings = light_samples(response)
+        assert sorted(readings) == sorted(P0_LIGHT_SENSOR_IDS)
+        for index, sensor_id in enumerate(P0_LIGHT_SENSOR_IDS):
+            albedo = servicer._run.scenario.readers[f"albedo.albOutMsgs[{index}]"]().albedoAtInstrument
+            direct = expected_direct(response, boresights[sensor_id])
+            assert readings[sensor_id] == pytest.approx(direct + 1361.0 * albedo, rel=1e-9, abs=1e-9)
+            sunlit_faces += direct > 0.0
+    assert sunlit_faces > 0
+
+
+@real_kernels
+def test_light_sensors_lose_the_direct_sun_in_umbra(service):
+    servicer, stub = service
+    request = light_sensor_request()
+    request.configuration.initial_orbit.true_anomaly_deg = UMBRA_TRUE_ANOMALY_DEG
+    stub.ConfigureRun(request)
+    response = stub.Step(step_request(0))
+    assert response.spacecraft_shadow_factor == 0.0
+    readings = light_samples(response)
+    for index, sensor_id in enumerate(P0_LIGHT_SENSOR_IDS):
+        albedo = servicer._run.scenario.readers[f"albedo.albOutMsgs[{index}]"]().albedoAtInstrument
+        assert readings[sensor_id] == pytest.approx(1361.0 * albedo, rel=1e-9, abs=1e-9)
+
+
+@real_kernels
+def test_stale_albedo_is_internal(service):
+    servicer, stub = service
+    stub.ConfigureRun(light_sensor_request())
+    never_written = messaging.AlbedoMsg()
+    reader = messaging.AlbedoMsgReader()
+    reader.subscribeTo(never_written)
+    servicer._run.scenario.readers["albedo.albOutMsgs[0]"] = reader
+    code, details = status_of(stub.Step, step_request(0))
+    assert code == grpc.StatusCode.INTERNAL
+    assert "albedo.albOutMsgs[0]" in details
+
+
+@real_kernels
+def test_full_p0_set_repeats_bit_for_bit_after_reset(service):
+    """With magnetometer and light-sensor noise on: 100 steps, Reset, 100 steps is bit-identical."""
+    _, stub = service
+    stub.ConfigureRun(noisy_p0_request())
+
+    def run():
+        return [stub.Step(step_request(n)) for n in range(100)]
+
+    first = run()
+    assert all(len(response.device_samples) == 8 for response in first[1:])
+    light = np.array([[output_number(s, "irradiance_w_per_m2") for s in r.device_samples[2:]] for r in first[1:]])
+    assert np.any(np.diff(light, axis=0) != 0.0)  # Noise is on.
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    second = run()
+    assert [r.SerializeToString(deterministic=True) for r in first] == [
+        r.SerializeToString(deterministic=True) for r in second]
+
+
+# --- CERES albedo (BSK-14) -----------------------------------------------------------------
+
+
+def test_light_sensors_need_the_albedo_map_in_the_kernel_set(service, monkeypatch, tmp_path):
+    """A kernel set without the CERES map cannot serve a light sensor; checked before SPICE loads."""
+    _, stub = service
+    window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
+    no_map = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
+    monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: no_map)
+    request = light_sensor_request()
+    del request.configuration.devices[1]  # No magnetometer, so only the albedo map is missing.
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.FAILED_PRECONDITION
+    assert scenario_module.ALBEDO_FILE in details
+
+
+def one_orbit_albedo(stub, servicer):
+    """Per 10 s step over one P0 orbit: (sum of albedoAtInstrument over the six faces, shadow)."""
+    request = light_sensor_request()
+    configuration = request.configuration
+    configuration.fixed_step_ns = 10_000_000_000
+    for device in configuration.devices:
+        device.sample_period_ns = configuration.fixed_step_ns
+    stub.ConfigureRun(request)
+    readers = servicer._run.scenario.readers
+    rows = []
+    for n in range(580):
+        request = step_request(n, sim_time_ns=n * configuration.fixed_step_ns)
+        if n > 0:
+            request.command_time_ns = (n - 1) * configuration.fixed_step_ns
+        stub.Step(request)
+        rows.append(sum(readers[f"albedo.albOutMsgs[{i}]"]().albedoAtInstrument for i in range(6)))
+    return np.array(rows)
+
+
+@real_kernels
+def test_ceres_albedo_is_darker_over_open_ocean_and_brighter_over_clouds_than_the_average(
+        service, monkeypatch):
+    """One P0 orbit against the uniform average model BSK-6 used: the CERES map reads about half
+    the average over the equatorial Pacific (4.7 S, 141.5 W at t = 5580 s) and a third more over the
+    Southern Ocean cloud deck (50.8 S, 124.7 E at t = 4120 s)."""
+    servicer, stub = service
+    ceres = one_orbit_albedo(stub, servicer)
+    monkeypatch.setattr(
+        albedo.Albedo, "addPlanetandAlbedoDataModel",
+        lambda self, planet_msg, data_path, file_name: self.addPlanetandAlbedoAverageModel(planet_msg))
+    average = one_orbit_albedo(stub, servicer)
+
+    sunlit = average > 1e-3
+    ratio = ceres[sunlit] / average[sunlit]
+    assert ratio.min() < 0.6
+    assert ratio.max() > 1.25
+    assert ceres[558] / average[558] < 0.6  # t = 5580 s, open ocean.
+    assert ceres[412] / average[412] > 1.25  # t = 4120 s, cloud deck.

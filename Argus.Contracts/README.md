@@ -13,8 +13,8 @@ is generated or compiled into a committed artifact; each consumer generates its 
 proto/argus/
 ├── sim/v1/                     # Shared Argus messages (package argus.sim.v1)
 │   ├── types.proto             # Vector3, Quaternion, Matrix3
-│   ├── commands.proto          # ActuatorCommand
-│   ├── sensors.proto           # Sensor definitions, P0 profiles and measurements
+│   ├── commands.proto          # DeviceCommand, DeviceCommandSet (D11)
+│   ├── devices.proto           # DeviceValue, DeviceMount, DeviceConfiguration (D11)
 │   ├── run_configuration.proto # RunConfiguration (G5)
 │   ├── state.proto             # State, environment and backend samples
 │   └── sensor_output.proto     # Dashboard envelopes and non-image payloads
@@ -53,8 +53,9 @@ types directly.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the
-  exceptions are `BasiliskSensorSample.measurement` (Unavailable) and the state-stream
-  presence rules below. For scalars zero is a value; range checks reject
+  exceptions are empty `BasiliskDeviceSample.output` (Unavailable) and the state-stream
+  presence rules below. DeviceValue maps use the keys/types declared by their kind
+  (`docs/device-model.md` §3). For scalars zero is a value; range checks reject
   meaningless zeros. A scalar whose zero would be a plausible wrong value is declared
   `optional` (for example `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).
 - Every field states its frame, unit and time scale, in its name and its comment.
@@ -143,7 +144,9 @@ is distinct from the original per-step SensorManager output used by the recorder
 - Camera frames are excluded from the stream's SensorOutputSet projection entirely, for
   every status. Camera requests/images use the render link (UNITY-10); do not encode an
   image as an unavailable scalar sensor. Unknown non-camera payloads are mapping errors.
-- `run_generation` is required and unique for every ConfigureRun/Reset, including across
+- The server must always set a nonempty `run_generation`; clients must reject an empty
+  value before consuming either state or sensor data (proto3 cannot enforce this).
+  `run_generation` is unique for every ConfigureRun/Reset, including across
   host restarts (use a UUID). It is stable across reconnects in the same generation and
   independent of the recorder's storage-dependent segment number. Sequence increases
   only within a generation; a new generation may restart at zero with the same run ID.
@@ -162,8 +165,12 @@ is distinct from the original per-step SensorManager output used by the recorder
 Reuse sim/v1 vectors, quaternions, commands and measurements; no Basilisk imports.
 Initial/no-command states omit applied_commands. Analytic states omit environment;
 ITRF93 states require it. At state k, present applied_commands has sequence k-1.
-Backend unavailable is an explicit marker; no sample entry means not sampled.
-Sensor VALID/STALE requires a typed payload; UNAVAILABLE/INVALID omits payload while
+Backend unavailable is an empty output map; no sample entry means not sampled.
+`state.backend_samples` preserves the snapshot step’s backend truth for inspection;
+the dashboard reads `sensor_output.frames`, the latest-per-sensor projection, not
+backend_samples. These views intentionally differ in sampling time.
+Sensor VALID/STALE requires a nonempty DeviceValue payload map; UNAVAILABLE/INVALID
+requires an empty map while
 retaining the envelope. STALE retains original acquisition metadata. Enum zero is invalid;
 map Core enums explicitly (Core Valid=0 is wire Valid=1). All optional scalar fields in
 these messages require presence: optional distinguishes missing from legitimate zero.
@@ -197,3 +204,15 @@ Headless CI builds the managed contract assembly in Release configuration. Insta
 Grpc.Net.Client and their dependencies, then verifying Editor/player cancellation and
 reconnect, belongs to UNITY-5. A successful netstandard build does **not** demonstrate
 that native handler loading or an actual Unity network connection works.
+
+### Device model mapping (D11)
+
+Use shared `DeviceValue` from devices.proto and `DeviceCommand` from commands.proto;
+no per-kind messages are added here. Frame `kind` is required and names the registered
+Core kind used to decode its payload. Keys and value types are declared by that kind,
+with snake_case SI-unit names (e.g. `angular_velocity_sensor_rad_per_s`,
+`magnetic_field_sensor_tesla`, `irradiance_w_per_m2`). Reject unknown kinds, wrong keys,
+missing required keys, unset DeviceValue cases and non-finite/out-of-range values.
+Applied commands list every configured actuator, including idle values, at most once;
+the list is empty until actuator kinds exist. Per-device state is deferred to BSK-8.
+HOST-3 should alias generated names as `PbSim` / `PbStream` to avoid Core name collisions.

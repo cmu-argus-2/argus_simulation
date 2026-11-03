@@ -4,7 +4,7 @@ package argus.sim.v1;
 import "google/protobuf/timestamp.proto";
 import "argus/sim/v1/types.proto";
 import "argus/sim/v1/commands.proto";
-import "argus/sim/v1/sensors.proto";
+import "argus/sim/v1/devices.proto";
 option csharp_namespace = "Argus.Contracts.Sim.V1";
 
 enum ReferenceFrame {
@@ -23,11 +23,11 @@ message SpacecraftState {
   // Frame of position, velocity and attitude below. Unspecified is invalid.
   ReferenceFrame earth_fixed_frame = 4;
   // Earth-centred position in earth_fixed_frame axes, metres.
-  Vector3 position_planet_fixed_m = 5;
+  Vector3 position_earth_fixed_m = 5;
   // Velocity relative to the rotating earth_fixed_frame.
-  Vector3 velocity_planet_fixed_m_per_s = 6;
+  Vector3 velocity_earth_fixed_m_per_s = 6;
   // Active Hamilton scalar-last quaternion: body components -> earth_fixed_frame.
-  Quaternion body_to_planet_fixed = 7;
+  Quaternion body_to_earth_fixed = 7;
   // Body relative to inertial, expressed in body axes (omega_BN_B).
   Vector3 angular_velocity_body_rad_per_s = 8;
 }
@@ -48,26 +48,20 @@ message AppliedCommand {
   optional int64 sequence = 1;
   // Start of the command interval, seconds since simulation start (t_(k-1)).
   optional double apply_at_simulation_time_s = 2;
-  // Applied actuator values in body axes and SI units.
-  ActuatorCommand command = 3;
+  // Every configured actuator, including idle values; unique IDs. Keys/types/units
+  // belong to its kind (D11). Empty until actuator kinds exist.
+  repeated DeviceCommand commands = 3;
 }
 
-// An explicit sampled-without-data result. Absence of a BackendSensorSample entry
-// means not sampled; an empty result oneof is invalid, not unavailable.
-message UnavailableMeasurement {}
+// One backend sensor sampled at the enclosing spacecraft state time.
 message BackendSensorSample {
-  // Configured sensor identity at the enclosing state's time.
+  // Configured device identity, unique within backend_samples.
   string sensor_id = 1;
-  oneof result {
-    // Sensor-axis rate and specific force, SI units, at the enclosing state.
-    ImuMeasurement imu = 2;
-    // Sensor-axis magnetic field, tesla, at the enclosing state.
-    MagnetometerMeasurement magnetometer = 3;
-    // Irradiance, W/m^2, at the enclosing state.
-    LightSensorMeasurement light_sensor = 4;
-    // Sensor sampled at the enclosing state but produced no measurement.
-    UnavailableMeasurement unavailable = 5;
-  }
+  // Old unmerged per-kind result tags must not be reused for a different wire shape.
+  reserved 2 to 5;
+  // Kind-declared output keys/types/units (D11); empty means sampled without data.
+  // No entry for this sensor in backend_samples means not sampled at this step.
+  map<string, DeviceValue> output = 6;
 }
 
 message SimulationState {

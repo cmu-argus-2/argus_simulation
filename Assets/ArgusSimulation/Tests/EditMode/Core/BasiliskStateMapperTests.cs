@@ -83,7 +83,67 @@ namespace Argus.Simulation.Tests
             Assert.That(SimulationTime.AreSame(0.1, 0.1 + 1e-6), Is.False);
         }
 
-        private static BasiliskStepState Step(long nanoseconds, Mrp sigmaBN, Vector3d omegaBNBody)
+        // A mixed run configuration (CORE-18): Basilisk reports the backend-modelled IMU on its
+        // period and never the camera Argus computes, so a sample for the camera is an unknown sensor.
+        [Test]
+        public void MeasurementsCoverOnlyBackendModelledSensors()
+        {
+            DeviceConfiguration[] sensors = { Imu("imu.main", 0.2), Camera("cam.px", 0.1) };
+            ImuMeasurement measured = new ImuMeasurement(
+                new Vector3d(0.01, 0.02, 0.03),
+                new Vector3d(0.0, 0.0, 1e-6));
+            DeviceValues output = new DeviceValues.Builder()
+                .Add("angular_velocity_sensor_rad_per_s", measured.AngularVelocitySensorRadiansPerSecond)
+                .Add("specific_force_sensor_m_per_s2", measured.SpecificForceSensorMetersPerSecondSquared)
+                .Build();
+            Mrp level = new Mrp(0.0, 0.0, 0.0);
+            Vector3d still = new Vector3d(0.0, 0.0, 0.0);
+
+            SensorMeasurementSet onPeriod = BasiliskStateMapper.MapMeasurements(
+                Step(200_000_000, level, still, new BasiliskSensorSample("imu.main", 200_000_000, output)),
+                sensors);
+            SensorMeasurementSet offPeriod = BasiliskStateMapper.MapMeasurements(
+                Step(100_000_000, level, still),
+                sensors);
+
+            Assert.That(onPeriod.TryGetMeasurement("imu.main", out ImuMeasurement mapped), Is.True);
+            Assert.That(mapped.AngularVelocitySensorRadiansPerSecond, Is.EqualTo(measured.AngularVelocitySensorRadiansPerSecond));
+            Assert.That(onPeriod.WasSampled("cam.px"), Is.False);
+            Assert.That(offPeriod.WasSampled("imu.main"), Is.False);
+            Assert.That(offPeriod.WasSampled("cam.px"), Is.False);
+
+            // The backend sensor's period is still checked.
+            Assert.Throws<ArgumentException>(() => BasiliskStateMapper.MapMeasurements(
+                Step(200_000_000, level, still),
+                sensors));
+            ArgumentException unknown = Assert.Throws<ArgumentException>(() => BasiliskStateMapper.MapMeasurements(
+                Step(
+                    200_000_000,
+                    level,
+                    still,
+                    new BasiliskSensorSample("imu.main", 200_000_000, output),
+                    new BasiliskSensorSample("cam.px", 200_000_000, DeviceValues.Empty)),
+                sensors));
+            Assert.That(unknown.Message, Does.StartWith("Unknown sensor 'cam.px'."));
+        }
+
+        private static DeviceConfiguration Imu(string sensorId, double samplePeriodSeconds)
+        {
+            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
+            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
+            return ImuKind.Instance.Configure(
+                new SensorDefinition(sensorId, "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity),
+                new ImuProfile(
+                    new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
+                    new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
+        }
+
+        private static DeviceConfiguration Camera(string sensorId, double samplePeriodSeconds) =>
+            CameraKind.Instance.Configure(
+                new SensorDefinition(sensorId, "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity),
+                new CameraProfile(new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0), 0.0005));
+
+        private static BasiliskStepState Step(long nanoseconds, Mrp sigmaBN, Vector3d omegaBNBody, params BasiliskSensorSample[] samples)
         {
             BasiliskSpacecraftState spacecraft = new BasiliskSpacecraftState(
                 new Vector3d(6_878_137.0, 0.0, 0.0) + EarthPosition,
@@ -104,7 +164,7 @@ namespace Argus.Simulation.Tests
                 J2000ToItrf93,
                 J2000ToItrf93Rate,
                 true);
-            return new BasiliskStepState(nanoseconds, spacecraft, earth, sun, 1.0, null);
+            return new BasiliskStepState(nanoseconds, spacecraft, earth, sun, 1.0, samples);
         }
 
         private static void AssertNear(Vector3d actual, Vector3d expected, double tolerance)

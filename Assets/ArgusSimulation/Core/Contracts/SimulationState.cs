@@ -13,7 +13,7 @@ namespace Argus.Simulation.Core
             string runId,
             string dynamicsBackend,
             SpacecraftState spacecraft,
-            ActuatorCommandSet? appliedCommands,
+            DeviceCommandSet? appliedCommands,
             EnvironmentState? environment = null,
             SensorMeasurementSet sensorMeasurements = null)
         {
@@ -31,7 +31,7 @@ namespace Argus.Simulation.Core
 
         // The command that acted over [t_k-1, t_k) and produced this state: command k-1 (DATA-5,
         // target-architecture §4). None at t_0, and none from a source that applies no commands.
-        public ActuatorCommandSet? AppliedCommands { get; }
+        public DeviceCommandSet? AppliedCommands { get; }
         public bool HasAppliedCommands => AppliedCommands.HasValue;
 
         // Present exactly when the spacecraft state is in ITRF93, that is, when SPICE produced it.

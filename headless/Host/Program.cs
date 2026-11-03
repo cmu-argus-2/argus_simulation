@@ -70,13 +70,13 @@ namespace Argus.Simulation.Host
 
         private static RunRecorder OpenRecorder(HostOptions options, SimulationConfiguration configuration)
         {
-            for (int index = 0; index < configuration.Sensors.Count; index++)
+            for (int index = 0; index < configuration.Devices.Count; index++)
             {
-                string sensorId = configuration.Sensors[index].Definition.SensorId;
-                if (!RunRecorder.IsPathSafeId(sensorId))
+                string deviceId = configuration.Devices[index].Definition.SensorId;
+                if (!RunRecorder.IsPathSafeId(deviceId))
                 {
                     Console.Error.WriteLine(
-                        $"Run configuration {options.RunConfigurationPath}: sensors[{index}].sensorId: '{sensorId}' cannot be " +
+                        $"Run configuration {options.RunConfigurationPath}: devices[{index}].deviceId: '{deviceId}' cannot be " +
                         "recorded; --record needs [a-z0-9][a-z0-9._-]*, not ending in '.' (Core/Recording/README.md)");
                     return null;
                 }
@@ -118,7 +118,7 @@ namespace Argus.Simulation.Host
             Observation observation = gateway.Reset(configuration.RandomSeed, configuration);
             Console.WriteLine(
                 $"Basilisk {engine.BasiliskVersion}, kernel set {configuration.KernelSetId}, " +
-                $"{configuration.Sensors.Count} sensors, run {configuration.RunId}");
+                $"{configuration.Devices.Count} devices, run {configuration.RunId}");
 
             long lastSequence = (long)Math.Round(options.DurationSeconds / configuration.FixedStepSeconds);
             long stepsPerReport = Math.Max(1L, (long)Math.Round(1.0 / configuration.FixedStepSeconds));

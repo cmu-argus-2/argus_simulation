@@ -8,10 +8,10 @@ import threading
 import grpc
 
 from .contracts import service_grpc, service_pb
+from .devices import actuator_ids, magnetometer, of_kind
 from .kernels import KernelSet, KernelSetError, load_kernel_set
 from .scenario import BASILISK_VERSION, KernelLoadError, Scenario, StaleMessageError
 from .validation import (
-    SUPPORTED_SENSOR_KINDS,
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
@@ -102,11 +102,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
         # 2. Validate every field, against the kernel set's coverage, before touching Basilisk.
         kernel_set = self._load_kernel_set_for(request)
         try:
-            validate_configure_run(
-                request,
-                coverage_utc=kernel_set.coverage_utc,
-                supported_sensor_kinds=SUPPORTED_SENSOR_KINDS,
-            )
+            validate_configure_run(request, coverage_utc=kernel_set.coverage_utc)
         except ValidationError as error:
             raise _Abort(error.code, error.details) from None
 
@@ -120,7 +116,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
             run_id=configuration.run_id,
             kernel_set_id=kernel_set.kernel_set_id,
             fixed_step_ns=configuration.fixed_step_ns,
-            configured_sensor_ids=[sensor.definition.sensor_id for sensor in configuration.sensors],
+            configured_device_ids=[device.device_id for device in configuration.devices],
             basilisk_version=BASILISK_VERSION,
             spice_earth_frame=scenario.spice_earth_frame,
         )
@@ -132,8 +128,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
         except KernelSetError as kernel_error:
             problems = [
                 problem
-                for problem in configure_run_problems(
-                    request, coverage_utc=_UNBOUNDED_UTC, supported_sensor_kinds=SUPPORTED_SENSOR_KINDS)
+                for problem in configure_run_problems(request, coverage_utc=_UNBOUNDED_UTC)
                 if problem.code != "OUT_OF_RANGE"
             ]
             if problems:
@@ -185,12 +180,12 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 "INVALID_ARGUMENT",
                 f"sim_time_ns: expected {t_n} (sequence x fixed_step_ns), got {request.sim_time_ns}")
 
-        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, and zero.
+        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, and naming only the
+        # run's actuators, of which there are none until actuator kinds exist (CON-2).
         try:
-            validate_step_request(request, configuration.fixed_step_ns)
+            validate_step_request(request, configuration.fixed_step_ns, actuator_ids(configuration))
             # 4. epoch + t_n inside coverage, before executing: CSPICE aborts the process outside it.
-            has_magnetometer = any(
-                sensor.WhichOneof("profile") == "magnetometer" for sensor in configuration.sensors)
+            has_magnetometer = bool(of_kind(configuration.devices, magnetometer.KIND))
             check_utc_in_range(
                 timestamp_to_ns(configuration.epoch_utc) + t_n,
                 "configuration.epoch_utc + sim_time_ns",

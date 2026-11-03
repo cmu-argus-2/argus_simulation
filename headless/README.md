@@ -70,10 +70,10 @@ never delays a step, and `manifest.json` counts anything it had to drop.
 ## Run configuration files
 
 A run configuration file defines one run once (G5): epoch, fixed step, seed, kernel set,
-orbit, spacecraft and sensors. `RunConfigurationFile` reads it into Core
+orbit, spacecraft and devices. `RunConfigurationFile` reads it into Core
 `SimulationConfiguration`, and `BasiliskEngine` sends it to the service as
-`argus.sim.v1.RunConfiguration`. The run ID is not in the file; the host gives each run its
-own.
+`argus.sim.v1.RunConfiguration`, without the devices Argus computes. The run ID is not in the
+file; the host gives each run its own.
 
 - **Location:** `headless/Host/runs/`. The build copies every `runs/*.json` next to the
   host binary.
@@ -81,21 +81,36 @@ own.
   with the unit in the name (`semiMajorAxisMeters`, `samplePeriodSeconds`). Vectors are
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
-- **Sensors:** each entry holds the `SensorDefinition` fields (`sensorId`, `modelName`,
-  `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`, `mount`) and exactly one
-  profile, named by its kind: `imu`, `magnetometer` or `lightSensor`. `controllerVisible` is
-  `false` for a ground-truth sensor: the gateway never returns its frames to a controller,
-  though the recorder still receives them (D7). The list may hold any subset of the
-  sensors, including none, so a staged run against a partly built service needs only a
-  different file.
-- **Validation:** every field is required and unknown fields are rejected. Each part is
-  checked with its Core `IsValid`, so the file accepts exactly what Core accepts.
+- **Devices** (D11, `docs/device-model.md`): each entry holds the common fields (`deviceId`,
+  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`,
+  `mount` with `positionBodyMeters` and `deviceToBody`) and `parameters`, the keys its kind
+  declares. `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
+  `magnetometer` and `light_sensor`, which Basilisk models, and `camera`, which Argus computes
+  and never sends to the service (CORE-18). Parameter keys are snake_case with their unit,
+  the same spelling as on the wire and in the manifest (`noise_std_tesla`,
+  `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists each kind's keys. A
+  key's group may be written as a nested object, so the IMU's
+  `gyroscope.range_rad_per_s` is `"gyroscope": { "range_rad_per_s": ... }`, and the camera's
+  are `intrinsics.width_px` and the other intrinsics, plus `exposure_duration_s`. Each value is
+  read as the type its kind declares. `initialState` is optional and must be empty, since no
+  kind has state yet. `controllerVisible` is `false` for a ground-truth sensor: the gateway
+  never returns its frames to a controller, though the recorder still receives them (D7). It
+  must be `false` for a camera, whose frames carry the true camera pose, until CORE-6 (#42)
+  decides what a controller sees of one. The list may hold any subset of the devices,
+  including none, so a staged run against a partly built service needs only a different
+  file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
+- **Validation:** every field is required and unknown fields are rejected, including
+  parameters the kind does not declare. Each part is checked with its Core `IsValid` and
+  each device by its kind, so the file accepts exactly what Core accepts and an error names
+  the key (`devices[1].parameters["range_tesla"]: is required`). Every
+  `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
+  at steps.
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` is placeholder data, not confirmed hardware: the values the host
-used before run files existed. Its magnetometer noise is 0 because bsk 2.11.1 cannot seed
-magnetometer noise and the service rejects it (`Argus.Basilisk/README.md` §9).
+`runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
+light-sensor noise are 0 until DATA-1 (#67) gives the sigmas; the service accepts both
+(`Argus.Basilisk/README.md` §9).
 TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
 light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
 and epoch.

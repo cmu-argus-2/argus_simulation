@@ -14,7 +14,7 @@ so Core never references Protobuf or gRPC.
 | `BasiliskTime` | Seconds ↔ Basilisk integer nanoseconds; UTC as epoch plus elapsed seconds |
 | `BasiliskSpacecraftState` | `SCStatesMsgPayload` subset: `r_BN_N`, `v_BN_N`, `sigma_BN`, `omega_BN_B` |
 | `BasiliskPlanetState` | `SpicePlanetStateMsgPayload` subset: position, velocity, `J20002Pfix`, `J20002Pfix_dot` |
-| `BasiliskSensorSample` | One sensor output, already an Argus measurement type |
+| `BasiliskSensorSample` | One sensor device's output map (`BasiliskDeviceSample.output`) |
 | `BasiliskStepState` | The `StepResponse` state fields; `BasiliskEngine` checks `run_id` and `sequence` itself |
 | `BasiliskStateMapper` | `MapEnvironment`, `MapSpacecraft`, `MapMeasurements` |
 
@@ -26,8 +26,12 @@ so Core never references Protobuf or gRPC.
 - `SpacecraftState` is Earth-fixed and tagged `Itrf93`:
   `r_E = q_EN (r_BN_N − r_Earth)`, `v_E = q_EN (v_BN_N − v_Earth) − ω × r_E`,
   `BodyToEcef = q_EN * q_NB`. The body rate passes through.
-- Sensor samples become a `SensorMeasurementSet` (D10). Each configured sensor must report
-  exactly on the steps its period divides, at the step time, with its kind's payload type.
+- Sensor samples become a `SensorMeasurementSet` (D10). Each backend-modelled sensor
+  (`IDeviceKind.IsBackendModelled`) must report exactly on the steps its period divides, at
+  the step time, with exactly its kind's output keys; the kind
+  (`IBackendSensorKind.ReadOutput`) reads them into its measurement type, and an empty map is
+  Unavailable. Sensors Argus computes never reach
+  Basilisk (CORE-18), so a sample naming one is rejected as an unknown sensor.
 - Every inconsistent input throws; nothing is repaired or approximated.
 
 ## Rules

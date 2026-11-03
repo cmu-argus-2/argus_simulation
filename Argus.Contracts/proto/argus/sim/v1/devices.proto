@@ -1,0 +1,51 @@
+// Configured devices of a spacecraft (D11, docs/device-model.md). Every sensor and actuator is an
+// instance of a kind registered by name. Its parameters, initial state and outputs travel as maps
+// from key to typed value, and each kind declares and validates its own keys, so adding a kind
+// changes no message here.
+syntax = "proto3";
+
+package argus.sim.v1;
+
+import "argus/sim/v1/types.proto";
+
+option csharp_namespace = "Argus.Contracts.Sim.V1";
+
+// One typed value. Keys are snake_case and carry their unit (noise_std_tesla); groups use dotted
+// keys (gyroscope.range_rad_per_s). The kind declares each key's type, and a value of any other
+// type, or with no case set, is INVALID_ARGUMENT.
+message DeviceValue {
+  oneof value {
+    double number = 1;
+    Vector3 vector3 = 2;
+    Quaternion quaternion = 3;
+    Matrix3 matrix3 = 4;
+    bool flag = 5;
+    string text = 6;
+  }
+}
+
+// Mirrors Core SensorMount.
+message DeviceMount {
+  // Lever arm from the centre of mass, body axes: imuSensor sensorPos_B, coarseSunSensor r_B.
+  Vector3 position_body_m = 1;
+  // v_body = q v_device q*: Basilisk dcm_PB / dcm_SB = EP2C([w, x, y, z]).
+  Quaternion device_to_body = 2;
+}
+
+// Mirrors Core DeviceConfiguration: the subset the backend needs.
+message DeviceConfiguration {
+  // Unique within a run (ordinal), across sensors and actuators.
+  string device_id = 1;
+  // The registered kind name: "imu", "magnetometer", "light_sensor". Unknown: INVALID_ARGUMENT.
+  string kind = 2;
+  // Sensors: Core SamplePeriodSeconds x 1e9, exact; a positive multiple of fixed_step_ns.
+  uint64 sample_period_ns = 3;
+  DeviceMount mount = 4;
+  // Core SensorDefinition.IsControllerVisible: false for ground-truth sensors, whose frames the
+  // gateway never forwards to a controller (D7). Unset means visible. The service does not read it.
+  optional bool controller_visible = 5;
+  // Exactly the kind's declared keys; Argus.Basilisk/README.md §9 lists them per kind.
+  map<string, DeviceValue> parameters = 6;
+  // The kind's state at t = 0. Empty for kinds with no state, which includes every sensor kind.
+  map<string, DeviceValue> initial_state = 7;
+}

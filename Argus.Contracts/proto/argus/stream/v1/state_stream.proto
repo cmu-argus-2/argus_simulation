@@ -19,7 +19,8 @@ message SubscribeResponse {
   // Set run ID/step/time match state; individual frames retain capture metadata.
   // This is not the unmodified SensorManager output of this step.
   argus.sim.v1.SensorOutputSet sensor_output = 2;
-  // Required nonempty opaque identity, unique for each ConfigureRun/Reset and
+  // Server MUST set this; client MUST reject empty before processing the response.
+  // Proto3 cannot enforce presence. Nonempty opaque identity, unique per ConfigureRun/Reset and
   // across host restarts (e.g. UUID). Stable across subscriptions in one generation.
   // Independent of recorder segment numbers, which depend on recording storage.
   string run_generation = 3;

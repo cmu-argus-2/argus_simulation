@@ -16,12 +16,7 @@ namespace Argus.Simulation.Tests
             gateway.StateProduced += states.Add;
 
             Observation first = gateway.Reset(7, Scenario(0.25));
-            ActuatorCommandSet command = new ActuatorCommandSet(
-                0,
-                0.0,
-                new Vector3d(0.001, -0.002, 0.003),
-                new Vector3d(0.02, 0.0, -0.01),
-                new Vector3d(0.0, 0.0, 0.0));
+            DeviceCommandSet command = DeviceCommandSet.None(0, 0.0);
             Observation second = gateway.Step(command);
 
             Assert.That((first.Sequence, first.SimulationTimeSeconds, first.Status), Is.EqualTo((0L, 0.0, ObservationStatus.Ok)));
@@ -36,8 +31,8 @@ namespace Argus.Simulation.Tests
             Assert.That(states.Count, Is.EqualTo(2));
             Assert.That(states[0].HasAppliedCommands, Is.False);
             Assert.That(states[1].Spacecraft.Sequence, Is.EqualTo(1));
-            Assert.That(states[1].AppliedCommands.Value.ReactionWheelTorqueBodyNewtonMeters,
-                Is.EqualTo(command.ReactionWheelTorqueBodyNewtonMeters));
+            Assert.That(states[1].AppliedCommands.Value.Sequence, Is.EqualTo(0));
+            Assert.That(states[1].AppliedCommands.Value.Commands, Is.Empty);
             Assert.That(second.TimestampUtc, Is.EqualTo(states[1].Spacecraft.TimestampUtc));
         }
 
@@ -70,6 +65,45 @@ namespace Argus.Simulation.Tests
             }
         }
 
+        // A camera frame carries the true camera pose (its RenderRequest) even when Unavailable, so
+        // a scenario that shows a camera to the controller is rejected before anything runs (D7).
+        [Test]
+        public void ResetRejectsAControllerVisibleCamera()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            int runsStarted = 0;
+            gateway.RunStarted += (run, sensors) => runsStarted++;
+
+            Assert.Throws<ArgumentException>(
+                () => gateway.Reset(0, Scenario(0.1, Camera("cam.px", isControllerVisible: true))));
+            Assert.That(runsStarted, Is.EqualTo(0));
+            Assert.That(gateway.IsRunning, Is.False);
+        }
+
+        // The default factory builds the camera; with no renderer every exposure is Unavailable.
+        // Its frames reach the recorder at every step but never an observation (D7).
+        [Test]
+        public void CameraFramesReachTheRecorderButNeverTheController()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation[] observations =
+            {
+                gateway.Reset(0, Scenario(0.1, Camera("cam.px", isControllerVisible: false))),
+                gateway.Step()
+            };
+
+            for (int index = 0; index < observations.Length; index++)
+            {
+                Assert.That(observations[index].Frames, Is.Empty);
+                Assert.That(outputs[index].Frames.Count, Is.EqualTo(1));
+                Assert.That(outputs[index].Frames[0].SensorId, Is.EqualTo("cam.px"));
+                Assert.That(outputs[index].Frames[0].Status, Is.EqualTo(SensorFrameStatus.Unavailable));
+            }
+        }
+
         [Test]
         public void ResetRestartsSequenceAndTime()
         {
@@ -92,30 +126,32 @@ namespace Argus.Simulation.Tests
             gateway.CommandLogged += log.Add;
             gateway.Reset(0, Scenario(0.1));
 
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            ActuatorCommandSet notFinite = new ActuatorCommandSet(0, 0.0, new Vector3d(double.NaN, 0.0, 0.0), zero, zero);
+            DeviceCommandSet notFinite = Torque(double.NaN);
             Assert.Throws<ArgumentException>(() => gateway.Step(notFinite));
-            Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(4, 0.4)));
-            Assert.Throws<ArgumentException>(() => gateway.Step(ActuatorCommandSet.None(0, 0.05)));
-            ActuatorCommandSet command = new ActuatorCommandSet(0, 0.0, new Vector3d(0.001, 0.0, 0.0), zero, zero);
+            Assert.Throws<ArgumentException>(() => gateway.Step(DeviceCommandSet.None(4, 0.4)));
+            Assert.Throws<ArgumentException>(() => gateway.Step(DeviceCommandSet.None(0, 0.05)));
+            // The run configures no actuator, so a command naming a device never reaches the engine.
+            Assert.Throws<ArgumentException>(() => gateway.Step(Torque(0.001)));
+            DeviceCommandSet command = DeviceCommandSet.None(0, 0.0);
             gateway.Step(command);
 
             // Every record is for step 0, the gateway's next step, whatever the command claimed.
-            Assert.That(log.Count, Is.EqualTo(4));
-            for (int index = 0; index < 3; index++)
+            Assert.That(log.Count, Is.EqualTo(5));
+            for (int index = 0; index < 4; index++)
             {
                 Assert.That((log[index].Outcome, log[index].Sequence, log[index].SimulationTimeSeconds, log[index].Applied.HasValue),
                     Is.EqualTo((CommandOutcome.Rejected, 0L, 0.0, false)));
             }
 
-            Assert.That(log[0].Reason, Does.Contain("not finite"));
-            Assert.That(log[0].Requested.ReactionWheelTorqueBodyNewtonMeters.X, Is.NaN);
+            Assert.That(log[0].Reason, Is.EqualTo("The command is invalid: device 'torque.body' value \"torque_body_n_m\" is not finite."));
+            Assert.That(log[0].Requested.Commands[0].Values.Vector3("torque_body_n_m").X, Is.NaN);
             Assert.That(log[1].Reason, Is.EqualTo("The command is for sequence 4; the next step is 0."));
             Assert.That(log[1].Requested.Sequence, Is.EqualTo(4));
             Assert.That(log[2].Reason, Is.EqualTo("The command is for t = 0.05 s; step 0 is at t = 0 s."));
+            Assert.That(log[3].Reason, Is.EqualTo("Device 'torque.body' is not an actuator this run configures."));
 
-            Assert.That((log[3].Outcome, log[3].Reason, log[3].RunId), Is.EqualTo((CommandOutcome.Applied, (string)null, "test-run")));
-            Assert.That(log[3].Applied.Value.ReactionWheelTorqueBodyNewtonMeters, Is.EqualTo(command.ReactionWheelTorqueBodyNewtonMeters));
+            Assert.That((log[4].Outcome, log[4].Reason, log[4].RunId), Is.EqualTo((CommandOutcome.Applied, (string)null, "test-run")));
+            Assert.That(log[4].Applied.Value.Commands, Is.Empty);
             Assert.That(gateway.NextSequence, Is.EqualTo(1));
         }
 
@@ -217,17 +253,34 @@ namespace Argus.Simulation.Tests
             Assert.That(stopped.Stop("again"), Is.Null);
         }
 
+        // A command for step 0 naming one device, which no run configures yet.
+        private static DeviceCommandSet Torque(double x) => new DeviceCommandSet(
+            0,
+            0.0,
+            new[]
+            {
+                new DeviceCommand(
+                    "torque.body",
+                    new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(x, 0.0, 0.0)).Build())
+            });
+
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
-        private static SimulationConfiguration Scenario(double fixedStepSeconds, params SensorConfiguration[] sensors) =>
-            new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, sensors: sensors);
+        private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
+            new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: sensors);
+
+        // A camera at the fixed step's period, so it samples at every step.
+        private static DeviceConfiguration Camera(string sensorId, bool isControllerVisible) =>
+            CameraKind.Instance.Configure(
+                new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
+                new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
 
         // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
-        private static SensorConfiguration Rate(string sensorId, bool isControllerVisible)
+        private static DeviceConfiguration Rate(string sensorId, bool isControllerVisible)
         {
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            return SensorConfiguration.ForImu(
+            return ImuKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, "test", SensorMount.Identity, isControllerVisible),
                 new ImuProfile(
                     new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),

@@ -2,8 +2,7 @@
 syntax = "proto3";
 package argus.sim.v1;
 import "google/protobuf/timestamp.proto";
-import "argus/sim/v1/types.proto";
-import "argus/sim/v1/sensors.proto";
+import "argus/sim/v1/devices.proto";
 option csharp_namespace = "Argus.Contracts.Sim.V1";
 
 enum SensorFrameStatus {
@@ -12,10 +11,6 @@ enum SensorFrameStatus {
   SENSOR_FRAME_STATUS_UNAVAILABLE = 2;
   SENSOR_FRAME_STATUS_STALE = 3;
   SENSOR_FRAME_STATUS_INVALID = 4;
-}
-message AngularRateMeasurement {
-  // Body relative to inertial, expressed in sensor axes.
-  Vector3 angular_velocity_sensor_rad_per_s = 1;
 }
 message SensorFrame {
   // Opaque run identity; not a coordinate or a timestamp.
@@ -37,26 +32,19 @@ message SensorFrame {
   // Required presence: Core ISensorFrame.StateSequence, including on failures.
   // Zero is a valid capture step; absent is invalid. Never substitute delivery step.
   optional int64 capture_state_sequence = 9;
-  // VALID requires a payload. UNAVAILABLE omits it but retains the envelope.
-  // STALE requires retained payload and original capture metadata. Caching alone
-  // does not change status; acquisition time exposes the age of a cached VALID frame.
-  // INVALID omits payload; readers must not substitute zero measurements.
-  oneof payload {
-    // Body rate in sensor axes, radians/second.
-    AngularRateMeasurement angular_rate = 10;
-    // Rate and specific force in sensor axes, SI units.
-    ImuMeasurement imu = 11;
-    // Magnetic field in sensor axes, tesla.
-    MagnetometerMeasurement magnetometer = 12;
-    // Sensor irradiance in W/m^2.
-    LightSensorMeasurement light_sensor = 13;
-  }
+  reserved 10 to 13; // Former per-kind payload oneof.
+  // Registered Core kind name, required even without data; e.g. light_sensor.
+  string kind = 14;
+  // Kind-declared keys/types/units. VALID/STALE: nonempty; UNAVAILABLE/INVALID: empty.
+  // Cached frames retain status and acquisition metadata unchanged.
+  map<string, DeviceValue> payload = 15;
 }
 message SensorOutputSet {
   // Opaque run identity; not a coordinate or a timestamp.
   string run_id = 1;
-  // Publication step, or current snapshot step for the stream projection.
-  // Not the individual frames' acquisition step.
+  // Stream path: current enclosing state.spacecraft.sequence; frames are the
+  // latest-per-sensor cache as of that step. Direct per-step Core output path:
+  // step when SensorManager published the set. Neither is a frame's capture step.
   optional int64 spacecraft_sequence = 2;
   // Publication/snapshot time, seconds since simulation start.
   optional double simulation_time_s = 3;

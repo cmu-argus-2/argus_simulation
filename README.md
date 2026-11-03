@@ -33,7 +33,7 @@ From `Argus.Basilisk/`:
 ```bash
 uv sync --frozen --all-extras
 uv run --frozen python scripts/generate_protos.py
-uv run --frozen python scripts/fetch_kernels.py argus-2026-10-20
+uv run --frozen python scripts/fetch_kernels.py argus-2026-11-02
 uv run --frozen python -m argus_basilisk --endpoint 127.0.0.1:50051
 ```
 
@@ -49,8 +49,8 @@ Run the service tests with `uv run --frozen python -m pytest -q`. Tests that nee
 kernels are skipped until `kernels/` is filled.
 
 The service is built in steps ([Argus.Basilisk/README.md §12](Argus.Basilisk/README.md#12-build-order)).
-It runs the IMU and the magnetometer. Until the light sensors exist, a run that configures them,
-such as the host's P0 run below, is rejected with UNIMPLEMENTED.
+It runs the full P0 sensor set (IMU, magnetometer and light sensors), so the host's P0 run below
+runs end to end, including magnetometer and light-sensor noise.
 
 ## Build and test the headless core
 

@@ -25,9 +25,9 @@ namespace Argus.Simulation.Host.Tests
                         Sequence = step, SimulationTimeS = step * 0.1,
                         TimestampUtc = Timestamp.FromDateTime(Epoch.AddSeconds(step * 0.1)),
                         EarthFixedFrame = PbSim.ReferenceFrame.AnalyticEarthFixed,
-                        PositionPlanetFixedM = new PbSim.Vector3 { X = 7000000 },
-                        VelocityPlanetFixedMPerS = new PbSim.Vector3 { Y = 7500 },
-                        BodyToPlanetFixed = new PbSim.Quaternion { W = 1 },
+                        PositionEarthFixedM = new PbSim.Vector3 { X = 7000000 },
+                        VelocityEarthFixedMPerS = new PbSim.Vector3 { Y = 7500 },
+                        BodyToEarthFixed = new PbSim.Quaternion { W = 1 },
                         AngularVelocityBodyRadPerS = new PbSim.Vector3()
                     }
                 },
@@ -42,13 +42,13 @@ namespace Argus.Simulation.Host.Tests
         {
             var frame = new PbSim.SensorFrame
             {
-                RunId = "test", SensorId = "gyro", FrameId = "gyro-body", Source = "analytic",
+                RunId = "test", SensorId = "mag", FrameId = "mag-body", Source = "backend", Kind = "magnetometer",
                 Sequence = 7, SimulationTimeS = 1, CaptureStateSequence = 10,
                 TimestampUtc = Timestamp.FromDateTime(Epoch.AddSeconds(1)), Status = status
             };
             if (status == PbSim.SensorFrameStatus.Valid || status == PbSim.SensorFrameStatus.Stale)
-                frame.AngularRate = new PbSim.AngularRateMeasurement
-                { AngularVelocitySensorRadPerS = new PbSim.Vector3 { Z = 0.25 } };
+                frame.Payload.Add("magnetic_field_sensor_tesla", new PbSim.DeviceValue
+                { Vector3 = new PbSim.Vector3 { Z = 0.000025 } });
             return frame;
         }
 
@@ -100,9 +100,11 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(frame.TimestampUtc, Is.EqualTo(Timestamp.FromDateTime(Epoch.AddSeconds(1))));
             Assert.That(frame.Status, Is.EqualTo(status));
             Assert.That(frame.ToByteArray(), Is.EqualTo(RoundTrip(first).SensorOutput.Frames[0].ToByteArray()));
-            Assert.That(frame.PayloadCase, Is.EqualTo(
-                status == PbSim.SensorFrameStatus.Valid || status == PbSim.SensorFrameStatus.Stale
-                ? PbSim.SensorFrame.PayloadOneofCase.AngularRate : PbSim.SensorFrame.PayloadOneofCase.None));
+            bool hasData = status == PbSim.SensorFrameStatus.Valid || status == PbSim.SensorFrameStatus.Stale;
+            Assert.That(frame.Kind, Is.EqualTo("magnetometer"));
+            Assert.That(frame.Payload.Count, Is.EqualTo(hasData ? 1 : 0));
+            if (hasData)
+                Assert.That(frame.Payload["magnetic_field_sensor_tesla"].Vector3.Z, Is.EqualTo(0.000025));
         }
 
         [Test]
@@ -118,15 +120,36 @@ namespace Argus.Simulation.Host.Tests
                 SpacecraftShadowFactor = 0
             };
             snapshot.State.BackendSamples.Add(new PbSim.BackendSensorSample
-            { SensorId = "imu", Unavailable = new PbSim.UnavailableMeasurement() });
+            { SensorId = "imu" });
             var decoded = RoundTrip(snapshot);
             Assert.That(decoded.State.Environment.HasSpacecraftShadowFactor, Is.True);
             Assert.That(decoded.State.Environment.SpacecraftShadowFactor, Is.Zero);
             Assert.That(new PbSim.EnvironmentState().HasSpacecraftShadowFactor, Is.False);
-            Assert.That(decoded.State.BackendSamples[0].ResultCase,
-                Is.EqualTo(PbSim.BackendSensorSample.ResultOneofCase.Unavailable));
-            Assert.That(new PbSim.BackendSensorSample().ResultCase,
-                Is.EqualTo(PbSim.BackendSensorSample.ResultOneofCase.None));
+            Assert.That(decoded.State.BackendSamples.Count, Is.EqualTo(1));
+            Assert.That(decoded.State.BackendSamples[0].Output, Is.Empty);
+        }
+
+        [Test]
+        public void DeviceMapsCarryBackendOutputsAndCompleteAppliedCommands()
+        {
+            var snapshot = Snapshot("generation-a", 1);
+            var sample = new PbSim.BackendSensorSample { SensorId = "light.px" };
+            sample.Output.Add("irradiance_w_per_m2", new PbSim.DeviceValue { Number = 0 });
+            snapshot.State.BackendSamples.Add(sample);
+            snapshot.State.AppliedCommands = new PbSim.AppliedCommand { Sequence = 0, ApplyAtSimulationTimeS = 0 };
+            // No actuator kinds are configured yet: present producing command with empty list.
+            var decoded = RoundTrip(snapshot);
+            Assert.That(decoded.State.AppliedCommands.Commands, Is.Empty);
+            Assert.That(decoded.State.AppliedCommands.HasApplyAtSimulationTimeS, Is.True);
+            var value = decoded.State.BackendSamples[0].Output["irradiance_w_per_m2"];
+            Assert.That(value.ValueCase, Is.EqualTo(PbSim.DeviceValue.ValueOneofCase.Number));
+            Assert.That(value.Number, Is.Zero);
+            // Wire-shape check for a future actuator, not a claim the kind is implemented.
+            var command = new PbSim.DeviceCommand { DeviceId = "actuator.test" };
+            command.Values.Add("torque_body_n_m", new PbSim.DeviceValue { Vector3 = new PbSim.Vector3 { X = 1 } });
+            snapshot.State.AppliedCommands.Commands.Add(command);
+            Assert.That(RoundTrip(snapshot).State.AppliedCommands.Commands[0].Values["torque_body_n_m"].Vector3.X,
+                Is.EqualTo(1));
         }
 
         [Test]

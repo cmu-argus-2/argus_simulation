@@ -4,12 +4,13 @@ using System.Collections.Generic;
 namespace Argus.Simulation.Core
 {
     // One run configuration shared by Basilisk and Argus (G5). The optional members after
-    // FixedStepSeconds are Basilisk inputs.
+    // FixedStepSeconds are Basilisk inputs, except the devices Argus computes
+    // (IDeviceKind.IsBackendModelled, CORE-18).
     public readonly struct SimulationConfiguration
     {
         private const int MaximumKernelSetIdLength = 64;
 
-        private readonly SensorConfiguration[] _sensors;
+        private readonly DeviceConfiguration[] _devices;
 
         public SimulationConfiguration(
             string runId,
@@ -19,7 +20,7 @@ namespace Argus.Simulation.Core
             int randomSeed = 0,
             string kernelSetId = null,
             SpacecraftConfiguration? spacecraft = null,
-            IReadOnlyList<SensorConfiguration> sensors = null)
+            IReadOnlyList<DeviceConfiguration> devices = null)
         {
             RunId = runId;
             EpochUtc = epochUtc.ToUniversalTime();
@@ -28,7 +29,7 @@ namespace Argus.Simulation.Core
             RandomSeed = randomSeed;
             KernelSetId = kernelSetId;
             Spacecraft = spacecraft;
-            _sensors = sensors == null ? null : Copy(sensors);
+            _devices = devices == null ? null : Copy(devices);
         }
 
         public string RunId { get; }
@@ -41,7 +42,8 @@ namespace Argus.Simulation.Core
         public string KernelSetId { get; }
 
         public SpacecraftConfiguration? Spacecraft { get; }
-        public IReadOnlyList<SensorConfiguration> Sensors => _sensors ?? Array.Empty<SensorConfiguration>();
+        // Every configured device, in configuration order (D11).
+        public IReadOnlyList<DeviceConfiguration> Devices => _devices ?? Array.Empty<DeviceConfiguration>();
 
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(RunId) &&
@@ -52,25 +54,33 @@ namespace Argus.Simulation.Core
             (!Spacecraft.HasValue || Spacecraft.Value.IsValid) &&
             RandomSeed >= 0 &&
             (KernelSetId == null || IsKernelSetId(KernelSetId)) &&
-            AreSensorsValid(Sensors);
+            AreDevicesValid(Devices, FixedStepSeconds);
 
-        private static SensorConfiguration[] Copy(IReadOnlyList<SensorConfiguration> sensors)
+        private static DeviceConfiguration[] Copy(IReadOnlyList<DeviceConfiguration> devices)
         {
-            SensorConfiguration[] copy = new SensorConfiguration[sensors.Count];
+            DeviceConfiguration[] copy = new DeviceConfiguration[devices.Count];
             for (int i = 0; i < copy.Length; i++)
             {
-                copy[i] = sensors[i];
+                copy[i] = devices[i];
             }
 
             return copy;
         }
 
-        private static bool AreSensorsValid(IReadOnlyList<SensorConfiguration> sensors)
+        // Every sensor samples only at step states, so its period must be a whole number of steps:
+        // otherwise an Argus sensor samples unevenly under a period it never keeps (CORE-18). Basilisk
+        // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor whose
+        // frames carry truth may not be controller-visible, because the gateway forwards those frames
+        // unchanged (D7, IDeviceKind.MayBeControllerVisible). Device IDs are unique across the run.
+        private static bool AreDevicesValid(IReadOnlyList<DeviceConfiguration> devices, double fixedStepSeconds)
         {
-            HashSet<string> sensorIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (SensorConfiguration sensor in sensors)
+            HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (DeviceConfiguration device in devices)
             {
-                if (!sensor.IsValid || !sensorIds.Add(sensor.Definition.SensorId))
+                if (!device.IsValid ||
+                    !IsWholeNumberOfSteps(device.Definition.SamplePeriodSeconds, fixedStepSeconds) ||
+                    (device.Definition.IsControllerVisible && !device.MayBeControllerVisible) ||
+                    !deviceIds.Add(device.Definition.SensorId))
                 {
                     return false;
                 }
@@ -79,12 +89,18 @@ namespace Argus.Simulation.Core
             return true;
         }
 
+        private static bool IsWholeNumberOfSteps(double periodSeconds, double stepSeconds)
+        {
+            double steps = Math.Round(periodSeconds / stepSeconds);
+            return steps >= 1.0 && SimulationTime.AreSame(steps * stepSeconds, periodSeconds);
+        }
+
         // The service turns the ID into a file name, so only [a-z0-9][a-z0-9._-]* is accepted.
         private static bool IsKernelSetId(string value) =>
             value.Length <= MaximumKernelSetIdLength && IsLowercaseIdentifier(value);
 
         // [a-z0-9][a-z0-9._-]*: the kernel-set ID rule, which the run recorder also applies to the
-        // run and sensor IDs it turns into directory names.
+        // run and device IDs it turns into directory names.
         internal static bool IsLowercaseIdentifier(string value)
         {
             if (string.IsNullOrEmpty(value))
