@@ -323,17 +323,16 @@ def test_light_sensor_noise_is_unimplemented():
     assert problem.details.startswith("configuration.sensors[2].light_sensor.noise_std_w_per_m2")
 
 
-def test_pacing_is_unimplemented():
+@pytest.mark.parametrize("factor", [0.5, 1.0, 4.0])
+def test_pacing_is_accepted(factor):
     request = p0_default_request()
-    request.real_time_factor = 1.0
-    problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("real_time_factor")
+    request.real_time_factor = factor
+    assert problems_of(request) == []
 
 
 def test_invalid_argument_outranks_unimplemented_and_out_of_range():
     request = p0_default_request()
-    request.real_time_factor = 2.0
+    request.configuration.sensors[1].magnetometer.noise_std_tesla = 1e-7  # UNIMPLEMENTED until BSK-9
     request.configuration.epoch_utc.FromDatetime(datetime(2027, 1, 1, tzinfo=timezone.utc))
     request.configuration.spacecraft.mass_kg = -1.0
 

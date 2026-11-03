@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import grpc
@@ -175,7 +176,7 @@ def test_configure_run_echoes_sensor_ids_in_request_order(service, monkeypatch, 
     kernel_set = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
     monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: kernel_set)
     monkeypatch.setattr(servicer_module, "SUPPORTED_SENSOR_KINDS", frozenset({"imu", "magnetometer", "light_sensor"}))
-    monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set: SimpleNamespace(
+    monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set, real_time_factor: SimpleNamespace(
         spice_earth_frame="ITRF93"))
     request = p0_default_request()
     response = stub.ConfigureRun(request)
@@ -641,3 +642,85 @@ def test_full_p0_set_repeats_bit_for_bit_after_reset(service):
     second = run()
     assert [r.SerializeToString(deterministic=True) for r in first] == [
         r.SerializeToString(deterministic=True) for r in second]
+
+
+# --- ClockSynch pacing (BSK-7) -------------------------------------------------------------
+
+
+def paced_request(factor):
+    request = configure_request()
+    request.real_time_factor = factor
+    return request
+
+
+def step_times(stub, steps):
+    start = time.perf_counter()
+    responses = [stub.Step(step_request(n)) for n in range(steps)]
+    return time.perf_counter() - start, responses
+
+
+@real_kernels
+@pytest.mark.parametrize("factor", [1.0, 4.0])
+def test_paced_steps_follow_the_wall_clock(service, factor):
+    servicer, stub = service
+    stub.ConfigureRun(paced_request(factor))
+    assert servicer._run.scenario.clock.accelFactor == factor
+    elapsed, responses = step_times(stub, 11)
+    expected = 10 * STEP_NS / 1e9 / factor
+    # Step(n) returns no earlier than about start + t_n / factor (accuracy 1 ms).
+    assert expected - 0.01 <= elapsed <= expected + 0.25
+    assert all(response.pacing_overrun_count == 0 for response in responses)
+
+
+@real_kernels
+def test_overruns_are_counted_and_the_schedule_stays_absolute(service):
+    _, stub = service
+    stub.ConfigureRun(paced_request(1.0))
+    start = time.perf_counter()
+    for n in range(5):
+        stub.Step(step_request(n))
+    time.sleep(0.35)  # The caller stalls past three step deadlines.
+    responses = [stub.Step(step_request(n)) for n in range(5, 11)]
+    elapsed = time.perf_counter() - start
+    assert responses[-1].pacing_overrun_count >= 3
+    # Absolute schedule: the run catches up instead of shifting every later step.
+    assert elapsed <= 1.0 + 0.25
+
+
+@real_kernels
+def test_reset_rearms_the_pacing_schedule(service):
+    _, stub = service
+    stub.ConfigureRun(paced_request(1.0))
+    for n in range(3):
+        stub.Step(step_request(n))
+    time.sleep(0.5)
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    elapsed, responses = step_times(stub, 6)
+    # A fresh schedule from the new Step(0): no catch-up burst and no overruns carried over.
+    assert 0.5 - 0.01 <= elapsed <= 0.5 + 0.25
+    assert all(response.pacing_overrun_count == 0 for response in responses)
+
+
+@real_kernels
+def test_unpaced_runs_build_no_clock_and_stay_bit_identical(service):
+    servicer, stub = service
+    stub.ConfigureRun(configure_request())
+    assert servicer._run.scenario.clock is None
+    first = [stub.Step(step_request(n)) for n in range(20)]
+    assert all(response.pacing_overrun_count == 0 for response in first)
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    second = [stub.Step(step_request(n)) for n in range(20)]
+    assert [r.SerializeToString(deterministic=True) for r in first] == [
+        r.SerializeToString(deterministic=True) for r in second]
+
+
+@real_kernels
+def test_paced_and_unpaced_runs_produce_the_same_states(service):
+    """Pacing only delays each step; the simulation itself is unchanged."""
+    _, stub = service
+    stub.ConfigureRun(configure_request())
+    unpaced = [stub.Step(step_request(n)) for n in range(6)]
+    stub.ConfigureRun(paced_request(4.0))
+    paced = [stub.Step(step_request(n)) for n in range(6)]
+    assert [r.SerializeToString(deterministic=True) for r in unpaced] == [
+        r.SerializeToString(deterministic=True) for r in paced]

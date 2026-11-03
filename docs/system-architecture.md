@@ -330,7 +330,7 @@ docs/                              Architecture and interface documentation
 headless/                          dotnet build of Core and the EditMode tests; Host/ with BasiliskEngine
 
 Argus.Contracts/                   Protobuf schemas (v1 Basilisk link)
-Argus.Basilisk/                    Python Basilisk service with SPICE (build steps 1-4 + brief)
+Argus.Basilisk/                    Python Basilisk service with SPICE (build steps 1-5 + brief)
 
 Future external packages/services:
 Argus.Hardware/                    Flight-computer protocol adapters (README placeholder)

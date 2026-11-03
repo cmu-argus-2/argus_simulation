@@ -1,8 +1,8 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order steps 1 to 4 (README §12): spacecraft, SPICE, eclipse, and the P0 sensors: the IMU,
-the magnetometer with MagneticFieldWMM, and the light sensors with albedo. Pacing (§5) and
-actuators (G1) are rejected by validation before a Scenario is built.
+Build order steps 1 to 5 (README §12): spacecraft, SPICE, eclipse, the P0 sensors (the IMU, the
+magnetometer with MagneticFieldWMM, and the light sensors with albedo), and ClockSynch pacing.
+Actuators (G1) are rejected by validation before a Scenario is built.
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
 pass. Each Scenario owns a fresh SimBaseClass and fresh modules; Reset builds a new one.
@@ -16,7 +16,7 @@ import numpy as np
 from Basilisk import __version__ as BASILISK_VERSION
 from Basilisk.architecture import astroConstants, messaging
 from Basilisk.architecture.bskLogging import BasiliskError
-from Basilisk.simulation import albedo, eclipse, gravityEffector, magneticFieldWMM, spacecraft, spiceInterface
+from Basilisk.simulation import albedo, eclipse, gravityEffector, magneticFieldWMM, simSynch, spacecraft, spiceInterface
 from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
@@ -44,6 +44,12 @@ TASK_NAME = "dynamics"
 # distinct sample period, named sensors_<ns>.
 DYNAMICS_TASK_PRIORITY = 200
 SENSOR_TASK_PRIORITY = 100
+# §5: ClockSynch runs first in the §6 tick order, on its own task at fixed_step_ns.
+CLOCK_TASK_NAME = "clock"
+CLOCK_TASK_PRIORITY = 1000
+# How closely ClockSynch holds each step to its wall-clock deadline. Its 10 ms default is coarse
+# next to a 0.1 s step; 1 ms keeps a 10 Hz run within 1 % of its schedule.
+CLOCK_ACCURACY_NS = 1_000_000
 # §6 tick order within the task: higher priority runs first.
 SPICE_PRIORITY = 300
 SPACECRAFT_PRIORITY = 200
@@ -76,8 +82,10 @@ def format_epoch(timestamp) -> str:
 class Scenario:
     """One built and initialized Basilisk simulation for a validated RunConfiguration."""
 
-    def __init__(self, configuration, kernel_set: KernelSet):
+    def __init__(self, configuration, kernel_set: KernelSet, real_time_factor: float = 0.0):
         """Build every module from configuration and call InitializeSimulation (§3 step 3).
+
+        real_time_factor 0 runs unpaced; above 0, ClockSynch paces each step (§5).
 
         Raises:
             KernelLoadError: SPICE could not load a kernel.
@@ -85,6 +93,18 @@ class Scenario:
         self.fixed_step_ns = configuration.fixed_step_ns
         self.sim = SimulationBaseClass.SimBaseClass()
         process = self.sim.CreateNewProcess(PROCESS_NAME)
+
+        # Pacing (§5), built only for real_time_factor > 0. ClockSynch's schedule starts at its first
+        # update, Step(0), and is absolute from there; a new Scenario (ConfigureRun or Reset) re-arms it.
+        self.clock = None
+        if real_time_factor > 0.0:
+            process.addTask(self.sim.CreateNewTask(CLOCK_TASK_NAME, self.fixed_step_ns), CLOCK_TASK_PRIORITY)
+            self.clock = simSynch.ClockSynch()
+            self.clock.ModelTag = "clockSynch"
+            self.clock.accelFactor = real_time_factor
+            self.clock.accuracyNanos = CLOCK_ACCURACY_NS
+            self.sim.AddModelToTask(CLOCK_TASK_NAME, self.clock)
+
         process.addTask(self.sim.CreateNewTask(TASK_NAME, self.fixed_step_ns), DYNAMICS_TASK_PRIORITY)
 
         # SPICE (§8). auto_configure_kernels=False stops bsk 2.11.1 from fetching its default
@@ -179,6 +199,8 @@ class Scenario:
         }
         if magnetic_field_msg is not None:
             self.readers["magneticFieldWMM.envOutMsgs[0]"] = magnetic_field_msg.addSubscriber()
+        if self.clock is not None:
+            self.readers["clockSynch.clockOutMsg"] = self.clock.clockOutMsg.addSubscriber()
         for index, message in enumerate(albedo_msgs):
             self.readers[f"albedo.albOutMsgs[{index}]"] = message.addSubscriber()
 
@@ -238,8 +260,15 @@ class Scenario:
                 for sensor, ready in zip(self.sensors, was_ready)
                 if t_n % sensor.sample_period_ns == 0
             ],
-            pacing_overrun_count=0,
+            pacing_overrun_count=self._pacing_overruns(t_n),
         )
+
+    def _pacing_overruns(self, t_n: int) -> int:
+        """clockOutMsg.overrunCounter since ConfigureRun or Reset; 0 when unpaced (§7)."""
+        if self.clock is None:
+            return 0
+        reader = self.readers["clockSynch.clockOutMsg"]
+        return reader().overrunCounter
 
     def _sample(self, sensor, was_ready: bool, t_n: int) -> service_pb.BasiliskSensorSample:
         """The sample of a sensor due at t_n (§7); its measurement is unset when it ran without data."""

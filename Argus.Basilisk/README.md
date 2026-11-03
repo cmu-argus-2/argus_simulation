@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); pacing, non-zero commands, and magnetometer and light-sensor noise are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 5 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors) and ClockSynch pacing; non-zero commands, and magnetometer and light-sensor noise are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -117,9 +117,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
    `SUPPORTED_SENSOR_KINDS` holds the P0 kinds `"imu"` (BSK-4, #17), `"magnetometer"`
-   (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). Pacing, magnetometer noise and non-zero
-   commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22) and BSK-8 (#21), and
-   light-sensor noise until white noise is available. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). `real_time_factor > 0` is accepted
+   (BSK-7, #20). Magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-9
+   (#22) and BSK-8 (#21), and light-sensor noise until white noise is available. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -189,11 +189,19 @@ TDB-TT error of up to about 3.3 ms, under 30 µs per day of run).
 ## 5. Pacing
 
 - `real_time_factor == 0`: no ClockSynch; Step returns as fast as Basilisk runs.
-- `real_time_factor > 0`: add `simSynch.ClockSynch` with `accelFactor = real_time_factor`
-  and `accuracyNanos` set, on its own task at `fixed_step_ns`, highest priority. `Step(n)`
-  returns no earlier than about start + t_n / factor, on an absolute schedule from Step(0).
-  Report `clockOutMsg.overrunCounter` in `pacing_overrun_count`.
-- Until ClockSynch is built, `real_time_factor > 0` is UNIMPLEMENTED at ConfigureRun.
+- `real_time_factor > 0`: the scenario adds `simSynch.ClockSynch` with
+  `accelFactor = real_time_factor` and `accuracyNanos = 1 ms` (its 10 ms default is coarse
+  next to a 0.1 s step), on its own task `clock` at `fixed_step_ns`, highest priority.
+  `Step(n)` returns no earlier than about start + t_n / factor. The schedule starts at
+  Step(0) and is absolute from there, so a step that overruns its deadline is caught up on
+  the following steps instead of shifting every later one. ConfigureRun and Reset build a
+  new ClockSynch, which re-arms the schedule.
+- `pacing_overrun_count` reports `clockOutMsg.overrunCounter` since ConfigureRun or Reset,
+  read through a reader subscribed at build time and checked for freshness like every
+  other returned message; 0 when unpaced.
+- Overrun policy: overruns are counted and reported, never an error. A HIL rule that fails
+  past a threshold belongs with the HIL adapters (HIL-1, #66).
+- Pacing only delays each step. A paced run returns the same states as an unpaced one.
 
 ## 6. Tick order and message freshness (required)
 
@@ -457,7 +465,7 @@ with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the sh
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A non-zero command after Step(0); magnetometer or light-sensor noise not built yet; `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A non-zero command after Step(0); magnetometer or light-sensor noise not built yet |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 

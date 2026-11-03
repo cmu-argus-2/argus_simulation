@@ -53,8 +53,10 @@ line per simulated second:
 dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 60 --real-time-factor 0 --basilisk-endpoint 127.0.0.1:50051 --run-config headless/Host/runs/p0-default.json
 ```
 
-The endpoint comes from `--basilisk-endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
-`127.0.0.1:50051`. `--run-config` defaults to the `runs/p0-default.json` copied next to the
+`--real-time-factor 0` runs unpaced, as fast as Basilisk can; above 0 the service paces each
+step to the wall clock at that factor (1 is real time), and the per-second line's `overruns`
+counts steps that missed their deadline. The endpoint comes from `--basilisk-endpoint`, then
+`ARGUS_BASILISK_ENDPOINT`, then `127.0.0.1:50051`. `--run-config` defaults to the `runs/p0-default.json` copied next to the
 host binary. Exit codes: 0 on success or Ctrl+C, 1 on a failure (for example
 `Basilisk ConfigureRun failed: Unimplemented: …` against a service that has not built a
 configured sensor, or `Unavailable` with no service), 2 on bad arguments or a run
