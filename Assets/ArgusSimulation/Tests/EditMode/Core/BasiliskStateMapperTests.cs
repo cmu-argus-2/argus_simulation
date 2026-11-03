@@ -88,15 +88,19 @@ namespace Argus.Simulation.Tests
         [Test]
         public void MeasurementsCoverOnlyBackendModelledSensors()
         {
-            SensorConfiguration[] sensors = { Imu("imu.main", 0.2), Camera("cam.px", 0.1) };
+            DeviceConfiguration[] sensors = { Imu("imu.main", 0.2), Camera("cam.px", 0.1) };
             ImuMeasurement measured = new ImuMeasurement(
                 new Vector3d(0.01, 0.02, 0.03),
                 new Vector3d(0.0, 0.0, 1e-6));
+            DeviceValues output = new DeviceValues.Builder()
+                .Add("angular_velocity_sensor_rad_per_s", measured.AngularVelocitySensorRadiansPerSecond)
+                .Add("specific_force_sensor_m_per_s2", measured.SpecificForceSensorMetersPerSecondSquared)
+                .Build();
             Mrp level = new Mrp(0.0, 0.0, 0.0);
             Vector3d still = new Vector3d(0.0, 0.0, 0.0);
 
             SensorMeasurementSet onPeriod = BasiliskStateMapper.MapMeasurements(
-                Step(200_000_000, level, still, new BasiliskSensorSample("imu.main", 200_000_000, measured)),
+                Step(200_000_000, level, still, new BasiliskSensorSample("imu.main", 200_000_000, output)),
                 sensors);
             SensorMeasurementSet offPeriod = BasiliskStateMapper.MapMeasurements(
                 Step(100_000_000, level, still),
@@ -117,25 +121,25 @@ namespace Argus.Simulation.Tests
                     200_000_000,
                     level,
                     still,
-                    new BasiliskSensorSample("imu.main", 200_000_000, measured),
-                    new BasiliskSensorSample("cam.px", 200_000_000, null)),
+                    new BasiliskSensorSample("imu.main", 200_000_000, output),
+                    new BasiliskSensorSample("cam.px", 200_000_000, DeviceValues.Empty)),
                 sensors));
             Assert.That(unknown.Message, Does.StartWith("Unknown sensor 'cam.px'."));
         }
 
-        private static SensorConfiguration Imu(string sensorId, double samplePeriodSeconds)
+        private static DeviceConfiguration Imu(string sensorId, double samplePeriodSeconds)
         {
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            return SensorConfiguration.ForImu(
+            return ImuKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity),
                 new ImuProfile(
                     new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
                     new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
         }
 
-        private static SensorConfiguration Camera(string sensorId, double samplePeriodSeconds) =>
-            SensorConfiguration.ForCamera(
+        private static DeviceConfiguration Camera(string sensorId, double samplePeriodSeconds) =>
+            CameraKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity),
                 new CameraProfile(new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0), 0.0005));
 

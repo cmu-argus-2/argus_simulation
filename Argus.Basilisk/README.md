@@ -25,9 +25,10 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
 
 Code layout: `argus_basilisk/servicer.py` (the three RPCs and the lifecycle, §3) calls
 `validation.py` (§3), `kernels.py` (§8) and `scenario.py` (§4 to §8), which builds the
-spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensors that `sensors.py` (§9) builds
-with seeds from `seeds.py` (§10); the IMU (BSK-4, #17), the magnetometer (BSK-5, #18) and the light sensors with albedo (BSK-6, #19) are built. `scripts/fetch_kernels.py` is the SPICE team's
-fetch/verify tool (§8).
+spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensor devices that the kind registry
+in `devices/` (§9) builds, with seeds from `seeds.py` (§10). The registered kinds are the IMU
+(BSK-4, #17), the magnetometer (BSK-5, #18) and the light sensor with albedo (BSK-6, #19).
+`scripts/fetch_kernels.py` is the SPICE team's fetch/verify tool (§8).
 
 ## 2. Install and run
 
@@ -91,10 +92,15 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    - spacecraft: mass > 0; inertia symmetric (within 1e-12 of the trace) and positive
      definite; unit initial quaternion (within 1e-6); finite rate;
    - `kernel_set_id` matches `[a-z0-9][a-z0-9._-]{0,63}`; `fixed_step_ns > 0`;
-     `real_time_factor` finite and ≥ 0; unique sensor IDs; each `sample_period_ns` a
-     positive multiple of `fixed_step_ns`; every oneof and message field set;
-   - sensor profiles as in `sensors.proto` (a light-sensor half-angle is at most π/2, since
-     `coarseSunSensor` and `albedo` do not clamp negative cosines), plus Basilisk 2.11.1
+     `real_time_factor` finite and ≥ 0; unique device IDs; each `sample_period_ns` a
+     positive multiple of `fixed_step_ns`; every message field set; a unit
+     `mount.device_to_body` and a finite `mount.position_body_m`;
+   - each device's `kind` is registered (§9); unknown or empty is INVALID_ARGUMENT;
+   - `parameters` holds exactly the kind's keys (§9), all required, each with its declared
+     `DeviceValue` case and finite; an unknown key, a missing key, another case or no case
+     is INVALID_ARGUMENT. `initial_state` is empty, since no sensor kind has state;
+   - the kind's own range checks (§9): a light-sensor half-angle is at most π/2, since
+     `coarseSunSensor` and `albedo` do not clamp negative cosines; plus Basilisk 2.11.1
      limits: an IMU channel
      cannot have both noise density and random walk > 0 (one Gauss-Markov state per axis),
      and a walk bound > 0 needs random walk > 0 (the same bound would clip white noise);
@@ -108,14 +114,16 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      `InitializeSimulation`, and CSPICE aborts the whole process outside coverage.
 
    `argus_basilisk.validation` implements this step (BSK-2, #15) without importing
-   Basilisk. `validate_configure_run(request, coverage_utc=..., wmm_validity=...,
-   supported_sensor_kinds=...)` raises `ValidationError(code, details)`; the servicer maps it
+   Basilisk or numpy. `validate_configure_run(request, coverage_utc=..., wmm_validity=...)`
+   raises `ValidationError(code, details)`; the servicer maps it
    with `context.abort(grpc.StatusCode[error.code], error.details)`. Problems rank
    INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
-   `SUPPORTED_SENSOR_KINDS` holds the P0 kinds `"imu"` (BSK-4, #17), `"magnetometer"`
-   (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). Pacing and non-zero commands stay
+   Device checks walk `devices.KINDS`. A device problem names its path, for example
+   `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
+   set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
+   Pacing and non-zero commands stay
    UNIMPLEMENTED until BSK-7 (#20) and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
@@ -123,7 +131,7 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    `InitializeSimulation()`. Run no step. A `BasiliskError` raised while loading kernels
    is FAILED_PRECONDITION.
 4. Store the request, end READY, and fill every `ConfigureRunResponse` field; the client
-   checks each echo.
+   checks each echo. `configured_device_ids` lists every device in request order.
 
 ### Reset
 
@@ -222,7 +230,7 @@ when it is linked, so an unread CSS would report a zero payload that still passe
 | `spacecraft` | `spacecraft.scStateOutMsg`: `r_BN_N`, `v_BN_N`, `sigma_BN` as written, `omega_BN_B` |
 | `earth`, `sun` | `spiceInterface.planetStateOutMsgs`: `PlanetName`, `PositionVector`, `VelocityVector`, `J20002Pfix`, `J20002Pfix_dot`, `computeOrient` |
 | `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0]` read through its reader (1 sunlit, 0 umbra); always set. In bsk 2.11.1 the reader returns the `eclipse` module's payload, whose only field is the C name `shadowFactor` and reads without a warning; `illuminationFactor` is a Python alias that exists only on `messaging.EclipseMsgPayload` |
-| `sensor_samples` | One per sensor whose period divides `sim_time_ns`, with `sample_time_ns` from the subscribed reader's `timeWritten()`; measurement unset when the sensor ran without data |
+| `device_samples` | One `BasiliskDeviceSample` per sensor device whose period divides `sim_time_ns`, in configuration order, with `sample_time_ns` from the subscribed reader's `timeWritten()` and `output` keyed by the kind's output keys (§9); `output` is empty when the sensor ran without data |
 | `pacing_overrun_count` | `clockSynch.clockOutMsg.overrunCounter`; 0 when unpaced |
 
 `Matrix3` is row-major: `row0` is the first row of the Basilisk matrix. Argus rejects a
@@ -365,42 +373,85 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
 
 ## 9. P0 sensors
 
-Common: `C_SB = EP2C([w, x, y, z])` of `mount.sensor_to_body`; `mount.position_body_m` goes
+Every sensor is a device (D11, [device-model.md](../docs/device-model.md)): a
+`DeviceConfiguration` whose `kind` names a registered kind. Each kind is one module,
+`argus_basilisk/devices/<kind>.py`, and `devices/__init__.py` registers it in `KINDS`. A kind
+module defines `KIND`; `PARAMETERS` and `OUTPUTS`, which map each key to its `DeviceValue`
+case; `check(values, invalid)`, its range checks; and `build(device, random_seed, inputs)`,
+its Argus sensor, whose `output()` returns the output map. `devices.build_sensors` and
+`validation.py` walk `KINDS`. Adding a kind is one module plus one registration. Every
+parameter key is required, and no kind has a default or an initial state.
+
+Common: `C_SB = EP2C([w, x, y, z])` of `mount.device_to_body`; `mount.position_body_m` goes
 to IMU `sensorPos_B`, CSS `r_B` and albedo `r_IB_B`. **Always set the A matrix
 explicitly**: the defaults differ per module (IMU gyroscope, magnetometer and CSS default
 to a random walk; the IMU accelerometer to white noise). Pass matrices and vectors as NumPy
 arrays or nested lists, never scalars: the SWIG Eigen typemaps reject a scalar. The `0`, `I`
-and `[b, b, b]` in `sensors.proto` comments are shorthand for `np.zeros((3, 3))`,
-`np.eye(3)` and a 3-vector. Outputs are scale × (true + noise + bias), then quantised (IMU
-only), then clipped.
+and `[b, b, b]` in the tables below are shorthand for `np.zeros((3, 3))`, `np.eye(3)` and a
+3-vector; T is the sample period in seconds. Outputs are scale × (true + noise + bias), then
+quantised (IMU only), then clipped.
 
 Every module's required input messages must be linked, or `InitializeSimulation` raises
 `BasiliskError`: IMU (both modules) and CSS `scStateInMsg` / `stateInMsg` from
 `scStateOutMsg`; albedo `spacecraftStateInMsg` from `scStateOutMsg` and `sunPositionInMsg`
 from the SPICE Sun planet state; plus the per-sensor links below.
 
-**IMU** (`imuSensor.ImuSensor`):
+**IMU**, kind `imu` (`imuSensor.ImuSensor`, `devices/imu.py`):
+
+| Parameter key | Type | Basilisk |
+|---|---|---|
+| `gyroscope.noise_density_rad_per_s_per_sqrt_hz` | number | N: `PMatrixGyro = N / √T I`; `setAMatrixGyro(0)`; ≥ 0 |
+| `gyroscope.bias_random_walk_rad_per_s_per_sqrt_s` | number | K: `PMatrixGyro = K √T I`; `setAMatrixGyro(I)`; ≥ 0 |
+| `gyroscope.bias_random_walk_bound_rad_per_s` | number | `setWalkBoundsGyro([b, b, b])`; 0 = unbounded; > 0 needs K > 0 |
+| `gyroscope.constant_bias_sensor_rad_per_s` | vector3 | `senRotBias` |
+| `gyroscope.scale_factor_per_axis` | vector3 | `gyroScale`; each > 0 |
+| `gyroscope.range_rad_per_s` | number | `senRotMax`; > 0 |
+| `gyroscope.resolution_rad_per_s` | number | `setLSBs(accelerometer LSB, this)`; 0 = no quantisation; < range |
+| `accelerometer.noise_density_m_per_s2_per_sqrt_hz` | number | `PMatrixAccel = N / √T I`; `setAMatrixAccel(0)` |
+| `accelerometer.bias_random_walk_m_per_s2_per_sqrt_s` | number | `PMatrixAccel = K √T I`; `setAMatrixAccel(I)` |
+| `accelerometer.bias_random_walk_bound_m_per_s2` | number | `setWalkBoundsAccel([b, b, b])` |
+| `accelerometer.constant_bias_sensor_m_per_s2` | vector3 | `senTransBias` |
+| `accelerometer.scale_factor_per_axis` | vector3 | `accelScale` |
+| `accelerometer.range_m_per_s2` | number | `senTransMax` |
+| `accelerometer.resolution_m_per_s2` | number | `setLSBs(this, gyroscope LSB)` |
+
+The accelerometer keys follow the gyroscope rules. Noise density and random walk exclude each
+other per channel.
+
+| Output key | Type | Basilisk |
+|---|---|---|
+| `angular_velocity_sensor_rad_per_s` | vector3 | Gyroscope module `sensorOutMsg.AngVelPlatform`: body relative to inertial, sensor axes |
+| `specific_force_sensor_m_per_s2` | vector3 | Accelerometer module `sensorOutMsg.AccelPlatform` |
+
 - bsk 2.11.1 seeds the gyroscope and accelerometer from one `RNGSeed`, so build two modules
   per Argus IMU: one with gyroscope noise only (stream `gyro`) and one with accelerometer
-  noise only (stream `accel`), with the same `dcm_PB`, `sensorPos_B` and task.
-- Profile fields map as the comments in `sensors.proto` state (`PMatrix*`, `setAMatrix*`,
-  `setWalkBounds*`, `senRotBias`/`senTransBias`, `gyroScale`/`accelScale`,
-  `senRotMax`/`senTransMax`, `setLSBs(accelerometer, gyroscope)`). Never call
-  `setErrorBounds*`: it is the same Gauss-Markov bound. A walk bound of 0 leaves the walk
-  unbounded, as the module default of −1 does.
-- `sensors.Imu` builds the two modules. The channel a module does not report gets P = 0 and
-  A = 0, so the gyroscope module's accelerometer and the accelerometer module's gyroscope are
-  noise-free; the response takes `AngVelPlatform` from the gyroscope module and
-  `AccelPlatform` from the accelerometer module.
+  noise only (stream `accel`), with the same `dcm_PB`, `sensorPos_B` and task. Both modules
+  take every parameter above.
+- Never call `setErrorBounds*`: it is the same Gauss-Markov bound. A walk bound of 0 leaves
+  the walk unbounded, as the module default of −1 does.
+- `devices.imu.Imu` builds the two modules. The channel a module does not report gets P = 0
+  and A = 0, so the gyroscope module's accelerometer and the accelerometer module's gyroscope
+  are noise-free.
 - The first firing writes a zero-filled message at t = 0 (`NominalReady` is false until the
-  module has run once); send it with the measurement unset, which Argus reports as
-  Unavailable.
+  module has run once); send it with an empty output, which Argus reports as Unavailable.
 - `AccelPlatform` includes the lever-arm terms dω/dt × r + ω × (ω × r): in free fall it is
   zero at the centre of mass, or anywhere on a non-rotating body.
 
-**Magnetometer** (`magnetometer.Magnetometer`):
-- `dcm_SB`, `senNoiseStd = [0.0, 0.0, 0.0]`, `setAMatrix(np.zeros((3, 3)))`,
-  `walkBounds = [0.0, 0.0, 0.0]`, `senBias`, `scaleFactor`, `maxOutput = +inf`,
+**Magnetometer**, kind `magnetometer` (`magnetometer.Magnetometer`, `devices/magnetometer.py`):
+
+| Parameter key | Type | Basilisk |
+|---|---|---|
+| `noise_std_tesla` | number | σ, drawn by the service (below); ≥ 0 |
+| `constant_bias_sensor_tesla` | vector3 | `senBias` |
+| `scale_factor` | number | `scaleFactor`; > 0 |
+| `range_tesla` | number | R, applied by the service as ±R; > 0 |
+
+| Output key | Type | Basilisk |
+|---|---|---|
+| `magnetic_field_sensor_tesla` | vector3 | `tamDataOutMsg.tam_S` plus the service's noise, clipped to ±R |
+
+- The service constants are `dcm_SB`, `senNoiseStd = [0.0, 0.0, 0.0]`,
+  `setAMatrix(np.zeros((3, 3)))`, `walkBounds = [0.0, 0.0, 0.0]`, `maxOutput = +inf` and
   `minOutput = −inf`. The service adds the noise and clips to ±R (below).
 - `stateInMsg` from `scStateOutMsg`; `magInMsg` from `MagneticFieldWMM.envOutMsgs[k]`, set up
   with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
@@ -417,17 +468,31 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   never downloaded during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
   Basilisk v2.11.1's byte-identical copy (the file `dataFetcher` would download).
 - bsk 2.11.1 ignores the magnetometer's `RNGSeed`, so the service adds the noise (BSK-9,
-  #22): the module runs noise-free and unclipped, and `Magnetometer.measurement()` returns
+  #22): the module runs noise-free and unclipped, and `Magnetometer.output()` returns
   `clip(tam_S + scale σ z_k, −R, +R)`, bsk's formula with σ moved out of the module. `z_k` is
   `sample_normals(seed, "mag", k)` (§10). `tamDataOutMsg` therefore holds the noise-free,
   unclipped field: its reader is for freshness checks only, and the sensor's output is
-  `measurement()`.
+  `output()`.
 
-**Light sensor** (`coarseSunSensor.CoarseSunSensor`):
-- `fov`; `scaleFactor = g × 1361` so the output is W/m²; `senNoiseStd = σ / scaleFactor`;
-  `senBias = b / scaleFactor`; `maxOutput = saturation`; `minOutput = 0`; `kellyFactor = 0`;
-  `nHat_B = C_SB[2, :]` (never `setUnitDirectionVectorWithPerturbation`); `r_B` from the
-  mount. The fault state stays at its default, `NOMINAL`.
+**Light sensor**, kind `light_sensor` (`coarseSunSensor.CoarseSunSensor`,
+`devices/light_sensor.py`):
+
+| Parameter key | Type | Basilisk |
+|---|---|---|
+| `field_of_view_half_angle_rad` | number | `fov`, and albedo `addInstrumentConfig` fov; in (0, π/2] |
+| `scale_factor` | number | g: `scaleFactor = g × 1361`, so the output is W/m²; > 0 |
+| `noise_std_w_per_m2` | number | σ, drawn by the service (below); ≥ 0 |
+| `bias_w_per_m2` | number | b: `senBias = b / scaleFactor` |
+| `saturation_w_per_m2` | number | The service's upper clip; > 0 |
+
+| Output key | Type | Basilisk |
+|---|---|---|
+| `irradiance_w_per_m2` | number | `cssDataOutMsg.OutputData` plus the service's noise, clipped to [0, saturation] |
+
+- The service constants are `kellyFactor = 0`, `senNoiseStd = 0`, `minOutput = −inf`,
+  `maxOutput = +inf`, `nHat_B = C_SB[2, :]` (never
+  `setUnitDirectionVectorWithPerturbation`) and `r_B` from the mount. The fault state stays at
+  its default, `NOMINAL`.
 - `sunInMsg` from the SPICE Sun; `sunEclipseInMsg` from `eclipseOutMsgs[0]`; `albedoInMsg`
   from `albedo.albOutMsgs[i]`. The scenario builds one `albedo.Albedo` in the dynamics task
   after eclipse, only when light sensors are configured, with `spacecraftStateInMsg`,
@@ -455,21 +520,21 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   `Eigen::VectorXd` and has no typemap for it, so `[0.0]`, `np.array([0.0])` and `[[0.0]]`
   all raise `TypeError`, and the default A makes the module's noise a random walk (lag-1
   autocorrelation 0.997). So the service adds the noise (BSK-13, #116):
-  `LightSensor.measurement()` returns `clip(OutputData + σ z_k, 0, saturation)`, with `z_k`
+  `LightSensor.output()` returns `clip(OutputData + σ z_k, 0, saturation)`, with `z_k`
   from `sample_normals(seed, "css", k)` (§10). `cssDataOutMsg` therefore holds the
   noise-free, unclipped irradiance: its reader is for freshness checks only, and the sensor's
-  output is `measurement()`. Once a bsk release can set A from Python, the module's own
+  output is `output()`. Once a bsk release can set A from Python, the module's own
   noise can replace this.
 
 ## 10. Seeds
 
 Every noisy module gets
-`RNGSeed = int.from_bytes(sha256(f"{random_seed}:{sensor_id}:{stream}".encode()).digest()[:4], "little")`
+`RNGSeed = int.from_bytes(sha256(f"{random_seed}:{device_id}:{stream}".encode()).digest()[:4], "little")`
 with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the shared default
 `0x1badcad1`. Acceptance: changing one seed changes exactly that module's noise stream.
 
 A stream bsk 2.11.1 cannot seed or make white (`mag` and `css`, §9) is drawn by the service, one sample at a time:
-`sensors.sample_normals(seed, stream, k)` returns standard normals from PCG64 seeded with
+`seeds.sample_normals(seed, stream, k)` returns standard normals from PCG64 seeded with
 `SeedSequence([tag, seed, k])`, where `tag` is the first 4 bytes, little-endian, of
 `sha256(f"sample:{stream}")` and `k = seeds.sample_index(t, sample_period_ns)`. A sample
 depends only on its seed, stream and index; the tag keeps it apart from any generator seeded
@@ -480,7 +545,7 @@ The draws are fixed by the `numpy` pin in `uv.lock`.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; a Step command for the wrong step, or a non-zero command in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, or a non-zero command in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |

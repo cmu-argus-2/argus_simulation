@@ -6,8 +6,9 @@ namespace Argus.Simulation.Core
     // - Profile: output rate, position and velocity noise, time to first fix, outage behaviour.
     // - Source open: bsk 2.11.1 has no GNSS receiver module. Choose between simpleNav (NavTransMsg) as a
     //   Basilisk-sourced BackendSensorModel (D10) and an Argus-computed SensorModel<T> from truth.
-    // - Then add a SensorKind value, a profile in sensors.proto and a SensorFactory case, as for
-    //   ImuSensor. Needs the flight part from the hardware team.
+    // - Then add a kind (an IDeviceKind like ImuKind) and its registration in DeviceKinds, plus, if
+    //   Basilisk models it, a service module (docs/device-model.md §7). Needs the flight part from
+    //   the hardware team.
     internal sealed class GnssSensor
     {
     }

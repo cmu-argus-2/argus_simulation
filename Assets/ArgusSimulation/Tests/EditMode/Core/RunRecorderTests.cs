@@ -279,12 +279,12 @@ namespace Argus.Simulation.Tests
         {
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            SensorConfiguration rate = SensorConfiguration.ForImu(
+            DeviceConfiguration rate = ImuKind.Instance.Configure(
                 new SensorDefinition("imu.body_rate", "test-rate", "body", fixedStepSeconds, "test", SensorMount.Identity),
                 new ImuProfile(
                     new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
                     new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
-            return new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, sensors: new[] { rate });
+            return new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: new[] { rate });
         }
 
         // The raw JSON value of the first "name" key in a line.

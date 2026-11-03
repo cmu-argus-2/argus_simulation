@@ -22,7 +22,7 @@ namespace Argus.Simulation.Tests
                 "run-1",
                 Epoch,
                 0.1,
-                sensors: new[] { Camera(samplePeriodSeconds) });
+                devices: new[] { Camera(samplePeriodSeconds) });
 
             Assert.That(configuration.IsValid, Is.EqualTo(isValid));
         }
@@ -36,7 +36,7 @@ namespace Argus.Simulation.Tests
                 "run-1",
                 Epoch,
                 0.1,
-                sensors: new[] { Imu(samplePeriodSeconds) });
+                devices: new[] { Imu(samplePeriodSeconds) });
 
             Assert.That(configuration.IsValid, Is.EqualTo(isValid));
         }
@@ -51,22 +51,22 @@ namespace Argus.Simulation.Tests
             Assert.That(Run(Imu(0.1, isControllerVisible: true)).IsValid, Is.True);
         }
 
-        private static SimulationConfiguration Run(SensorConfiguration sensor) =>
-            new SimulationConfiguration("run-1", Epoch, 0.1, sensors: new[] { sensor });
+        private static SimulationConfiguration Run(DeviceConfiguration sensor) =>
+            new SimulationConfiguration("run-1", Epoch, 0.1, devices: new[] { sensor });
 
-        private static SensorConfiguration Imu(double samplePeriodSeconds, bool isControllerVisible = true)
+        private static DeviceConfiguration Imu(double samplePeriodSeconds, bool isControllerVisible = true)
         {
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            return SensorConfiguration.ForImu(
+            return ImuKind.Instance.Configure(
                 new SensorDefinition("imu.main", "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity, isControllerVisible),
                 new ImuProfile(
                     new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
                     new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
         }
 
-        private static SensorConfiguration Camera(double samplePeriodSeconds, bool isControllerVisible = false) =>
-            SensorConfiguration.ForCamera(
+        private static DeviceConfiguration Camera(double samplePeriodSeconds, bool isControllerVisible = false) =>
+            CameraKind.Instance.Configure(
                 new SensorDefinition("cam.px", "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity, isControllerVisible),
                 new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
     }

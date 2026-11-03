@@ -16,7 +16,7 @@ namespace Argus.Simulation.Core
     public sealed class SimulationGateway
     {
         private readonly ISimulationEngine _engine;
-        private readonly Func<SensorConfiguration, ISensor> _sensorFactory;
+        private readonly Func<DeviceConfiguration, ISensor> _sensorFactory;
         private SimulationConfiguration _scenario;
         private SensorManager _sensors;
         private HashSet<string> _controllerVisibleSensorIds;
@@ -28,7 +28,7 @@ namespace Argus.Simulation.Core
         private bool _hasStartedRun;
 
         // sensorFactory builds the run's sensors from the scenario; SensorFactory.Create by default.
-        public SimulationGateway(ISimulationEngine engine, Func<SensorConfiguration, ISensor> sensorFactory = null)
+        public SimulationGateway(ISimulationEngine engine, Func<DeviceConfiguration, ISensor> sensorFactory = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _sensorFactory = sensorFactory ?? SensorFactory.Create;
@@ -360,9 +360,13 @@ namespace Argus.Simulation.Core
         private SensorManager BuildSensors(SimulationConfiguration run)
         {
             SensorManager sensors = new SensorManager();
-            foreach (SensorConfiguration sensor in run.Sensors)
+            // Only sensor devices publish frames; actuators take commands (D11).
+            foreach (DeviceConfiguration device in run.Devices)
             {
-                sensors.Register(_sensorFactory(sensor));
+                if (IsSensor(device))
+                {
+                    sensors.Register(_sensorFactory(device));
+                }
             }
 
             sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
@@ -383,16 +387,18 @@ namespace Argus.Simulation.Core
         private static HashSet<string> ControllerVisibleSensorIds(SimulationConfiguration run)
         {
             HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
-            foreach (SensorConfiguration sensor in run.Sensors)
+            foreach (DeviceConfiguration device in run.Devices)
             {
-                if (sensor.Definition.IsControllerVisible)
+                if (IsSensor(device) && device.Definition.IsControllerVisible)
                 {
-                    ids.Add(sensor.Definition.SensorId);
+                    ids.Add(device.Definition.SensorId);
                 }
             }
 
             return ids;
         }
+
+        private static bool IsSensor(DeviceConfiguration device) => device.KindDefinition?.Role == DeviceRole.Sensor;
 
         private static SimulationConfiguration WithRandomSeed(SimulationConfiguration scenario, int seed) =>
             new SimulationConfiguration(
@@ -403,6 +409,6 @@ namespace Argus.Simulation.Core
                 randomSeed: seed,
                 kernelSetId: scenario.KernelSetId,
                 spacecraft: scenario.Spacecraft,
-                sensors: scenario.Sensors);
+                devices: scenario.Devices);
     }
 }

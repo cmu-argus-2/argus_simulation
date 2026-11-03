@@ -258,21 +258,21 @@ namespace Argus.Simulation.Tests
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
-        private static SimulationConfiguration Scenario(double fixedStepSeconds, params SensorConfiguration[] sensors) =>
-            new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, sensors: sensors);
+        private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
+            new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: sensors);
 
         // A camera at the fixed step's period, so it samples at every step.
-        private static SensorConfiguration Camera(string sensorId, bool isControllerVisible) =>
-            SensorConfiguration.ForCamera(
+        private static DeviceConfiguration Camera(string sensorId, bool isControllerVisible) =>
+            CameraKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
                 new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
 
         // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
-        private static SensorConfiguration Rate(string sensorId, bool isControllerVisible)
+        private static DeviceConfiguration Rate(string sensorId, bool isControllerVisible)
         {
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            return SensorConfiguration.ForImu(
+            return ImuKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, "test", SensorMount.Identity, isControllerVisible),
                 new ImuProfile(
                     new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),

@@ -13,12 +13,12 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   (`Core/Abstractions/IImageRenderer.cs`) and publishes the result as a
   `SensorFrame<ImageFrame>`. Distortion and noise come with the concrete profiles.
 - `ArducamImx708CameraModel`: the physical camera, used for the +X, -X, +Y and -Y body
-  cameras. `SensorFactory` builds it from a `Camera` sensor configuration,
-  whose `CameraProfile` holds the intrinsics and exposure duration (CORE-18). Cameras are
+  cameras. `CameraKind` builds it from a `camera` device configuration, whose parameters read
+  into a `CameraProfile` with the intrinsics and exposure duration (CORE-18, D11). Cameras are
   computed by Argus, so they are never sent to Basilisk. The renderer comes from the host or
   Unity; `headless/Host` has none yet, so its camera frames are `Unavailable`. A camera
   frame carries the true camera pose, so a run may not make a camera controller-visible
-  (`SensorConfiguration.MayBeControllerVisible`, D7) until CORE-6 decides what a controller
+  (`IDeviceKind.MayBeControllerVisible`, D7) until CORE-6 decides what a controller
   sees of one. CORE-6 adds the DATA-6 distortion and noise and the four mounts.
 - `NadirGroundTruthCameraModel` (CORE-8): follows spacecraft position with a north-up nadir
   orientation that ignores attitude, by overriding `ComputePose`.

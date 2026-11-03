@@ -5,12 +5,13 @@ noise stream, so changing one sensor or stream never changes another module's no
 Python hash(), which is salted per process, and never the shared module default 0x1badcad1.
 
 Streams bsk 2.11.1 cannot seed or shape are drawn by the service, one sample at a time
-(sensors.sample_normals), keyed by sample_index.
+(sample_normals), keyed by sample_index. numpy is imported only to draw them, so the device
+registry, which imports this module, stays importable without the basilisk extra.
 """
 
 import hashlib
 
-__all__ = ["ACCEL", "CSS", "GYRO", "MAG", "rng_seed", "sample_index"]
+__all__ = ["ACCEL", "CSS", "GYRO", "MAG", "rng_seed", "sample_index", "sample_normals"]
 
 # Noise streams.
 GYRO = "gyro"
@@ -33,3 +34,16 @@ def sample_index(sample_time_ns: int, sample_period_ns: int) -> int:
         raise ValueError(f"sample time {sample_time_ns} ns is not a multiple of the period {sample_period_ns} ns")
     return k
 
+
+def sample_normals(rng_seed: int, stream: str, k: int, size: int = 3):
+    """size standard normals for sample k of a stream the service draws itself, as a NumPy array.
+
+    PCG64 seeded with SeedSequence([tag, rng_seed, k]), tag being the first 4 bytes,
+    little-endian, of sha256(f"sample:{stream}"). A sample depends only on its seed, stream and
+    index. The tag keeps every draw apart from a generator seeded with rng_seed alone, which
+    SeedSequence's zero padding would otherwise make equal to sample 0.
+    """
+    import numpy as np
+
+    tag = int.from_bytes(hashlib.sha256(f"sample:{stream}".encode()).digest()[:4], "little")
+    return np.random.default_rng([tag, rng_seed, k]).standard_normal(size)

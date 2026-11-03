@@ -7,8 +7,8 @@ namespace Argus.Simulation.Core
     // - Source open: Basilisk starTracker (STSensorMsgPayload.qInrtl2Case, scalar first) as a
     //   BackendSensorModel (D10), or Argus-computed. starTracker 2.11.1 models no Sun or Earth
     //   exclusion, so exclusion and outages need Argus or service-side logic either way.
-    // - Then add a SensorKind value, a profile in sensors.proto, a measurement in the Basilisk
-    //   StepResponse and a SensorFactory case, as for ImuSensor.
+    // - Then add a kind (an IDeviceKind like ImuKind) and its registration in DeviceKinds, plus, if
+    //   Basilisk models it, a service module with its output keys (docs/device-model.md §7).
     internal sealed class StarTrackerSensor
     {
     }
