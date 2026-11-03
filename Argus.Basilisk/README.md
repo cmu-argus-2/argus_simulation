@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 3 (§12): spacecraft, SPICE, eclipse, the IMU and the magnetometer; the light sensors, pacing and non-zero commands are UNIMPLEMENTED
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); pacing, non-zero commands, and magnetometer and light-sensor noise are UNIMPLEMENTED
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -26,7 +26,7 @@ Basilisk run, plus pacing in real-time runs (decisions D2, D3 and D10 in
 Code layout: `argus_basilisk/servicer.py` (the three RPCs and the lifecycle, §3) calls
 `validation.py` (§3), `kernels.py` (§8) and `scenario.py` (§4 to §8), which builds the
 spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensors that `sensors.py` (§9) builds
-with seeds from `seeds.py` (§10); the IMU (BSK-4, #17) and the magnetometer (BSK-5, #18) are built. `scripts/fetch_kernels.py` is the SPICE team's
+with seeds from `seeds.py` (§10); the IMU (BSK-4, #17), the magnetometer (BSK-5, #18) and the light sensors with albedo (BSK-6, #19) are built. `scripts/fetch_kernels.py` is the SPICE team's
 fetch/verify tool (§8).
 
 ## 2. Install and run
@@ -101,6 +101,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    - `noise_std_tesla > 0` is UNIMPLEMENTED: bsk 2.11.1 seeds the magnetometer's private
      noise generator in its constructor with the default seed and never re-seeds it, so
      every seed and every magnetometer would get the same stream (§9);
+   - `noise_std_w_per_m2 > 0` is UNIMPLEMENTED: bsk 2.11.1 cannot set coarseSunSensor's A
+     matrix from Python, and its default A makes the noise a random walk instead of white
+     noise (§9);
    - `epoch_utc` is inside the kernel set's `coverage_utc`, and inside WMM2025 validity
      (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
@@ -113,9 +116,10 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    INVALID_ARGUMENT, then UNIMPLEMENTED, then OUT_OF_RANGE, and the details join every problem
    of that code. `coverage_utc` is any object with `start` and `end` (such as the kernel
    set's coverage); both windows are inclusive and compared in exact nanoseconds.
-   `SUPPORTED_SENSOR_KINDS` holds `"imu"` (BSK-4, #17) and `"magnetometer"` (BSK-5, #18); BSK-6 (#19) adds `"light_sensor"`; pacing,
-   magnetometer noise and non-zero commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22)
-   and BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   `SUPPORTED_SENSOR_KINDS` holds the P0 kinds `"imu"` (BSK-4, #17), `"magnetometer"`
+   (BSK-5, #18) and `"light_sensor"` (BSK-6, #19). Pacing, magnetometer noise and non-zero
+   commands stay UNIMPLEMENTED until BSK-7 (#20), BSK-9 (#22) and BSK-8 (#21), and
+   light-sensor noise until white noise is available. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -415,14 +419,28 @@ from the SPICE Sun planet state; plus the per-sensor links below.
   noise in the service, ConfigureRun rejects `noise_std_tesla > 0`.
 
 **Light sensor** (`coarseSunSensor.CoarseSunSensor`):
-- `fov`; `scaleFactor = g × 1361` so the output is W/m²; `senNoiseStd = σ / scaleFactor`
-  with `setAMatrix([0.0])`; `senBias = b / scaleFactor`; `maxOutput = saturation`;
-  `minOutput = 0`; `kellyFactor = 0`; `nHat_B = C_SB[2, :]` (never
-  `setUnitDirectionVectorWithPerturbation`).
+- `fov`; `scaleFactor = g × 1361` so the output is W/m²; `senNoiseStd = σ / scaleFactor`;
+  `senBias = b / scaleFactor`; `maxOutput = saturation`; `minOutput = 0`; `kellyFactor = 0`;
+  `nHat_B = C_SB[2, :]` (never `setUnitDirectionVectorWithPerturbation`); `r_B` from the
+  mount. The fault state stays at its default, `NOMINAL`.
 - `sunInMsg` from the SPICE Sun; `sunEclipseInMsg` from `eclipseOutMsgs[0]`; `albedoInMsg`
-  from `albedo.albOutMsgs[i]`, configured with `addInstrumentConfig(fov, nHat_B, r_B)` and
-  `addPlanetandAlbedoAverageModel(earth)`.
-- Subscribe a reader to `cssDataOutMsg` at build time (§6).
+  from `albedo.albOutMsgs[i]`. The scenario builds one `albedo.Albedo` in the dynamics task
+  after eclipse, only when light sensors are configured, with `spacecraftStateInMsg`,
+  `sunPositionInMsg` from the SPICE Sun, `addPlanetandAlbedoAverageModel(earth)`, and one
+  `addInstrumentConfig(fov, nHat_B, r_B)` per light sensor in configuration order, so
+  `albOutMsgs[i]` belongs to the i-th light sensor. Freshness is asserted on every
+  `albOutMsgs[i]`.
+- Subscribe a reader to `cssDataOutMsg` at build time (§6). The sensor measures on its first
+  firing, at t = 0.
+- With zero noise, `OutputData = scale (cos θ × shadow × (1 AU / d)² + albedoAtInstrument)`,
+  clipped to [0, saturation], where θ is the angle between the boresight and the Sun and d
+  the spacecraft–Sun distance. The output is irradiance at the real distance, not at 1 AU.
+- Noise is not available yet. In bsk 2.11.1, `setAMatrix` cannot be called from Python: its
+  SWIG binding takes an `Eigen::VectorXd` and has no typemap for it, so `[0.0]`,
+  `np.array([0.0])` and `[[0.0]]` all raise `TypeError`. The default A makes the noise a
+  random walk (lag-1 autocorrelation 0.997, spread growing far past σ), and `walkBounds`
+  only clips it. ConfigureRun therefore rejects `noise_std_w_per_m2 > 0` until white
+  light-sensor noise exists, upstream or in the service.
 
 ## 10. Seeds
 
@@ -439,7 +457,7 @@ with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the sh
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A non-zero command after Step(0); a sensor kind or magnetometer noise not built yet; `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A non-zero command after Step(0); magnetometer or light-sensor noise not built yet; `real_time_factor > 0` before ClockSynch |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 

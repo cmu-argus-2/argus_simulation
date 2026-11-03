@@ -20,7 +20,7 @@ import pytest
 
 pytest.importorskip("Basilisk")
 
-from Basilisk.architecture import messaging  # noqa: E402
+from Basilisk.architecture import astroConstants, messaging  # noqa: E402
 from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 
 from argus_basilisk import servicer as servicer_module  # noqa: E402
@@ -90,6 +90,11 @@ def imu_request():
     return request
 
 
+def light_sensor_request():
+    """The full P0 set: IMU, magnetometer and six light sensors (all noise-free light sensors)."""
+    return p0_default_request()
+
+
 def magnetometer_request():
     """The P0 default with its IMU and magnetometer; BSK-6 (#19) adds the light sensors."""
     request = p0_default_request()
@@ -142,11 +147,6 @@ def test_calls_need_a_configured_run(service):
 
 def test_configure_run_rejects_before_building(service):
     _, stub = service
-    # The light sensors are still UNIMPLEMENTED.
-    code, details = status_of(stub.ConfigureRun, p0_default_request())
-    assert code == grpc.StatusCode.UNIMPLEMENTED
-    assert "'light_sensor'" in details and "'magnetometer'" not in details and "'imu'" not in details
-
     unknown = configure_request()
     unknown.configuration.kernel_set_id = "no-such-set"
     code, details = status_of(stub.ConfigureRun, unknown)
@@ -540,3 +540,104 @@ assert not any("dataFetcher" in name for name in sys.modules), "dataFetcher was 
     environment = dict(os.environ, BSK_SUPPORT_DATA_CACHE=str(cache))
     subprocess.run([sys.executable, "-c", script], cwd=ROOT, env=environment, check=True)
     assert not cache.exists() or not any(path.is_file() for path in cache.rglob("*"))
+
+
+# --- Light sensors and albedo (BSK-6) ------------------------------------------------------
+
+AU_M = astroConstants.AU * 1000.0
+P0_LIGHT_SENSOR_IDS = ["light.px", "light.mx", "light.py", "light.my", "light.pz", "light.mz"]
+# P0 true anomaly that starts the orbit in full umbra at the P0 epoch (shadow 0 from about 60 to 180 deg).
+UMBRA_TRUE_ANOMALY_DEG = 120.0
+
+
+def light_samples(response):
+    return {sample.sensor_id: sample.light_sensor.irradiance_w_per_m2
+            for sample in response.sensor_samples if sample.HasField("light_sensor")}
+
+
+def expected_direct(response, boresight_body):
+    """1361 W/m2 x cos(theta) x shadow x (1 AU / d)^2 for a boresight in body axes, at this step."""
+    sun = np.array(xyz(response.sun.position_inertial_m)) - xyz(response.spacecraft.position_bn_inertial_m)
+    sigma = response.spacecraft.sigma_bn
+    sun_body = rbk.MRP2C(np.array([sigma.x, sigma.y, sigma.z])) @ sun
+    cos_theta = float(np.dot(boresight_body, sun_body / np.linalg.norm(sun_body)))
+    return 1361.0 * max(cos_theta, 0.0) * response.spacecraft_shadow_factor * (AU_M / np.linalg.norm(sun)) ** 2
+
+
+def test_light_sensor_noise_stays_unimplemented(service):
+    _, stub = service
+    request = light_sensor_request()
+    request.configuration.sensors[2].light_sensor.noise_std_w_per_m2 = 1.0
+    code, details = status_of(stub.ConfigureRun, request)
+    assert code == grpc.StatusCode.UNIMPLEMENTED
+    assert "noise_std_w_per_m2" in details
+
+
+@real_kernels
+def test_configure_run_accepts_the_full_p0_sensor_set(service):
+    _, stub = service
+    assert list(stub.ConfigureRun(light_sensor_request()).configured_sensor_ids) == [
+        "imu.main", "mag.main", *P0_LIGHT_SENSOR_IDS]
+
+
+@real_kernels
+def test_noise_free_light_sensors_read_the_sun_plus_albedo(service):
+    servicer, stub = service
+    stub.ConfigureRun(light_sensor_request())
+    boresights = {"light.px": [1, 0, 0], "light.mx": [-1, 0, 0], "light.py": [0, 1, 0],
+                  "light.my": [0, -1, 0], "light.pz": [0, 0, 1], "light.mz": [0, 0, -1]}
+    sunlit_faces = 0
+    for n in range(10):
+        response = stub.Step(step_request(n))
+        assert response.spacecraft_shadow_factor == 1.0
+        readings = light_samples(response)
+        assert sorted(readings) == sorted(P0_LIGHT_SENSOR_IDS)
+        for index, sensor_id in enumerate(P0_LIGHT_SENSOR_IDS):
+            albedo = servicer._run.scenario.readers[f"albedo.albOutMsgs[{index}]"]().albedoAtInstrument
+            direct = expected_direct(response, boresights[sensor_id])
+            assert readings[sensor_id] == pytest.approx(direct + 1361.0 * albedo, rel=1e-9, abs=1e-9)
+            sunlit_faces += direct > 0.0
+    assert sunlit_faces > 0
+
+
+@real_kernels
+def test_light_sensors_lose_the_direct_sun_in_umbra(service):
+    servicer, stub = service
+    request = light_sensor_request()
+    request.configuration.initial_orbit.true_anomaly_deg = UMBRA_TRUE_ANOMALY_DEG
+    stub.ConfigureRun(request)
+    response = stub.Step(step_request(0))
+    assert response.spacecraft_shadow_factor == 0.0
+    readings = light_samples(response)
+    for index, sensor_id in enumerate(P0_LIGHT_SENSOR_IDS):
+        albedo = servicer._run.scenario.readers[f"albedo.albOutMsgs[{index}]"]().albedoAtInstrument
+        assert readings[sensor_id] == pytest.approx(1361.0 * albedo, rel=1e-9, abs=1e-9)
+
+
+@real_kernels
+def test_stale_albedo_is_internal(service):
+    servicer, stub = service
+    stub.ConfigureRun(light_sensor_request())
+    never_written = messaging.AlbedoMsg()
+    reader = messaging.AlbedoMsgReader()
+    reader.subscribeTo(never_written)
+    servicer._run.scenario.readers["albedo.albOutMsgs[0]"] = reader
+    code, details = status_of(stub.Step, step_request(0))
+    assert code == grpc.StatusCode.INTERNAL
+    assert "albedo.albOutMsgs[0]" in details
+
+
+@real_kernels
+def test_full_p0_set_repeats_bit_for_bit_after_reset(service):
+    _, stub = service
+    stub.ConfigureRun(light_sensor_request())
+
+    def run():
+        return [stub.Step(step_request(n)) for n in range(100)]
+
+    first = run()
+    assert all(len(response.sensor_samples) == 8 for response in first[1:])
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    second = run()
+    assert [r.SerializeToString(deterministic=True) for r in first] == [
+        r.SerializeToString(deterministic=True) for r in second]
