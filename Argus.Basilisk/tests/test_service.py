@@ -809,8 +809,8 @@ def test_ceres_albedo_is_darker_over_open_ocean_and_brighter_over_clouds_than_th
 # --- Pacing (BSK-7) --------------------------------------------------------------------------
 
 
-# ClockSynch can release a tick a fraction of a millisecond before its target ("about", §5).
-PACING_TOLERANCE_S = 0.002
+# ClockSynch can release a tick up to its accuracy before its target ("about", §5).
+PACING_TOLERANCE_S = scenario_module.PACING_ACCURACY_NS / 1e9
 
 
 def paced_request(real_time_factor):

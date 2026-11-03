@@ -123,7 +123,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    Device checks walk `devices.KINDS`. A device problem names its path, for example
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
-   `real_time_factor > 0` is accepted and paced (§5, BSK-7 #20). The actuator kinds are registered (CON-2,
+   `real_time_factor > 0` is accepted and paced (§5, BSK-7 #20), as long as one paced step
+   lasts at most 3600 s of wall time. The actuator kinds are registered (CON-2,
    #34) but build nothing, so only idle commands run until BSK-8 (#21) applies the rest. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
@@ -206,8 +207,8 @@ TDB-TT error of up to about 3.3 ms, under 30 µs per day of run).
   own task `pacing` at `fixed_step_ns`, priority 1000, so it runs first at every t_n (§6).
   ClockSynch starts its wall clock at its first tick, in Step(0), so time spent between
   ConfigureRun and Step(0) is not counted, and then holds every tick to start + t_n / factor:
-  `Step(n)` returns no earlier than about that time (it can release a fraction of a
-  millisecond early). The schedule is absolute, so a client that falls behind catches up
+  `Step(n)` returns no earlier than about that time (it can release up to the 5 ms accuracy
+  early). The schedule is absolute, so a client that falls behind catches up
   without sleeping instead of shifting every later step. Reset builds a new ClockSynch,
   which re-arms the schedule and zeroes the count.
 - An overrun is a tick that starts more than `accuracyNanos` behind its target.
@@ -575,7 +576,7 @@ The draws are fixed by the `numpy` pin in `uv.lock`.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |

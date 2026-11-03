@@ -11,6 +11,7 @@ import pytest
 from argus_basilisk.contracts import service_pb
 from argus_basilisk.devices import KINDS
 from argus_basilisk.validation import (
+    MAXIMUM_PACED_STEP_SECONDS,
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
@@ -261,6 +262,7 @@ INVALID_CASES = [
      "configuration.kernel_set_id"),
     ("negative real_time_factor", lambda r: setattr(r, "real_time_factor", -1.0), "real_time_factor"),
     ("NaN real_time_factor", lambda r: setattr(r, "real_time_factor", math.nan), "real_time_factor"),
+    ("paced step over an hour", lambda r: setattr(r, "real_time_factor", 1e-6), "real_time_factor"),
     ("bad timestamp nanos", lambda r: setattr(r.configuration.epoch_utc, "nanos", 1_000_000_000),
      "configuration.epoch_utc.nanos"),
     # Required messages and oneofs.
@@ -428,10 +430,19 @@ def test_an_unknown_kind_skips_the_parameter_checks():
     assert problem.details.startswith("configuration.devices[1].kind")
 
 
-def test_pacing_is_valid():
-    request = p0_default_request()
-    request.real_time_factor = 1.0
+@pytest.mark.parametrize("real_time_factor", [1.0, 0.1 / MAXIMUM_PACED_STEP_SECONDS])
+def test_pacing_is_valid_up_to_an_hour_per_step(real_time_factor):
+    request = p0_default_request()  # 0.1 s steps.
+    request.real_time_factor = real_time_factor
     assert problems_of(request) == []
+
+
+def test_a_paced_step_over_an_hour_is_invalid():
+    request = p0_default_request()
+    request.real_time_factor = 0.1 / MAXIMUM_PACED_STEP_SECONDS * 0.999
+    problem = only_problem(request)
+    assert problem.code == "INVALID_ARGUMENT"
+    assert problem.details.startswith("real_time_factor: would pace each step to over 3600 s")
 
 
 def test_invalid_argument_outranks_out_of_range():
