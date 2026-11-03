@@ -82,7 +82,7 @@ namespace Argus.Simulation.Host
             // SimulationConfiguration.IsValid already requires whole steps for every sensor; Basilisk
             // also needs its own sensors' periods in exact nanoseconds. Argus-computed sensors schedule
             // themselves in SensorModel (CORE-18).
-            foreach (SensorConfiguration sensor in configuration.Sensors)
+            foreach (DeviceConfiguration sensor in configuration.Devices)
             {
                 if (sensor.IsBackendModelled &&
                     BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
@@ -106,7 +106,7 @@ namespace Argus.Simulation.Host
             Expect(response.RunId == configuration.RunId, "ConfigureRun", "run_id");
             Expect(response.KernelSetId == configuration.KernelSetId, "ConfigureRun", "kernel_set_id");
             Expect(response.FixedStepNs == (ulong)fixedStepNanoseconds, "ConfigureRun", "fixed_step_ns");
-            Expect(HasSensorsInOrder(response.ConfiguredSensorIds, configuration.Sensors), "ConfigureRun", "configured_sensor_ids");
+            Expect(HasSensorsInOrder(response.ConfiguredDeviceIds, configuration.Devices), "ConfigureRun", "configured_device_ids");
             Expect(response.SpiceEarthFrame == "ITRF93", "ConfigureRun", "spice_earth_frame");
             Expect(!string.IsNullOrWhiteSpace(response.BasiliskVersion), "ConfigureRun", "basilisk_version");
 
@@ -193,7 +193,7 @@ namespace Argus.Simulation.Host
                 _configuration.EpochUtc,
                 step,
                 environment);
-            SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Sensors);
+            SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Devices);
             SimulationState state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
@@ -255,10 +255,10 @@ namespace Argus.Simulation.Host
         // The service echoes every requested sensor in request order. The echo must be exactly the
         // configuration's backend-modelled sensors, in order; checking it against the configuration
         // rather than the request also catches a mapper that drops one (CORE-18).
-        internal static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<SensorConfiguration> sensors)
+        internal static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<DeviceConfiguration> sensors)
         {
             int next = 0;
-            foreach (SensorConfiguration sensor in sensors)
+            foreach (DeviceConfiguration sensor in sensors)
             {
                 if (!sensor.IsBackendModelled)
                 {

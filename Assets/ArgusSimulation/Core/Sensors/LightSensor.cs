@@ -3,8 +3,8 @@ namespace Argus.Simulation.Core
     // Publishes the Basilisk coarseSunSensor measurements that BasiliskEngine maps into each SimulationState.
     public sealed class LightSensor : BackendSensorModel<LightSensorMeasurement>
     {
-        public LightSensor(SensorConfiguration configuration)
-            : base(configuration, SensorKind.LightSensor)
+        public LightSensor(DeviceConfiguration configuration)
+            : base(configuration, LightSensorKind.Instance)
         {
         }
 

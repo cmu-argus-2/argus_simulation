@@ -1,5 +1,5 @@
-"""IMU, magnetometer and light-sensor modules and seeded magnetometer noise (README §9, §10)
-without SPICE; needs bsk==2.11.1 but no kernels."""
+"""The imu, magnetometer and light_sensor kinds: their declarations, modules, outputs and seeded
+noise (README §9, §10) without SPICE; needs bsk==2.11.1 but no kernels."""
 
 import math
 
@@ -15,25 +15,46 @@ from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
 from Basilisk.simulation import coarseSunSensor  # noqa: E402
 
-from argus_basilisk.seeds import ACCEL, CSS, GYRO, MAG, rng_seed  # noqa: E402
-from argus_basilisk.sensors import (  # noqa: E402
-    Imu, LightSensor, Magnetometer, SOLAR_IRRADIANCE_W_PER_M2, build_sensors, light_sensor_instrument,
-    sample_normals)
-from test_validation import p0_default_request, set_quaternion, set_vector  # noqa: E402
+from argus_basilisk.devices import KINDS, build_sensors, of_kind  # noqa: E402
+from argus_basilisk.devices.imu import Imu  # noqa: E402
+from argus_basilisk.devices.light_sensor import SOLAR_IRRADIANCE_W_PER_M2, LightSensor, instrument  # noqa: E402
+from argus_basilisk.devices.magnetometer import Magnetometer  # noqa: E402
+from argus_basilisk.seeds import ACCEL, CSS, GYRO, MAG, rng_seed, sample_normals  # noqa: E402
+from test_validation import p0_default_request, set_parameter, set_quaternion, set_vector  # noqa: E402
 
 STEP_NS = 100_000_000
 # A 90° turn about body z: sensor x is body y.
 QUARTER_TURN_Z = (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5))
 
 
+def xyz(value):
+    """A vector3 DeviceValue as a list."""
+    return [value.vector3.x, value.vector3.y, value.vector3.z]
+
+
 def imu_configuration():
     """The P0 default with only its IMU, mounted off the centre of mass and turned."""
     configuration = p0_default_request().configuration
-    del configuration.sensors[1:]
-    mount = configuration.sensors[0].definition.mount
+    del configuration.devices[1:]
+    mount = configuration.devices[0].mount
     set_vector(mount.position_body_m, (0.01, 0.02, 0.03))
-    set_quaternion(mount.sensor_to_body, QUARTER_TURN_Z)
+    set_quaternion(mount.device_to_body, QUARTER_TURN_Z)
     return configuration
+
+
+def test_each_kind_declares_typed_parameters_and_outputs():
+    types = {"number", "vector3", "quaternion", "matrix3", "flag", "text"}
+    for name, kind in KINDS.items():
+        assert kind.KIND == name
+        assert set(kind.PARAMETERS.values()) <= types and set(kind.OUTPUTS.values()) <= types
+    assert len(KINDS["imu"].PARAMETERS) == 14
+    assert all(key.split(".")[0] in ("gyroscope", "accelerometer") for key in KINDS["imu"].PARAMETERS)
+
+
+def test_every_p0_device_sets_exactly_its_kind_parameters():
+    for device in p0_default_request().configuration.devices:
+        kind = KINDS[device.kind]
+        assert {key: value.WhichOneof("value") for key, value in device.parameters.items()} == kind.PARAMETERS
 
 
 def make_hub():
@@ -63,29 +84,23 @@ def run_on_hub(configuration, steps):
     state = hub.scStateOutMsg.addSubscriber()
     sim.InitializeSimulation()
 
-    outputs = {imu.sensor_id: [] for imu in imus}
+    outputs = {imu.device_id: [] for imu in imus}
     outputs["truth"] = []
     for n in range(steps):
         sim.ConfigureStopTime(n * STEP_NS)
         sim.ExecuteSimulation()
         outputs["truth"].append(list(state().omega_BN_B))
         for imu in imus:
-            measurement = imu.measurement()
-            outputs[imu.sensor_id].append((
-                [measurement.angular_velocity_sensor_rad_per_s.x,
-                 measurement.angular_velocity_sensor_rad_per_s.y,
-                 measurement.angular_velocity_sensor_rad_per_s.z],
-                [measurement.specific_force_sensor_m_per_s2.x,
-                 measurement.specific_force_sensor_m_per_s2.y,
-                 measurement.specific_force_sensor_m_per_s2.z],
-            ))
-    return {sensor_id: np.array(rows) for sensor_id, rows in outputs.items()}
+            output = imu.output()
+            outputs[imu.device_id].append((
+                xyz(output["angular_velocity_sensor_rad_per_s"]), xyz(output["specific_force_sensor_m_per_s2"])))
+    return {device_id: np.array(rows) for device_id, rows in outputs.items()}
 
 
 def test_each_imu_is_a_gyroscope_module_and_an_accelerometer_module():
     configuration = imu_configuration()
     hub = make_hub()
-    imu = Imu(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg)
+    imu = Imu(configuration.devices[0], configuration.random_seed, hub.scStateOutMsg)
 
     assert [module.ModelTag for module in imu.modules] == ["imu[imu.main].gyro", "imu[imu.main].accel"]
     assert imu.gyroscope.RNGSeed == rng_seed(1, "imu.main", GYRO)
@@ -97,14 +112,14 @@ def test_each_imu_is_a_gyroscope_module_and_an_accelerometer_module():
     assert not imu.ready
 
 
-def test_profile_fields_map_as_sensors_proto_states():
+def test_parameters_map_as_readme_section_9_states():
     configuration = imu_configuration()
-    profile = configuration.sensors[0].imu
-    set_vector(profile.gyroscope.constant_bias_sensor_rad_per_s, (1e-4, 2e-4, 3e-4))
-    set_vector(profile.gyroscope.scale_factor_per_axis, (1.01, 1.0, 0.99))
-    set_vector(profile.accelerometer.constant_bias_sensor_m_per_s2, (1e-3, 0.0, -1e-3))
+    device = configuration.devices[0]
+    set_parameter(device, "gyroscope.constant_bias_sensor_rad_per_s", (1e-4, 2e-4, 3e-4))
+    set_parameter(device, "gyroscope.scale_factor_per_axis", (1.01, 1.0, 0.99))
+    set_parameter(device, "accelerometer.constant_bias_sensor_m_per_s2", (1e-3, 0.0, -1e-3))
     hub = make_hub()
-    imu = Imu(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg)
+    imu = Imu(configuration.devices[0], configuration.random_seed, hub.scStateOutMsg)
     gyroscope, accelerometer = imu.gyroscope, imu.accelerometer
     period_s = STEP_NS / 1e9
 
@@ -127,12 +142,12 @@ def test_profile_fields_map_as_sensors_proto_states():
 
 def test_bias_random_walk_uses_an_identity_a_matrix():
     configuration = imu_configuration()
-    gyroscope = configuration.sensors[0].imu.gyroscope
-    gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
-    gyroscope.bias_random_walk_rad_per_s_per_sqrt_s = 1e-5
-    gyroscope.bias_random_walk_bound_rad_per_s = 1e-3
+    device = configuration.devices[0]
+    set_parameter(device, "gyroscope.noise_density_rad_per_s_per_sqrt_hz", 0.0)
+    set_parameter(device, "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s", 1e-5)
+    set_parameter(device, "gyroscope.bias_random_walk_bound_rad_per_s", 1e-3)
     hub = make_hub()
-    imu = Imu(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg)
+    imu = Imu(configuration.devices[0], configuration.random_seed, hub.scStateOutMsg)
 
     assert np.allclose(imu.gyroscope.PMatrixGyro, 1e-5 * math.sqrt(STEP_NS / 1e9) * np.eye(3))
     assert np.allclose(imu.gyroscope.getAMatrixGyro(), np.eye(3))
@@ -141,12 +156,12 @@ def test_bias_random_walk_uses_an_identity_a_matrix():
 
 def test_noise_free_imu_reads_the_body_rate_in_sensor_axes():
     configuration = imu_configuration()
-    profile = configuration.sensors[0].imu
-    profile.gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
-    profile.gyroscope.resolution_rad_per_s = 0.0
-    profile.accelerometer.noise_density_m_per_s2_per_sqrt_hz = 0.0
-    profile.accelerometer.resolution_m_per_s2 = 0.0
-    set_vector(configuration.sensors[0].definition.mount.position_body_m, (0.0, 0.0, 0.0))
+    device = configuration.devices[0]
+    set_parameter(device, "gyroscope.noise_density_rad_per_s_per_sqrt_hz", 0.0)
+    set_parameter(device, "gyroscope.resolution_rad_per_s", 0.0)
+    set_parameter(device, "accelerometer.noise_density_m_per_s2_per_sqrt_hz", 0.0)
+    set_parameter(device, "accelerometer.resolution_m_per_s2", 0.0)
+    set_vector(device.mount.position_body_m, (0.0, 0.0, 0.0))
 
     run = run_on_hub(configuration, steps=6)
     measured, truth = run["imu.main"][1:], run["truth"][1:]
@@ -163,11 +178,11 @@ def test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity(
     """Port of accel_truth_test (dynamics/basilisk/experiments, PR #6): in Earth orbit with a
     constant body force, AccelPlatform is F / m in sensor axes, and gravity is not sensed."""
     configuration = imu_configuration()
-    profile = configuration.sensors[0].imu
-    profile.gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
-    profile.accelerometer.noise_density_m_per_s2_per_sqrt_hz = 0.0
-    profile.accelerometer.resolution_m_per_s2 = 0.0
-    set_vector(configuration.sensors[0].definition.mount.position_body_m, (0.0, 0.0, 0.0))
+    device = configuration.devices[0]
+    set_parameter(device, "gyroscope.noise_density_rad_per_s_per_sqrt_hz", 0.0)
+    set_parameter(device, "accelerometer.noise_density_m_per_s2_per_sqrt_hz", 0.0)
+    set_parameter(device, "accelerometer.resolution_m_per_s2", 0.0)
+    set_vector(device.mount.position_body_m, (0.0, 0.0, 0.0))
 
     hub = make_hub()
     hub.hub.omega_BN_BInit = [[0.0], [0.0], [0.0]]
@@ -184,7 +199,7 @@ def test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity(
     force = extForceTorque.ExtForceTorque()
     force.extForce_B = force_body_n.reshape(3, 1).tolist()
     hub.addDynamicEffector(force)
-    imu = Imu(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg)
+    imu = Imu(configuration.devices[0], configuration.random_seed, hub.scStateOutMsg)
 
     sim = SimulationBaseClass.SimBaseClass()
     process = sim.CreateNewProcess("dynamics")
@@ -201,8 +216,7 @@ def test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity(
     for n in range(6):
         sim.ConfigureStopTime(n * STEP_NS)
         sim.ExecuteSimulation()
-        value = imu.measurement().specific_force_sensor_m_per_s2
-        measured.append([value.x, value.y, value.z])
+        measured.append(xyz(imu.output()["specific_force_sensor_m_per_s2"]))
         velocities.append(list(state().v_BN_N))
 
     # Sensor axes through the quarter turn about z: (x, y, z)_sensor = (y, -x, z)_body.
@@ -217,7 +231,7 @@ def test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity(
 def test_first_firing_has_no_data_and_later_firings_do():
     configuration = imu_configuration()
     hub = make_hub()
-    imu = Imu(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg)
+    imu = Imu(configuration.devices[0], configuration.random_seed, hub.scStateOutMsg)
     sim = SimulationBaseClass.SimBaseClass()
     process = sim.CreateNewProcess("dynamics")
     process.addTask(sim.CreateNewTask("dynamics", STEP_NS), 200)
@@ -237,12 +251,12 @@ def test_first_firing_has_no_data_and_later_firings_do():
 
 def test_changing_one_seed_stream_changes_only_that_module():
     configuration = imu_configuration()
-    second = configuration.sensors.add()
-    second.CopyFrom(configuration.sensors[0])
-    second.definition.sensor_id = "imu.backup"
+    second = configuration.devices.add()
+    second.CopyFrom(configuration.devices[0])
+    second.device_id = "imu.backup"
     first_run = run_on_hub(configuration, steps=6)
 
-    configuration.sensors[1].definition.sensor_id = "imu.spare"
+    configuration.devices[1].device_id = "imu.spare"
     second_run = run_on_hub(configuration, steps=6)
 
     # imu.main keeps both its streams; the renamed IMU gets new ones.
@@ -253,15 +267,16 @@ def test_changing_one_seed_stream_changes_only_that_module():
 
 def test_gyroscope_and_accelerometer_noise_are_independent():
     configuration = imu_configuration()
-    profile = configuration.sensors[0].imu
-    profile.gyroscope.resolution_rad_per_s = 0.0
-    profile.accelerometer.resolution_m_per_s2 = 0.0
-    set_vector(configuration.sensors[0].definition.mount.position_body_m, (0.0, 0.0, 0.0))
-    profile.accelerometer.noise_density_m_per_s2_per_sqrt_hz = profile.gyroscope.noise_density_rad_per_s_per_sqrt_hz
+    device = configuration.devices[0]
+    set_parameter(device, "gyroscope.resolution_rad_per_s", 0.0)
+    set_parameter(device, "accelerometer.resolution_m_per_s2", 0.0)
+    set_vector(device.mount.position_body_m, (0.0, 0.0, 0.0))
+    set_parameter(device, "accelerometer.noise_density_m_per_s2_per_sqrt_hz",
+                  device.parameters["gyroscope.noise_density_rad_per_s_per_sqrt_hz"].number)
     noisy = run_on_hub(configuration, steps=6)["imu.main"][1:]
 
-    profile.gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
-    profile.accelerometer.noise_density_m_per_s2_per_sqrt_hz = 0.0
+    set_parameter(device, "gyroscope.noise_density_rad_per_s_per_sqrt_hz", 0.0)
+    set_parameter(device, "accelerometer.noise_density_m_per_s2_per_sqrt_hz", 0.0)
     clean = run_on_hub(configuration, steps=6)["imu.main"][1:]
 
     # With one RNGSeed for both channels the two error sequences would be identical.
@@ -274,13 +289,13 @@ def test_gyroscope_and_accelerometer_noise_are_independent():
 def magnetometer_configuration():
     """The P0 default with only its magnetometer, turned, biased, scaled and range-limited."""
     configuration = p0_default_request().configuration
-    del configuration.sensors[2:]
-    del configuration.sensors[0]
-    sensor = configuration.sensors[0]
-    set_quaternion(sensor.definition.mount.sensor_to_body, QUARTER_TURN_Z)
-    set_vector(sensor.magnetometer.constant_bias_sensor_tesla, (1e-6, -2e-6, 3e-6))
-    sensor.magnetometer.scale_factor = 1.1
-    sensor.magnetometer.range_tesla = 6e-5
+    del configuration.devices[2:]
+    del configuration.devices[0]
+    device = configuration.devices[0]
+    set_quaternion(device.mount.device_to_body, QUARTER_TURN_Z)
+    set_parameter(device, "constant_bias_sensor_tesla", (1e-6, -2e-6, 3e-6))
+    set_parameter(device, "scale_factor", 1.1)
+    set_parameter(device, "range_tesla", 6e-5)
     return configuration
 
 
@@ -289,7 +304,7 @@ MAGNETIC_FIELD_N_T = (2.0e-5, -3.5e-5, 2.5e-5)
 
 
 def run_magnetometers(configuration, steps):
-    """Each magnetometer's measurement per step, in a constant field on the tumbling hub."""
+    """Each magnetometer's output per step, in a constant field on the tumbling hub."""
     sim = SimulationBaseClass.SimBaseClass()
     process = sim.CreateNewProcess("dynamics")
     process.addTask(sim.CreateNewTask("dynamics", STEP_NS), 200)
@@ -304,27 +319,26 @@ def run_magnetometers(configuration, steps):
         sim.AddModelToTask("sensors", sensor.module)
     sim.InitializeSimulation()
 
-    outputs = {sensor.sensor_id: [] for sensor in magnetometers}
+    outputs = {sensor.device_id: [] for sensor in magnetometers}
     for n in range(steps):
         sim.ConfigureStopTime(n * STEP_NS)
         sim.ExecuteSimulation()
         for sensor in magnetometers:
-            reading = sensor.measurement().magnetic_field_sensor_tesla
-            outputs[sensor.sensor_id].append([reading.x, reading.y, reading.z])
-    return {sensor_id: np.array(rows) for sensor_id, rows in outputs.items()}
+            outputs[sensor.device_id].append(xyz(sensor.output()["magnetic_field_sensor_tesla"]))
+    return {device_id: np.array(rows) for device_id, rows in outputs.items()}
 
 
 def test_magnetometer_sets_every_error_term_explicitly():
     configuration = magnetometer_configuration()
     hub = make_hub()
     field = messaging.MagneticFieldMsg()
-    sensor = Magnetometer(configuration.sensors[0], configuration.random_seed, hub.scStateOutMsg, field)
+    sensor = Magnetometer(configuration.devices[0], configuration.random_seed, hub.scStateOutMsg, field)
     module = sensor.module
 
     assert module.ModelTag == "magnetometer[mag.main]"
     assert np.allclose(module.dcm_SB, rbk.EP2C(np.array([QUARTER_TURN_Z[3], *QUARTER_TURN_Z[:3]])), atol=1e-15)
     # Defaults are a random walk (A = I) and noise -1; both are overridden. The module never
-    # adds noise or clips: bsk 2.11.1 ignores its RNGSeed, so measurement() does both.
+    # adds noise or clips: bsk 2.11.1 ignores its RNGSeed, so output() does both.
     assert np.allclose(module.getAMatrix(), np.zeros((3, 3)))
     assert np.allclose(np.ravel(module.senNoiseStd), 0.0)
     assert np.allclose(np.ravel(module.walkBounds), 0.0)
@@ -338,12 +352,12 @@ def test_magnetometer_sets_every_error_term_explicitly():
 def test_magnetometer_noise_is_scaled_then_clipped():
     """tam_S = clip(scale (B_S + noise + bias), +-range), with noise sigma z_k from the mag stream."""
     configuration = magnetometer_configuration()
-    profile = configuration.sensors[0].magnetometer
-    profile.range_tesla = 1.0
+    device = configuration.devices[0]
+    set_parameter(device, "range_tesla", 1.0)
     unclipped = run_magnetometers(configuration, steps=20)["mag.main"]
 
-    profile.noise_std_tesla = 1e-6
-    profile.range_tesla = 3e-5
+    set_parameter(device, "noise_std_tesla", 1e-6)
+    set_parameter(device, "range_tesla", 3e-5)
     noisy = run_magnetometers(configuration, steps=20)["mag.main"]
 
     seed = rng_seed(configuration.random_seed, "mag.main", MAG)
@@ -356,11 +370,11 @@ def test_magnetometer_noise_is_scaled_then_clipped():
 
 def test_magnetometer_noise_is_white_with_the_configured_sigma():
     configuration = magnetometer_configuration()
-    profile = configuration.sensors[0].magnetometer
-    profile.scale_factor = 1.0
-    profile.range_tesla = 1.0
+    device = configuration.devices[0]
+    set_parameter(device, "scale_factor", 1.0)
+    set_parameter(device, "range_tesla", 1.0)
     clean = run_magnetometers(configuration, steps=400)["mag.main"]
-    profile.noise_std_tesla = 1e-7
+    set_parameter(device, "noise_std_tesla", 1e-7)
     error = run_magnetometers(configuration, steps=400)["mag.main"] - clean
 
     assert np.allclose(error.std(axis=0), 1e-7, rtol=0.15)
@@ -372,14 +386,14 @@ def test_magnetometer_noise_is_white_with_the_configured_sigma():
 
 def test_changing_one_magnetometer_seed_changes_only_its_noise():
     configuration = magnetometer_configuration()
-    configuration.sensors[0].magnetometer.noise_std_tesla = 1e-7
-    configuration.sensors[0].magnetometer.range_tesla = 1.0
-    second = configuration.sensors.add()
-    second.CopyFrom(configuration.sensors[0])
-    second.definition.sensor_id = "mag.backup"
+    set_parameter(configuration.devices[0], "noise_std_tesla", 1e-7)
+    set_parameter(configuration.devices[0], "range_tesla", 1.0)
+    second = configuration.devices.add()
+    second.CopyFrom(configuration.devices[0])
+    second.device_id = "mag.backup"
     first_run = run_magnetometers(configuration, steps=10)
 
-    configuration.sensors[1].definition.sensor_id = "mag.spare"
+    configuration.devices[1].device_id = "mag.spare"
     second_run = run_magnetometers(configuration, steps=10)
 
     # bsk's own generator would give every magnetometer the same stream.
@@ -416,7 +430,7 @@ AU_M = astroConstants.AU * 1000.0
 
 
 def light_sensors(configuration):
-    return [sensor for sensor in configuration.sensors if sensor.WhichOneof("profile") == "light_sensor"]
+    return of_kind(configuration.devices, "light_sensor")
 
 
 def environment_messages(sun_direction, shadow_factor, albedo_ratio):
@@ -435,21 +449,20 @@ def environment_messages(sun_direction, shadow_factor, albedo_ratio):
 def test_each_p0_light_sensor_looks_out_of_its_face():
     """The boresight is sensor +z, so nHat_B is the face normal named by the sensor ID."""
     normals = {"px": [1, 0, 0], "mx": [-1, 0, 0], "py": [0, 1, 0], "my": [0, -1, 0], "pz": [0, 0, 1], "mz": [0, 0, -1]}
-    for sensor in light_sensors(p0_default_request().configuration):
-        field_of_view, boresight, position = light_sensor_instrument(sensor)
-        face = sensor.definition.sensor_id.split(".")[1]
-        assert np.allclose(boresight, normals[face], atol=1e-15), sensor.definition.sensor_id
-        assert field_of_view == sensor.light_sensor.field_of_view_half_angle_rad
-        assert np.allclose(position, [getattr(sensor.definition.mount.position_body_m, a) for a in "xyz"])
+    for device in light_sensors(p0_default_request().configuration):
+        field_of_view, boresight, position = instrument(device)
+        face = device.device_id.split(".")[1]
+        assert np.allclose(boresight, normals[face], atol=1e-15), device.device_id
+        assert field_of_view == device.parameters["field_of_view_half_angle_rad"].number
+        assert np.allclose(position, [getattr(device.mount.position_body_m, a) for a in "xyz"])
 
 
-def test_light_sensor_maps_the_profile_into_the_module():
+def test_light_sensor_maps_the_parameters_into_the_module():
     configuration = p0_default_request().configuration
     sensor = light_sensors(configuration)[0]
-    profile = sensor.light_sensor
-    profile.scale_factor = 0.9
-    profile.noise_std_w_per_m2 = 2.0
-    profile.bias_w_per_m2 = 3.0
+    set_parameter(sensor, "scale_factor", 0.9)
+    set_parameter(sensor, "noise_std_w_per_m2", 2.0)
+    set_parameter(sensor, "bias_w_per_m2", 3.0)
     hub = make_hub()
     sun, eclipse, albedo = environment_messages([1, 0, 0], 1.0, 0.0)
     light = LightSensor(sensor, configuration.random_seed, hub.scStateOutMsg, sun, eclipse, albedo)
@@ -460,10 +473,10 @@ def test_light_sensor_maps_the_profile_into_the_module():
     assert light.rng_seed == rng_seed(configuration.random_seed, "light.px", CSS)
     assert module.scaleFactor == scale
     # The module never adds noise or clips: bsk 2.11.1's noise would be a random walk, so
-    # measurement() does both.
+    # output() does both.
     assert module.senNoiseStd == 0.0
     assert module.senBias == 3.0 / scale
-    assert module.fov == profile.field_of_view_half_angle_rad
+    assert module.fov == sensor.parameters["field_of_view_half_angle_rad"].number
     assert (module.minOutput, module.maxOutput) == (-math.inf, math.inf)
     assert module.kellyFactor == 0.0
     assert module.faultState == coarseSunSensor.NOMINAL
@@ -472,7 +485,7 @@ def test_light_sensor_maps_the_profile_into_the_module():
 
 def test_light_sensor_needs_the_sun_eclipse_and_albedo():
     configuration = p0_default_request().configuration
-    del configuration.sensors[:2]
+    del configuration.devices[:2]
     with pytest.raises(ValueError, match="Sun, eclipse and albedo"):
         build_sensors(configuration, make_hub().scStateOutMsg)
 
@@ -482,8 +495,8 @@ def test_noise_free_light_sensor_reads_direct_sun_plus_albedo(shadow_factor):
     """OutputData = scale (cos(theta) shadow (1 AU / d)^2 + albedo); the Sun here is exactly 1 AU away."""
     configuration = p0_default_request().configuration
     sensor = light_sensors(configuration)[0]  # light.px: boresight body +x
-    sensor.light_sensor.noise_std_w_per_m2 = 0.0
-    sensor.light_sensor.saturation_w_per_m2 = 1e6
+    set_parameter(sensor, "noise_std_w_per_m2", 0.0)
+    set_parameter(sensor, "saturation_w_per_m2", 1e6)
     hub = make_hub()
     hub.hub.omega_BN_BInit = [[0.0], [0.0], [0.0]]
     hub.hub.r_CN_NInit = [[0.0], [0.0], [0.0]]
@@ -501,7 +514,7 @@ def test_noise_free_light_sensor_reads_direct_sun_plus_albedo(shadow_factor):
     sim.ExecuteSimulation()
 
     expected = SOLAR_IRRADIANCE_W_PER_M2 * (math.cos(theta) * shadow_factor + 0.05)
-    assert light.measurement().irradiance_w_per_m2 == pytest.approx(expected, rel=1e-9)
+    assert light.output()["irradiance_w_per_m2"].number == pytest.approx(expected, rel=1e-9)
 
 
 def run_light_sensors(sensors, steps, sun_direction=(0.6, 0.8, 0.0), shadow_factor=1.0, albedo_ratio=0.05):
@@ -521,24 +534,24 @@ def run_light_sensors(sensors, steps, sun_direction=(0.6, 0.8, 0.0), shadow_fact
         sim.AddModelToTask("sensors", light.module)
     sim.InitializeSimulation()
 
-    outputs = {light.sensor_id: [] for light in lights}
+    outputs = {light.device_id: [] for light in lights}
     for n in range(steps):
         sim.ConfigureStopTime(n * STEP_NS)
         sim.ExecuteSimulation()
         for light in lights:
-            outputs[light.sensor_id].append(light.measurement().irradiance_w_per_m2)
-    return {sensor_id: np.array(values) for sensor_id, values in outputs.items()}
+            outputs[light.device_id].append(light.output()["irradiance_w_per_m2"].number)
+    return {device_id: np.array(values) for device_id, values in outputs.items()}
 
 
 def test_light_sensor_noise_is_white_with_the_configured_sigma():
     """10,000 samples of a fixed geometry: the noise bsk 2.11.1 would make a random walk is white."""
     sensor = light_sensors(p0_default_request().configuration)[0]
-    sensor.light_sensor.noise_std_w_per_m2 = 0.0
+    set_parameter(sensor, "noise_std_w_per_m2", 0.0)
     clean = run_light_sensors([sensor], steps=10_000)["light.px"]
-    sensor.light_sensor.noise_std_w_per_m2 = 2.0
+    set_parameter(sensor, "noise_std_w_per_m2", 2.0)
     error = run_light_sensors([sensor], steps=10_000)["light.px"] - clean
 
-    assert np.ptp(clean) == 0.0 and 0.0 < clean[0] < sensor.light_sensor.saturation_w_per_m2
+    assert np.ptp(clean) == 0.0 and 0.0 < clean[0] < sensor.parameters["saturation_w_per_m2"].number
     assert abs(error.mean()) < 3 * 2.0 / math.sqrt(error.size)
     assert error.std() == pytest.approx(2.0, rel=0.02)
     assert abs(np.corrcoef(error[:-1], error[1:])[0, 1]) < 0.05
@@ -546,20 +559,19 @@ def test_light_sensor_noise_is_white_with_the_configured_sigma():
 
 def test_light_sensor_noise_is_added_then_clipped_to_zero_and_saturation():
     sensor = light_sensors(p0_default_request().configuration)[0]
-    profile = sensor.light_sensor
-    profile.noise_std_w_per_m2 = 0.0
-    profile.saturation_w_per_m2 = 1e6
+    set_parameter(sensor, "noise_std_w_per_m2", 0.0)
+    set_parameter(sensor, "saturation_w_per_m2", 1e6)
     unlit = run_light_sensors([sensor], steps=50, shadow_factor=0.0, albedo_ratio=0.0)["light.px"]
     lit = run_light_sensors([sensor], steps=50)["light.px"]
     assert np.all(unlit == 0.0)
 
-    profile.noise_std_w_per_m2 = 5.0
+    set_parameter(sensor, "noise_std_w_per_m2", 5.0)
     noise = 5.0 * np.array([sample_normals(rng_seed(1, "light.px", CSS), CSS, k, size=1)[0] for k in range(50)])
     noisy_unlit = run_light_sensors([sensor], steps=50, shadow_factor=0.0, albedo_ratio=0.0)["light.px"]
     assert np.array_equal(noisy_unlit, np.maximum(noise, 0.0))
     assert np.any(noisy_unlit == 0.0) and np.any(noisy_unlit > 0.0)
 
-    profile.saturation_w_per_m2 = lit[0]
+    set_parameter(sensor, "saturation_w_per_m2", float(lit[0]))
     noisy_lit = run_light_sensors([sensor], steps=50)["light.px"]
     assert np.array_equal(noisy_lit, np.minimum(lit + noise, lit[0]))
     assert np.any(noisy_lit == lit[0]) and np.any(noisy_lit < lit[0])
@@ -568,15 +580,15 @@ def test_light_sensor_noise_is_added_then_clipped_to_zero_and_saturation():
 def test_changing_one_light_sensor_seed_changes_only_its_noise():
     sensors = light_sensors(p0_default_request().configuration)[:2]
     for sensor in sensors:
-        sensor.light_sensor.noise_std_w_per_m2 = 2.0
-        sensor.light_sensor.saturation_w_per_m2 = 1e6
+        set_parameter(sensor, "noise_std_w_per_m2", 2.0)
+        set_parameter(sensor, "saturation_w_per_m2", 1e6)
     first_run = run_light_sensors(sensors, steps=20)
 
-    renamed = sensors[1].definition.sensor_id + ".spare"
-    sensors[1].definition.sensor_id = renamed
+    renamed = sensors[1].device_id + ".spare"
+    sensors[1].device_id = renamed
     second_run = run_light_sensors(sensors, steps=20)
 
-    first_id = sensors[0].definition.sensor_id
+    first_id = sensors[0].device_id
     assert np.array_equal(first_run[first_id], second_run[first_id])
     (other_id,) = set(first_run) - {first_id}
     assert not np.array_equal(first_run[other_id] - first_run[other_id].mean(),

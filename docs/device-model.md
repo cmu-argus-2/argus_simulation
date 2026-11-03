@@ -1,8 +1,10 @@
 # Device model (D11)
 
-**Status:** design (CON-5, #110). Built by CORE-19 (#111), the sensors; CORE-20 (#112), the
-commands; and HOST-9 (#113), the profile files. Actuator kinds follow in CON-2 (#34) and BSK-8
-(#21).
+**Status:** design (CON-5, #110). The sensors are built (CORE-19, #111): §1 to §5 and §7 are
+in `Core/Contracts`, the kinds in `Core/Sensors`, `argus.sim.v1/devices.proto` and
+`argus_basilisk/devices/`. Still to build: the commands (CORE-20, #112) and the profile files
+(HOST-9, #113; until then the devices live in the run file's `devices`). Actuator kinds follow in
+CON-2 (#34) and BSK-8 (#21).
 
 A spacecraft is a body plus a list of configured devices ([target-architecture.md](target-architecture.md)
 D11). Every sensor and actuator is a device: an instance of a generic kind, registered by name. A
@@ -145,7 +147,7 @@ itself:
   "epochUtc": "2025-01-15T00:00:00Z",
   "fixedStepSeconds": 0.1,
   "randomSeed": 1,
-  "kernelSetId": "argus-2026-10-20",
+  "kernelSetId": "argus-2026-11-02",
   "initialOrbit": { "semiMajorAxisMeters": 6878137.0, "...": "..." },
   "initialAttitude": {
     "bodyToJ2000": { "x": 0, "y": 0, "z": 0, "w": 1 },
@@ -192,12 +194,15 @@ message RunConfiguration {
 }
 ```
 
-- `SensorDefinition`, `SensorMount`, `SensorConfiguration` and the per-kind profile messages are
-  removed.
+- `SensorDefinition`, `SensorMount`, `SensorConfiguration`, the per-kind profile messages and
+  `sensors.proto` are removed. `DeviceValue`, `DeviceMount` and `DeviceConfiguration` are in
+  `argus/sim/v1/devices.proto`.
 - `BasiliskSensorSample` becomes `BasiliskDeviceSample`: `device_id`, `sample_time_ns`, and
   `map<string, DeviceValue> output`. An empty map means the sensor ran without data (imuSensor's
   first update) and maps to Unavailable. The per-kind measurement messages are removed.
-- `ConfigureRunResponse.configured_sensor_ids` becomes `configured_device_ids`.
+- `ConfigureRunResponse.configured_sensor_ids` (field 4) becomes `configured_device_ids` (field 7),
+  and `StepResponse.sensor_samples` (field 8) becomes `device_samples` (field 10). The old fields
+  are reserved.
 - Per-step actuator state arrives as `repeated BasiliskDeviceState device_states` on
   `StepResponse` (`device_id`, `map<string, DeviceValue> state`). It is added with the first
   actuator (BSK-8).
@@ -238,14 +243,20 @@ message DeviceCommandSet {
 
 ## 7. Registry
 
-- **Core:** each kind is one class implementing `IDeviceKind`. The class holds the kind's name,
-  role, modeller, declarations and validation. A sensor kind builds its `SensorModel`; an actuator
-  kind gives its idle values and its limit checks. `DeviceKinds` lists every registration in one
-  file. It replaces the `SensorKind` switches in `SensorFactory`, `SensorConfiguration` (including
-  `IsBackendModelled`), the run-file parser and `BasiliskProtoMapper`.
+- **Core:** each kind is one class implementing `IDeviceKind` (`Core/Contracts/IDeviceKind.cs`).
+  The class holds the kind's name, role, modeller, declarations and validation. A sensor kind
+  builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`) also reads its output map
+  into its measurement type. An actuator kind gives its idle values and its limit checks.
+  `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
+  them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
+  `CameraKind` only list their keys and map them. `DeviceKinds` lists every registration in one
+  file. It replaced the `SensorKind` switches in `SensorFactory`, `SensorConfiguration`, the
+  run-file parser, the recorder, `BasiliskProtoMapper` and `BasiliskStateMapper`.
 - **Service:** each Basilisk-modelled kind is one module, `argus_basilisk/devices/<kind>.py`, with
-  its declarations, validation and builder. `argus_basilisk/devices/__init__.py` registers them by
-  name. `validation.py` and the scenario builder walk the registry instead of switching on kinds.
+  `KIND`, `PARAMETERS` and `OUTPUTS` (key to type), `check` (its range rules) and `build` (its
+  Basilisk modules and `output()`). `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
+  `validation.py` and the scenario walk `KINDS` instead of switching on kinds. Kind modules import
+  numpy and Basilisk only inside `build`, so validation runs without Basilisk.
 - **Adding a kind** means writing its Core class, its service module if Basilisk models it, one
   registration on each side, and its tests. No proto, gateway, recorder or file-format change.
 

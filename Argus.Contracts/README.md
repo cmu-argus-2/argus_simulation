@@ -12,7 +12,7 @@ proto/argus/
 ├── sim/v1/                     # Shared Argus messages (package argus.sim.v1)
 │   ├── types.proto             # Vector3, Quaternion, Matrix3
 │   ├── commands.proto          # ActuatorCommand
-│   ├── sensors.proto           # Sensor definitions, P0 profiles and measurements
+│   ├── devices.proto           # DeviceValue, DeviceMount, DeviceConfiguration (D11)
 │   └── run_configuration.proto # RunConfiguration (G5)
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
@@ -49,8 +49,9 @@ types directly.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the
-  one exception is `BasiliskSensorSample.measurement`, whose unset value means the sensor
-  ran without data (reported Unavailable). For scalars zero is a value; range checks reject
+  one exception is `BasiliskDeviceSample.output`, whose empty map means the sensor ran
+  without data (reported Unavailable). A `DeviceValue` map holds exactly the keys its kind
+  declares (`docs/device-model.md` §3), so a new kind adds no message. For scalars zero is a value; range checks reject
   meaningless zeros. A scalar whose zero would be a plausible wrong value is declared
   `optional` (for example `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).
 - Every field states its frame, unit and time scale, in its name and its comment.

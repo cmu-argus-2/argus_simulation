@@ -127,15 +127,15 @@ namespace Argus.Simulation.Core
         }
 
         // Every backend-modelled sensor must report exactly on the steps its sample period divides, at
-        // the step time, with the payload type of its kind. Sensors Argus computes never reach the
+        // the step time, with exactly its kind's output keys. Devices Argus computes never reach the
         // backend (D10), so a sample naming one is a sample for an unknown sensor.
         public static SensorMeasurementSet MapMeasurements(
             BasiliskStepState step,
-            IReadOnlyList<SensorConfiguration> sensors)
+            IReadOnlyList<DeviceConfiguration> sensors)
         {
-            Dictionary<string, SensorConfiguration> sensorsById =
-                new Dictionary<string, SensorConfiguration>(StringComparer.Ordinal);
-            foreach (SensorConfiguration sensor in sensors)
+            Dictionary<string, DeviceConfiguration> sensorsById =
+                new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
+            foreach (DeviceConfiguration sensor in sensors)
             {
                 if (sensor.IsBackendModelled)
                 {
@@ -148,7 +148,7 @@ namespace Argus.Simulation.Core
             HashSet<string> sampledSensorIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (BasiliskSensorSample sample in step.SensorSamples)
             {
-                if (sample.SensorId == null || !sensorsById.TryGetValue(sample.SensorId, out SensorConfiguration sensor))
+                if (sample.SensorId == null || !sensorsById.TryGetValue(sample.SensorId, out DeviceConfiguration sensor))
                 {
                     throw new ArgumentException($"Unknown sensor '{sample.SensorId}'.", nameof(step));
                 }
@@ -166,23 +166,28 @@ namespace Argus.Simulation.Core
                         nameof(step));
                 }
 
-                if (sample.Measurement == null)
+                if (sample.Output.Count == 0)
                 {
                     unavailableSensorIds.Add(sample.SensorId);
                     continue;
                 }
 
-                if (!IsPayloadOfKind(sample.Measurement, sensor.Kind))
+                object measurement;
+                try
+                {
+                    measurement = ((IBackendSensorKind)sensor.KindDefinition).ReadOutput(sample.Output);
+                }
+                catch (ArgumentException exception)
                 {
                     throw new ArgumentException(
-                        $"Sensor '{sample.SensorId}' is a {sensor.Kind} but reported a {sample.Measurement.GetType().Name}.",
+                        $"Sensor '{sample.SensorId}' ({sensor.Kind}) reported an invalid output: {exception.Message}",
                         nameof(step));
                 }
 
-                measurements.Add(sample.SensorId, sample.Measurement);
+                measurements.Add(sample.SensorId, measurement);
             }
 
-            foreach (SensorConfiguration sensor in sensors)
+            foreach (DeviceConfiguration sensor in sensors)
             {
                 if (!sensor.IsBackendModelled)
                 {
@@ -220,13 +225,5 @@ namespace Argus.Simulation.Core
 
             return true;
         }
-
-        private static bool IsPayloadOfKind(object measurement, SensorKind kind) => kind switch
-        {
-            SensorKind.Imu => measurement is ImuMeasurement,
-            SensorKind.Magnetometer => measurement is MagnetometerMeasurement,
-            SensorKind.LightSensor => measurement is LightSensorMeasurement,
-            _ => false
-        };
     }
 }

@@ -24,11 +24,11 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(Request(loaded), Is.EqualTo(Request(expected)));
 
             // SensorDefinition fields that stay in Argus and never reach the wire.
-            Assert.That(loaded.Sensors.Count, Is.EqualTo(expected.Sensors.Count));
-            for (int i = 0; i < expected.Sensors.Count; i++)
+            Assert.That(loaded.Devices.Count, Is.EqualTo(expected.Devices.Count));
+            for (int i = 0; i < expected.Devices.Count; i++)
             {
-                SensorDefinition want = expected.Sensors[i].Definition;
-                SensorDefinition got = loaded.Sensors[i].Definition;
+                SensorDefinition want = expected.Devices[i].Definition;
+                SensorDefinition got = loaded.Devices[i].Definition;
                 Assert.That(got.ModelName, Is.EqualTo(want.ModelName));
                 Assert.That(got.FrameId, Is.EqualTo(want.FrameId));
                 Assert.That(got.Source, Is.EqualTo(want.Source));
@@ -49,63 +49,68 @@ namespace Argus.Simulation.Host.Tests
 
         [TestCase(0)]
         [TestCase(1)]
-        public void FileWithASubsetOfTheSensorsLoads(int sensorCount)
+        public void FileWithASubsetOfTheDevicesLoads(int deviceCount)
         {
             JsonObject root = P0();
-            JsonArray sensors = root["sensors"].AsArray();
-            while (sensors.Count > sensorCount)
+            JsonArray devices = root["devices"].AsArray();
+            while (devices.Count > deviceCount)
             {
-                sensors.RemoveAt(sensors.Count - 1);
+                devices.RemoveAt(devices.Count - 1);
             }
 
             SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
 
             Assert.That(configuration.IsValid, Is.True);
-            Assert.That(configuration.Sensors.Count, Is.EqualTo(sensorCount));
-            Assert.That(Request(configuration).Configuration.Sensors.Count, Is.EqualTo(sensorCount));
+            Assert.That(configuration.Devices.Count, Is.EqualTo(deviceCount));
+            Assert.That(Request(configuration).Configuration.Devices.Count, Is.EqualTo(deviceCount));
         }
 
         // A camera is computed by Argus: it loads from the file, but ConfigureRun carries the same
-        // backend-modelled sensors as without it, so validation.py never sees it (CORE-18).
+        // backend-modelled devices as without it, so validation.py never sees it (CORE-18).
         [Test]
         public void ArgusComputedCameraLoadsButIsNotSentToBasilisk()
         {
             JsonObject root = P0();
-            root["sensors"].AsArray().Insert(1, CameraNode("cam.px"));
+            root["devices"].AsArray().Insert(1, CameraNode("cam.px"));
 
             SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
             SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
 
             Assert.That(withCamera.IsValid, Is.True);
-            Assert.That(withCamera.Sensors.Count, Is.EqualTo(p0.Sensors.Count + 1));
-            SensorConfiguration camera = withCamera.Sensors[1];
-            Assert.That(camera.Kind, Is.EqualTo(SensorKind.Camera));
+            Assert.That(withCamera.Devices.Count, Is.EqualTo(p0.Devices.Count + 1));
+            DeviceConfiguration camera = withCamera.Devices[1];
+            Assert.That(camera.Kind, Is.EqualTo("camera"));
             Assert.That(camera.IsBackendModelled, Is.False);
             Assert.That(camera.Definition.SensorId, Is.EqualTo("cam.px"));
-            Assert.That(camera.CameraProfile.Intrinsics.WidthPixels, Is.EqualTo(4608));
-            Assert.That(camera.CameraProfile.Intrinsics.HeightPixels, Is.EqualTo(2592));
-            Assert.That(camera.CameraProfile.Intrinsics.FocalLengthXPixels, Is.EqualTo(3548.0));
-            Assert.That(camera.CameraProfile.Intrinsics.PrincipalPointYPixels, Is.EqualTo(1296.0));
-            Assert.That(camera.CameraProfile.ExposureDurationSeconds, Is.EqualTo(0.0005));
+            CameraProfile profile = CameraKind.Instance.Profile(camera);
+            Assert.That(profile.Intrinsics.WidthPixels, Is.EqualTo(4608));
+            Assert.That(profile.Intrinsics.HeightPixels, Is.EqualTo(2592));
+            Assert.That(profile.Intrinsics.FocalLengthXPixels, Is.EqualTo(3548.0));
+            Assert.That(profile.Intrinsics.PrincipalPointYPixels, Is.EqualTo(1296.0));
+            Assert.That(profile.ExposureDurationSeconds, Is.EqualTo(0.0005));
             Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
         }
 
         [TestCase("missing field", "initialOrbit.eccentricity: is required")]
         [TestCase("unknown field", "spacecraft.massKg: is not a known field")]
         [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
-        [TestCase("invalid profile", "sensors[0].imu.gyroscope: is not a valid gyroscope profile")]
-        [TestCase("duplicate sensor ID", "sensors[1].sensorId: duplicates another sensor's ID")]
-        [TestCase("two profiles", "sensors[2]: needs exactly one of imu, magnetometer, lightSensor, camera")]
-        [TestCase("wrong type", "sensors[0].mount.positionBodyMeters: must be an array of 3 numbers")]
+        [TestCase("invalid profile", "devices[0].parameters: is not a valid imu profile (see ImuProfile.IsValid)")]
+        [TestCase("duplicate device ID", "devices[1].deviceId: duplicates another device's ID")]
+        [TestCase("unknown kind", "devices[2].kind: 'sun_sensor' is not a registered device kind")]
+        [TestCase("unknown parameter", "devices[1].parameters.gain: is not a magnetometer parameter")]
+        [TestCase("missing parameter", "devices[1].parameters[\"range_tesla\"]: is required")]
+        [TestCase("wrong parameter type", "devices[2].parameters.scale_factor: must be a finite number")]
+        [TestCase("wrong type", "devices[0].mount.positionBodyMeters: must be an array of 3 numbers")]
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
-        [TestCase("invalid camera intrinsics", "sensors[8].camera.intrinsics: needs")]
-        [TestCase("period off the step grid", "sensors[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
-        [TestCase("controller-visible camera", "sensors[8].controllerVisible: must be false")]
+        [TestCase("invalid camera intrinsics", "devices[8].parameters: is not a valid camera profile")]
+        [TestCase("fractional pixel count", "devices[8].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
+        [TestCase("period off the step grid", "devices[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
+        [TestCase("controller-visible camera", "devices[8].controllerVisible: must be false")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
-            JsonArray sensors = root["sensors"].AsArray();
+            JsonArray devices = root["devices"].AsArray();
             switch (change)
             {
                 case "missing field":
@@ -118,16 +123,25 @@ namespace Argus.Simulation.Host.Tests
                     root["initialOrbit"]["eccentricity"] = 1.5;
                     break;
                 case "invalid profile":
-                    root["sensors"][0]["imu"]["gyroscope"]["rangeRadiansPerSecond"] = -1.0;
+                    devices[0]["parameters"]["gyroscope"]["range_rad_per_s"] = -1.0;
                     break;
-                case "duplicate sensor ID":
-                    sensors[1]["sensorId"] = "imu.main";
+                case "duplicate device ID":
+                    devices[1]["deviceId"] = "imu.main";
                     break;
-                case "two profiles":
-                    sensors[2]["magnetometer"] = sensors[1]["magnetometer"].DeepClone();
+                case "unknown kind":
+                    devices[2]["kind"] = "sun_sensor";
+                    break;
+                case "unknown parameter":
+                    devices[1]["parameters"]["gain"] = 2.0;
+                    break;
+                case "missing parameter":
+                    devices[1]["parameters"].AsObject().Remove("range_tesla");
+                    break;
+                case "wrong parameter type":
+                    devices[2]["parameters"]["scale_factor"] = "1";
                     break;
                 case "wrong type":
-                    sensors[0]["mount"]["positionBodyMeters"] = "0, 0, 0";
+                    devices[0]["mount"]["positionBodyMeters"] = "0, 0, 0";
                     break;
                 case "epoch without zone":
                     root["epochUtc"] = "2025-01-15T00:00:00";
@@ -137,18 +151,23 @@ namespace Argus.Simulation.Host.Tests
                     break;
                 case "invalid camera intrinsics":
                     JsonObject camera = CameraNode("cam.px");
-                    camera["camera"]["intrinsics"]["widthPixels"] = 0;
-                    sensors.Add(camera);
+                    camera["parameters"]["intrinsics"]["width_px"] = 0;
+                    devices.Add(camera);
+                    break;
+                case "fractional pixel count":
+                    JsonObject fractional = CameraNode("cam.px");
+                    fractional["parameters"]["intrinsics"]["width_px"] = 4608.5;
+                    devices.Add(fractional);
                     break;
                 case "period off the step grid":
                     JsonObject offGrid = CameraNode("cam.px");
                     offGrid["samplePeriodSeconds"] = 0.25;
-                    sensors.Add(offGrid);
+                    devices.Add(offGrid);
                     break;
                 case "controller-visible camera":
                     JsonObject visible = CameraNode("cam.px");
                     visible["controllerVisible"] = true;
-                    sensors.Add(visible);
+                    devices.Add(visible);
                     break;
             }
 
@@ -182,7 +201,7 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
-        [TestCase("sensor id", "sensors[0].sensorId: 'IMU.Main' cannot be recorded")]
+        [TestCase("device id", "devices[0].deviceId: 'IMU.Main' cannot be recorded")]
         [TestCase("record root", "--record: Cannot write datasets under")]
         public void RecordingThatCannotWorkExitsWithCode2BeforeConnecting(string problem, string expectedMessage)
         {
@@ -190,10 +209,10 @@ namespace Argus.Simulation.Host.Tests
             string blocker = Path.Combine(Path.GetTempPath(), $"argus-not-a-directory-{Guid.NewGuid():N}");
             JsonObject root = P0();
             string record = Path.Combine(Path.GetTempPath(), $"argus-record-{Guid.NewGuid():N}");
-            if (problem == "sensor id")
+            if (problem == "device id")
             {
                 // Valid for the run file, which only needs a non-blank ID, but not a directory name.
-                root["sensors"][0]["sensorId"] = "IMU.Main";
+                root["devices"][0]["deviceId"] = "IMU.Main";
             }
             else
             {
@@ -230,31 +249,32 @@ namespace Argus.Simulation.Host.Tests
 
         // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
         // controller-visible: a camera frame carries truth (D7).
-        private static JsonObject CameraNode(string sensorId) => new JsonObject
+        private static JsonObject CameraNode(string deviceId) => new JsonObject
         {
-            ["sensorId"] = sensorId,
+            ["deviceId"] = deviceId,
+            ["kind"] = "camera",
             ["modelName"] = "arducam-imx708",
-            ["frameId"] = sensorId.Replace('.', '_'),
+            ["frameId"] = deviceId.Replace('.', '_'),
             ["samplePeriodSeconds"] = 1.0,
             ["source"] = "argus",
             ["controllerVisible"] = false,
             ["mount"] = new JsonObject
             {
                 ["positionBodyMeters"] = new JsonArray(0.05116, -0.000198, -0.02927),
-                ["sensorToBody"] = new JsonObject { ["x"] = -0.5, ["y"] = 0.5, ["z"] = -0.5, ["w"] = 0.5 }
+                ["deviceToBody"] = new JsonObject { ["x"] = -0.5, ["y"] = 0.5, ["z"] = -0.5, ["w"] = 0.5 }
             },
-            ["camera"] = new JsonObject
+            ["parameters"] = new JsonObject
             {
                 ["intrinsics"] = new JsonObject
                 {
-                    ["widthPixels"] = 4608,
-                    ["heightPixels"] = 2592,
-                    ["focalLengthXPixels"] = 3548.0,
-                    ["focalLengthYPixels"] = 3548.0,
-                    ["principalPointXPixels"] = 2304.0,
-                    ["principalPointYPixels"] = 1296.0
+                    ["width_px"] = 4608,
+                    ["height_px"] = 2592,
+                    ["focal_length_x_px"] = 3548.0,
+                    ["focal_length_y_px"] = 3548.0,
+                    ["principal_point_x_px"] = 2304.0,
+                    ["principal_point_y_px"] = 1296.0
                 },
-                ["exposureDurationSeconds"] = 0.0005
+                ["exposure_duration_s"] = 0.0005
             }
         };
 
@@ -277,19 +297,19 @@ namespace Argus.Simulation.Host.Tests
             Vector3d Negate(Vector3d v) => new Vector3d(-v.X, -v.Y, -v.Z);
             SensorDefinition Definition(string sensorId, string modelName, string frameId, SensorMount mount) =>
                 new SensorDefinition(sensorId, modelName, frameId, 0.1, "basilisk", mount);
-            SensorConfiguration Light(string sensorId, string frameId, Vector3d position, Vector3d sensorX, Vector3d sensorY, Vector3d sensorZ) =>
-                SensorConfiguration.ForLightSensor(
+            DeviceConfiguration Light(string sensorId, string frameId, Vector3d position, Vector3d sensorX, Vector3d sensorY, Vector3d sensorZ) =>
+                LightSensorKind.Instance.Configure(
                     Definition(sensorId, "placeholder-face-light-sensor", frameId, new SensorMount(position, Quaterniond.FromBasis(sensorX, sensorY, sensorZ))),
                     new LightSensorProfile(Math.PI / 2.0, 1.0, 0.0, 0.0, 2000.0));
 
-            SensorConfiguration[] sensors =
+            DeviceConfiguration[] devices =
             {
-                SensorConfiguration.ForImu(
+                ImuKind.Instance.Configure(
                     Definition("imu.main", "placeholder-mems-imu", "imu_main", SensorMount.Identity),
                     new ImuProfile(
                         new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
                         new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4))),
-                SensorConfiguration.ForMagnetometer(
+                MagnetometerKind.Instance.Configure(
                     Definition("mag.main", "placeholder-magnetometer", "mag_main", SensorMount.Identity),
                     new MagnetometerProfile(0.0, zero, 1.0, 1.3e-3)),
                 Light("light.px", "light_px", new Vector3d(0.05, 0.0, 0.0), y, z, x),
@@ -315,7 +335,7 @@ namespace Argus.Simulation.Host.Tests
                         new Vector3d(0.0, 0.0, 2.217e-3)),
                     new Quaterniond(0.0, 0.0, 0.0, 1.0),
                     zero),
-                sensors: sensors);
+                devices: devices);
         }
     }
 }

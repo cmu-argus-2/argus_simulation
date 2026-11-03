@@ -2,17 +2,19 @@
 
 Pure functions over the generated argus.sim.v1 and argus.basilisk.v1 messages. They repeat Core
 IsValid so Argus and Basilisk agree on what a valid run is (G5), add the bsk 2.11.1 limits, and
-run before anything touches Basilisk. This module never imports Basilisk.
+run before anything touches Basilisk. Devices are checked against the kind registry (devices.KINDS).
+This module never imports Basilisk.
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 import math
 import re
 from typing import Protocol
 
-# SensorConfiguration.profile oneof cases the service can build: the full P0 set.
-SUPPORTED_SENSOR_KINDS: frozenset[str] = frozenset({"imu", "magnetometer", "light_sensor"})
+from . import devices
+from .devices import magnetometer
 
 # Core ClassicalOrbitElements: periapsis above the equator also catches an altitude entered as a.
 EARTH_EQUATORIAL_RADIUS_M = 6_378_137.0
@@ -76,7 +78,6 @@ def validate_configure_run(
     *,
     coverage_utc: UtcInterval,
     wmm_validity: UtcInterval = WMM2025_VALIDITY,
-    supported_sensor_kinds: frozenset[str] = SUPPORTED_SENSOR_KINDS,
 ) -> None:
     """Raise the first-ranked ValidationError for a ConfigureRunRequest, or return None.
 
@@ -84,16 +85,10 @@ def validate_configure_run(
         request: argus.basilisk.v1.ConfigureRunRequest.
         coverage_utc: The kernel set's coverage_utc (start and end, inclusive).
         wmm_validity: WMM validity window, checked only when a magnetometer is configured.
-        supported_sensor_kinds: Profile oneof cases the service builds.
 
     The error carries every problem of its code, joined with "; ".
     """
-    _raise_first(configure_run_problems(
-        request,
-        coverage_utc=coverage_utc,
-        wmm_validity=wmm_validity,
-        supported_sensor_kinds=supported_sensor_kinds,
-    ))
+    _raise_first(configure_run_problems(request, coverage_utc=coverage_utc, wmm_validity=wmm_validity))
 
 
 def configure_run_problems(
@@ -101,7 +96,6 @@ def configure_run_problems(
     *,
     coverage_utc: UtcInterval,
     wmm_validity: UtcInterval = WMM2025_VALIDITY,
-    supported_sensor_kinds: frozenset[str] = SUPPORTED_SENSOR_KINDS,
 ) -> list[ValidationError]:
     """Return every problem with a ConfigureRunRequest, INVALID_ARGUMENT first.
 
@@ -137,13 +131,8 @@ def configure_run_problems(
     else:
         problems.unset(f"{path}.spacecraft")
 
-    has_magnetometer = _check_sensors(
-        problems,
-        configuration.sensors,
-        configuration.fixed_step_ns,
-        supported_sensor_kinds,
-        f"{path}.sensors",
-    )
+    _check_devices(problems, configuration.devices, configuration.fixed_step_ns, f"{path}.devices")
+    has_magnetometer = bool(devices.of_kind(configuration.devices, magnetometer.KIND))
 
     epoch_path = f"{path}.epoch_utc"
     if not configuration.HasField("epoch_utc"):
@@ -404,166 +393,100 @@ def _check_inertia(problems: _Problems, matrix, path: str) -> None:
         problems.invalid(path, "must be positive definite", m)
 
 
-def _check_sensors(
-    problems: _Problems,
-    sensors,
-    fixed_step_ns: int,
-    supported_sensor_kinds: frozenset[str],
-    path: str,
-) -> bool:
-    """Check every SensorConfiguration and return whether a magnetometer is configured."""
-    has_magnetometer = False
+def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: str) -> None:
+    """Check every DeviceConfiguration: the common fields here, the parameters against its kind."""
     seen_ids: dict[str, int] = {}
-    unsupported = []
-    for index, sensor in enumerate(sensors):
-        sensor_path = f"{path}[{index}]"
+    for index, device in enumerate(configured):
+        device_path = f"{path}[{index}]"
 
-        if _require(problems, sensor, "definition", sensor_path):
-            _check_definition(problems, sensor.definition, fixed_step_ns, f"{sensor_path}.definition")
-            sensor_id = sensor.definition.sensor_id
-            if sensor_id in seen_ids:
-                problems.invalid(
-                    f"{sensor_path}.definition.sensor_id",
-                    f"duplicates {path}[{seen_ids[sensor_id]}]",
-                    sensor_id,
-                )
-            else:
-                seen_ids[sensor_id] = index
+        device_id = device.device_id
+        if not device_id.strip():
+            problems.invalid(f"{device_path}.device_id", "must not be blank", device_id)
+        if device_id in seen_ids:
+            problems.invalid(f"{device_path}.device_id", f"duplicates {path}[{seen_ids[device_id]}]", device_id)
+        else:
+            seen_ids[device_id] = index
 
-        kind = sensor.WhichOneof("profile")
-        if kind is None:
-            problems.unset(f"{sensor_path}.profile")
-            continue
-        profile_path = f"{sensor_path}.{kind}"
-        if kind == "imu":
-            _check_imu(problems, sensor.imu, profile_path)
-        elif kind == "magnetometer":
-            has_magnetometer = True
-            _check_magnetometer(problems, sensor.magnetometer, profile_path)
-        elif kind == "light_sensor":
-            _check_light_sensor(problems, sensor.light_sensor, profile_path)
-
-        if kind not in supported_sensor_kinds:
-            unsupported.append((profile_path, kind, sensor.definition.sensor_id))
-
-    for profile_path, kind, sensor_id in unsupported:
-        problems.unimplemented(profile_path, f"sensor kind {kind!r} is not built yet (sensor_id {sensor_id!r})", kind)
-    return has_magnetometer
-
-
-def _check_definition(problems: _Problems, definition, fixed_step_ns: int, path: str) -> None:
-    if not definition.sensor_id.strip():
-        problems.invalid(f"{path}.sensor_id", "must not be blank", definition.sensor_id)
-
-    period = definition.sample_period_ns
-    if period == 0:
-        problems.invalid(f"{path}.sample_period_ns", "must be > 0", period)
-    elif fixed_step_ns > 0 and period % fixed_step_ns != 0:
-        problems.invalid(
-            f"{path}.sample_period_ns",
-            f"must be a multiple of fixed_step_ns ({fixed_step_ns})",
-            period,
-        )
-
-    mount_path = f"{path}.mount"
-    if _require(problems, definition, "mount", path):
-        mount = definition.mount
-        if _require(problems, mount, "position_body_m", mount_path):
-            _check_finite_vector(problems, mount.position_body_m, f"{mount_path}.position_body_m")
-        if _require(problems, mount, "sensor_to_body", mount_path):
-            _check_unit_quaternion(problems, mount.sensor_to_body, f"{mount_path}.sensor_to_body")
-
-
-# Field names of one imuSensor channel: noise density, random walk, walk bound, constant bias,
-# scale factor, range and resolution.
-_GYROSCOPE_FIELDS = (
-    "noise_density_rad_per_s_per_sqrt_hz",
-    "bias_random_walk_rad_per_s_per_sqrt_s",
-    "bias_random_walk_bound_rad_per_s",
-    "constant_bias_sensor_rad_per_s",
-    "scale_factor_per_axis",
-    "range_rad_per_s",
-    "resolution_rad_per_s",
-)
-_ACCELEROMETER_FIELDS = (
-    "noise_density_m_per_s2_per_sqrt_hz",
-    "bias_random_walk_m_per_s2_per_sqrt_s",
-    "bias_random_walk_bound_m_per_s2",
-    "constant_bias_sensor_m_per_s2",
-    "scale_factor_per_axis",
-    "range_m_per_s2",
-    "resolution_m_per_s2",
-)
-
-
-def _check_imu(problems: _Problems, imu, path: str) -> None:
-    if _require(problems, imu, "gyroscope", path):
-        _check_imu_channel(problems, imu.gyroscope, _GYROSCOPE_FIELDS, f"{path}.gyroscope")
-    if _require(problems, imu, "accelerometer", path):
-        _check_imu_channel(problems, imu.accelerometer, _ACCELEROMETER_FIELDS, f"{path}.accelerometer")
-
-
-def _check_imu_channel(problems: _Problems, channel, fields: tuple[str, ...], path: str) -> None:
-    """Core GyroscopeProfile / AccelerometerProfile.IsValid plus the bsk 2.11.1 limits."""
-    noise_name, walk_name, bound_name, bias_name, scale_name, range_name, resolution_name = fields
-    noise = getattr(channel, noise_name)
-    walk = getattr(channel, walk_name)
-    bound = getattr(channel, bound_name)
-    value_range = getattr(channel, range_name)
-    resolution = getattr(channel, resolution_name)
-
-    for name, value in ((noise_name, noise), (walk_name, walk), (bound_name, bound)):
-        _check_finite_non_negative(problems, value, f"{path}.{name}")
-    if _require(problems, channel, bias_name, path):
-        _check_finite_vector(problems, getattr(channel, bias_name), f"{path}.{bias_name}")
-    if _require(problems, channel, scale_name, path):
-        _check_positive_vector(problems, getattr(channel, scale_name), f"{path}.{scale_name}")
-    range_valid = _check_finite_positive(problems, value_range, f"{path}.{range_name}")
-    if _check_finite_non_negative(problems, resolution, f"{path}.{resolution_name}") and range_valid:
-        if resolution >= value_range:
+        period = device.sample_period_ns
+        if period == 0:
+            problems.invalid(f"{device_path}.sample_period_ns", "must be > 0", period)
+        elif fixed_step_ns > 0 and period % fixed_step_ns != 0:
             problems.invalid(
-                f"{path}.{resolution_name}",
-                f"must be < {range_name} ({value_range!r})",
-                resolution,
+                f"{device_path}.sample_period_ns",
+                f"must be a multiple of fixed_step_ns ({fixed_step_ns})",
+                period,
             )
 
-    # bsk 2.11.1 keeps one Gauss-Markov state per axis, so white noise and random walk exclude
-    # each other, and the walk bound would clip white noise if there were no random walk.
-    if noise > 0.0 and walk > 0.0:
-        problems.invalid(
-            f"{path}.{walk_name}",
-            f"bsk 2.11.1 cannot combine it with {noise_name} > 0 ({noise!r}); set one of them to 0",
-            walk,
-        )
-    if bound > 0.0 and not walk > 0.0:
-        problems.invalid(
-            f"{path}.{bound_name}",
-            f"needs {walk_name} > 0 (bsk 2.11.1 would bound white noise instead)",
-            bound,
-        )
+        mount_path = f"{device_path}.mount"
+        if _require(problems, device, "mount", device_path):
+            mount = device.mount
+            if _require(problems, mount, "position_body_m", mount_path):
+                _check_finite_vector(problems, mount.position_body_m, f"{mount_path}.position_body_m")
+            if _require(problems, mount, "device_to_body", mount_path):
+                _check_unit_quaternion(problems, mount.device_to_body, f"{mount_path}.device_to_body")
+
+        kind = devices.KINDS.get(device.kind)
+        if kind is None:
+            problems.invalid(
+                f"{device_path}.kind", f"must be a registered kind ({', '.join(sorted(devices.KINDS))})", device.kind)
+            continue
+        _check_parameters(problems, kind, device.parameters, f"{device_path}.parameters")
+        if device.initial_state:
+            problems.invalid(
+                f"{device_path}.initial_state", f"must be empty: sensor kind {device.kind!r} has no state",
+                sorted(device.initial_state))
 
 
-def _check_magnetometer(problems: _Problems, magnetometer, path: str) -> None:
-    # Noise > 0 is seeded in the service, since bsk 2.11.1 ignores the module's RNGSeed (README §9).
-    _check_finite_non_negative(problems, magnetometer.noise_std_tesla, f"{path}.noise_std_tesla")
-    if _require(problems, magnetometer, "constant_bias_sensor_tesla", path):
-        _check_finite_vector(problems, magnetometer.constant_bias_sensor_tesla, f"{path}.constant_bias_sensor_tesla")
-    _check_finite_positive(problems, magnetometer.scale_factor, f"{path}.scale_factor")
-    _check_finite_positive(problems, magnetometer.range_tesla, f"{path}.range_tesla")
+def _check_parameters(problems: _Problems, kind, parameters, path: str) -> None:
+    """Exactly the kind's declared keys, each of its declared type and finite; then the kind's own
+    range checks over the keys that passed."""
+
+    def key_path(key: str) -> str:
+        return f"{path}[{json.dumps(key)}]"
+
+    for key in sorted(set(parameters) - set(kind.PARAMETERS)):
+        problems.invalid(key_path(key), f"unknown parameter for kind {kind.KIND!r}", _decode(parameters[key]))
+
+    values = {}
+    for key, value_type in kind.PARAMETERS.items():
+        if key not in parameters:
+            problems.unset(key_path(key))
+            continue
+        value = parameters[key]
+        case = value.WhichOneof("value")
+        if case != value_type:
+            problems.invalid(key_path(key), f"must be a {value_type}", "no value" if case is None else case)
+            continue
+        decoded = _decode(value)
+        if not all(math.isfinite(component) for component in _numeric_components(decoded)):
+            problems.invalid(key_path(key), "must be finite", decoded)
+            continue
+        values[key] = decoded
+
+    kind.check(values, lambda key, reason, value: problems.invalid(key_path(key), reason, value))
 
 
-def _check_light_sensor(problems: _Problems, light_sensor, path: str) -> None:
-    half_angle = light_sensor.field_of_view_half_angle_rad
-    if not (math.isfinite(half_angle) and 0.0 < half_angle <= math.pi / 2.0):
-        # coarseSunSensor and albedo gate on cos(angle) >= cos(fov) without clamping, so a wider
-        # field adds negative irradiance from behind the aperture.
-        problems.invalid(f"{path}.field_of_view_half_angle_rad", "must be in (0, pi/2]", half_angle)
-    _check_finite_positive(problems, light_sensor.scale_factor, f"{path}.scale_factor")
-    # Noise > 0 is white noise added in the service, since bsk 2.11.1's would be a random walk
-    # (README §9).
-    _check_finite_non_negative(problems, light_sensor.noise_std_w_per_m2, f"{path}.noise_std_w_per_m2")
-    _check_finite(problems, light_sensor.bias_w_per_m2, f"{path}.bias_w_per_m2")
-    _check_finite_positive(problems, light_sensor.saturation_w_per_m2, f"{path}.saturation_w_per_m2")
+def _decode(value) -> object:
+    """A DeviceValue as Python: a float, bool or str, or a tuple of components (quaternion x, y,
+    z, w; matrix3 row by row); None when no case is set."""
+    case = value.WhichOneof("value")
+    if case == "vector3":
+        return _components(value.vector3)
+    if case == "quaternion":
+        q = value.quaternion
+        return (q.x, q.y, q.z, q.w)
+    if case == "matrix3":
+        m = value.matrix3
+        return (_components(m.row0), _components(m.row1), _components(m.row2))
+    return None if case is None else getattr(value, case)
+
+
+def _numeric_components(decoded) -> list[float]:
+    if isinstance(decoded, float):
+        return [decoded]
+    if isinstance(decoded, tuple):
+        return [c for item in decoded for c in (item if isinstance(item, tuple) else (item,))]
+    return []
 
 
 def _check_timestamp(problems: _Problems, timestamp, path: str) -> bool:
@@ -591,33 +514,11 @@ def _check_finite(problems: _Problems, value: float, path: str) -> bool:
     return False
 
 
-def _check_finite_non_negative(problems: _Problems, value: float, path: str) -> bool:
-    if math.isfinite(value) and value >= 0.0:
-        return True
-    problems.invalid(path, "must be finite and >= 0", value)
-    return False
-
-
-def _check_finite_positive(problems: _Problems, value: float, path: str) -> bool:
-    if math.isfinite(value) and value > 0.0:
-        return True
-    problems.invalid(path, "must be finite and > 0", value)
-    return False
-
-
 def _check_finite_vector(problems: _Problems, vector, path: str) -> bool:
     components = _components(vector)
     if all(math.isfinite(component) for component in components):
         return True
     problems.invalid(path, "must be finite", components)
-    return False
-
-
-def _check_positive_vector(problems: _Problems, vector, path: str) -> bool:
-    components = _components(vector)
-    if all(math.isfinite(component) and component > 0.0 for component in components):
-        return True
-    problems.invalid(path, "each component must be finite and > 0", components)
     return False
 
 

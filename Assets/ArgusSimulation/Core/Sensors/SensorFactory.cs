@@ -2,36 +2,30 @@ using System;
 
 namespace Argus.Simulation.Core
 {
-    // Builds the Argus sensor for each sensor of a run configuration. Backend-modelled sensors publish
-    // what the engine measured (D10); Argus-computed ones get their dependencies from the host or Unity
-    // (CORE-18).
+    // Builds the Argus sensor for each sensor device of a run configuration through its registered
+    // kind (DeviceKinds). Backend-modelled sensors publish what the engine measured (D10);
+    // Argus-computed ones get their dependencies from the host or Unity (CORE-18).
     public static class SensorFactory
     {
         // Without a renderer, every camera exposure is Unavailable (D5).
-        public static ISensor Create(SensorConfiguration configuration) => Create(configuration, null);
+        public static ISensor Create(DeviceConfiguration configuration) => Create(configuration, null);
 
-        public static ISensor Create(SensorConfiguration configuration, IImageRenderer imageRenderer)
+        public static ISensor Create(DeviceConfiguration configuration, IImageRenderer imageRenderer)
         {
             if (!configuration.IsValid)
             {
-                throw new ArgumentException("A valid sensor configuration is required.", nameof(configuration));
+                throw new ArgumentException(
+                    $"A valid device configuration is required: {configuration.FindProblem() ?? "invalid definition"}.",
+                    nameof(configuration));
             }
 
-            switch (configuration.Kind)
+            IDeviceKind kind = configuration.KindDefinition;
+            if (kind.Role != DeviceRole.Sensor)
             {
-                case SensorKind.Imu:
-                    return new ImuSensor(configuration);
-                case SensorKind.Magnetometer:
-                    return new MagnetometerSensor(configuration);
-                case SensorKind.LightSensor:
-                    return new LightSensor(configuration);
-                case SensorKind.Camera:
-                    return new ArducamImx708CameraModel(configuration, imageRenderer);
-                default:
-                    throw new ArgumentException(
-                        $"Unsupported sensor kind {configuration.Kind}.",
-                        nameof(configuration));
+                throw new ArgumentException($"Device kind {kind.Name} is not a sensor.", nameof(configuration));
             }
+
+            return kind.CreateSensor(configuration, imageRenderer);
         }
     }
 }

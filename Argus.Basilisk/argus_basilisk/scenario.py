@@ -21,8 +21,8 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
 from .contracts import service_pb, types_pb
+from .devices import build_sensors, light_sensor, magnetometer, of_kind
 from .kernels import KernelSet
-from .sensors import build_sensors, light_sensor_instrument
 
 __all__ = ["BASILISK_VERSION", "KernelLoadError", "Scenario", "StaleMessageError", "format_epoch"]
 
@@ -126,7 +126,7 @@ class Scenario:
         # verified support file, with the run epoch and the SPICE Earth. Nothing is downloaded.
         self.magnetic_field = None
         magnetic_field_msg = None
-        if any(sensor.WhichOneof("profile") == "magnetometer" for sensor in configuration.sensors):
+        if of_kind(configuration.devices, magnetometer.KIND):
             wmm_path = kernel_set.support_files.get(WMM_FILE)
             if wmm_path is None:
                 raise KernelLoadError(
@@ -145,8 +145,8 @@ class Scenario:
         # support file, one instrument per light sensor in configuration order, so albOutMsgs[i]
         # belongs to the i-th light sensor. Nothing is downloaded.
         self.albedo = None
-        albedo_msgs = ()
-        light_sensors = [sensor for sensor in configuration.sensors if sensor.WhichOneof("profile") == "light_sensor"]
+        albedo_msgs = {}
+        light_sensors = of_kind(configuration.devices, light_sensor.KIND)
         if light_sensors:
             albedo_path = kernel_set.support_files.get(ALBEDO_FILE)
             if albedo_path is None:
@@ -158,12 +158,14 @@ class Scenario:
             self.albedo.sunPositionInMsg.subscribeTo(self.spice.planetStateOutMsgs[SUN_INDEX])
             self.albedo.addPlanetandAlbedoDataModel(
                 self.spice.planetStateOutMsgs[EARTH_INDEX], str(albedo_path.parent) + "/", albedo_path.name)
-            for sensor in light_sensors:
-                self.albedo.addInstrumentConfig(*light_sensor_instrument(sensor))
+            for device in light_sensors:
+                self.albedo.addInstrumentConfig(*light_sensor.instrument(device))
             self.sim.AddModelToTask(TASK_NAME, self.albedo, ALBEDO_PRIORITY)
-            albedo_msgs = [self.albedo.albOutMsgs[index] for index in range(len(light_sensors))]
+            albedo_msgs = {
+                device.device_id: self.albedo.albOutMsgs[index] for index, device in enumerate(light_sensors)}
 
-        # Sensors (§9), each on the task for its sample period, after dynamics.
+        # Sensor devices (§9), built by their kinds, each on the task for its sample period, after
+        # dynamics.
         self.sensors = build_sensors(
             configuration, self.spacecraft.scStateOutMsg, magnetic_field_msg,
             sun_msg=self.spice.planetStateOutMsgs[SUN_INDEX],
@@ -186,7 +188,7 @@ class Scenario:
         }
         if magnetic_field_msg is not None:
             self.readers["magneticFieldWMM.envOutMsgs[0]"] = magnetic_field_msg.addSubscriber()
-        for index, message in enumerate(albedo_msgs):
+        for index, message in enumerate(albedo_msgs.values()):
             self.readers[f"albedo.albOutMsgs[{index}]"] = message.addSubscriber()
 
         try:
@@ -240,7 +242,7 @@ class Scenario:
             # field is the C name shadowFactor (1 sunlit, 0 umbra) and reads without a warning;
             # illuminationFactor is a Python alias that exists only on messaging.EclipseMsgPayload.
             spacecraft_shadow_factor=_finite(shadow.shadowFactor, "eclipseOutMsgs[0].shadowFactor"),
-            sensor_samples=[
+            device_samples=[
                 self._sample(sensor, ready, t_n)
                 for sensor, ready in zip(self.sensors, was_ready)
                 if t_n % sensor.sample_period_ns == 0
@@ -248,15 +250,15 @@ class Scenario:
             pacing_overrun_count=0,
         )
 
-    def _sample(self, sensor, was_ready: bool, t_n: int) -> service_pb.BasiliskSensorSample:
-        """The sample of a sensor due at t_n (§7); its measurement is unset when it ran without data."""
+    def _sample(self, sensor, was_ready: bool, t_n: int) -> service_pb.BasiliskDeviceSample:
+        """The sample of a sensor due at t_n (§7); its output is empty when it ran without data."""
         for name, reader in sensor.readers.items():
             _check_fresh(name, reader, t_n)
-        sample = service_pb.BasiliskSensorSample(sensor_id=sensor.sensor_id, sample_time_ns=t_n)
+        sample = service_pb.BasiliskDeviceSample(device_id=sensor.device_id, sample_time_ns=t_n)
         if was_ready:
-            measurement = sensor.measurement()
-            _check_finite_fields(measurement, sensor.sensor_id)
-            getattr(sample, sensor.kind).CopyFrom(measurement)
+            for key, value in sensor.output().items():
+                _check_finite_fields(value, f"{sensor.device_id}.{key}")
+                sample.output[key].CopyFrom(value)
         return sample
 
 

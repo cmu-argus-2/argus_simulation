@@ -52,8 +52,7 @@ namespace Argus.Simulation.Core
 
         // False for ground-truth sensors (for example the nadir camera): the gateway never forwards
         // their frames to a controller, while the recorder still receives them (D7). It must be false
-        // for a kind whose frames carry truth, such as a camera
-        // (SensorConfiguration.MayBeControllerVisible).
+        // for a kind whose frames carry truth, such as a camera (IDeviceKind.MayBeControllerVisible).
         public bool IsControllerVisible { get; }
 
         public bool IsValid =>
