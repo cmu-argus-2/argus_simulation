@@ -46,6 +46,10 @@ namespace Argus.Simulation.Core
         // Every parameter key, all required.
         IReadOnlyList<DeviceKey> ParameterKeys { get; }
 
+        // Every initial-state key, all required: the kind's state at t = 0 (docs/device-model.md
+        // §6). Empty for a kind with no state, such as every sensor kind so far.
+        IReadOnlyList<DeviceKey> InitialStateKeys { get; }
+
         // The first problem with a device's parameters and initial state, naming the key, or null
         // when they are valid.
         string FindProblem(DeviceValues parameters, DeviceValues initialState);

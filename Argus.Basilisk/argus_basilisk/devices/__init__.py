@@ -6,6 +6,8 @@ module defines:
 - KIND: its name, the DeviceConfiguration.kind that selects it;
 - PARAMETERS: each parameter key and its DeviceValue type (_common.NUMBER, VECTOR3, ...). Every
   key is required;
+- STATE (optional): each initial-state key and its type, as PARAMETERS; none when it is absent,
+  as for every sensor kind so far;
 - OUTPUTS: each key and type of its BasiliskDeviceSample.output;
 - check(values, invalid): its range checks. values maps each parameter key that has its declared
   type and is finite to its Python value (a float, or a tuple of components); a problem is
@@ -22,9 +24,14 @@ so validation runs without the basilisk extra.
 from . import imu, light_sensor, magnetometer
 from ._common import Inputs
 
-__all__ = ["KINDS", "build_sensors", "of_kind"]
+__all__ = ["KINDS", "build_sensors", "of_kind", "state_keys"]
 
 KINDS = {module.KIND: module for module in (imu, magnetometer, light_sensor)}
+
+
+def state_keys(kind) -> dict:
+    """A kind module's initial-state keys and types: its STATE, or none."""
+    return getattr(kind, "STATE", {})
 
 
 def of_kind(devices, kind: str) -> list:

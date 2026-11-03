@@ -137,7 +137,7 @@ namespace Argus.Simulation.Core
                 new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
             foreach (DeviceConfiguration sensor in sensors)
             {
-                if (sensor.IsBackendModelled)
+                if (IsBackendSensor(sensor))
                 {
                     sensorsById.Add(sensor.Definition.SensorId, sensor);
                 }
@@ -189,7 +189,7 @@ namespace Argus.Simulation.Core
 
             foreach (DeviceConfiguration sensor in sensors)
             {
-                if (!sensor.IsBackendModelled)
+                if (!IsBackendSensor(sensor))
                 {
                     continue;
                 }
@@ -207,6 +207,11 @@ namespace Argus.Simulation.Core
 
             return new SensorMeasurementSet(measurements, unavailableSensorIds);
         }
+
+        // A sensor the backend models and samples. A backend-modelled actuator (CON-2) reports no
+        // samples, so it is neither looked up nor expected on any step.
+        private static bool IsBackendSensor(DeviceConfiguration device) =>
+            device.IsBackendModelled && device.KindDefinition is IBackendSensorKind;
 
         private static bool IsOrthonormal(Vector3d r0, Vector3d r1, Vector3d r2)
         {

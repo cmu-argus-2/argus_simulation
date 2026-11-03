@@ -1,5 +1,3 @@
-using System;
-
 namespace Argus.Simulation.Core
 {
     // The physical camera for the +X, -X, +Y and -Y body cameras (D5), built by CameraKind from a
@@ -17,27 +15,16 @@ namespace Argus.Simulation.Core
         // TODO(G3): take the limit, or a way to wait, from the first caller that supplies a renderer (UNITY-4).
         private const double RenderLatencyLimitSeconds = double.PositiveInfinity;
 
+        // CameraKind.Profile checks the configuration once, before the base constructor, so a wrong
+        // one names the cause.
         public ArducamImx708CameraModel(DeviceConfiguration configuration, IImageRenderer renderer)
-            : base(
-                Checked(configuration).Definition,
-                CameraKind.Instance.Profile(configuration).Intrinsics,
-                CameraKind.Instance.Profile(configuration).ExposureDurationSeconds,
-                RenderLatencyLimitSeconds,
-                renderer)
+            : this(configuration.Definition, CameraKind.Instance.Profile(configuration), renderer)
         {
         }
 
-        // Runs before the base constructor, so a wrong configuration names the cause.
-        private static DeviceConfiguration Checked(DeviceConfiguration configuration)
+        private ArducamImx708CameraModel(SensorDefinition definition, CameraProfile profile, IImageRenderer renderer)
+            : base(definition, profile.Intrinsics, profile.ExposureDurationSeconds, RenderLatencyLimitSeconds, renderer)
         {
-            if (configuration.Kind != CameraKind.KindName || !configuration.IsValid)
-            {
-                throw new ArgumentException(
-                    "A valid camera device configuration is required.",
-                    nameof(configuration));
-            }
-
-            return configuration;
         }
     }
 }

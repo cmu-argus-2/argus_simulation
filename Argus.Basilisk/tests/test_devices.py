@@ -593,3 +593,14 @@ def test_changing_one_light_sensor_seed_changes_only_its_noise():
     (other_id,) = set(first_run) - {first_id}
     assert not np.array_equal(first_run[other_id] - first_run[other_id].mean(),
                               second_run[renamed] - second_run[renamed].mean())
+
+
+def test_output_finite_check_covers_numbers_and_skips_text_and_flags():
+    # A kind's output may hold text or a flag (DeviceValue oneof); only numbers can be non-finite.
+    from argus_basilisk.contracts import devices_pb
+    from argus_basilisk.scenario import StaleMessageError, _check_finite_fields
+
+    _check_finite_fields(devices_pb.DeviceValue(text="ok"), "status")
+    _check_finite_fields(devices_pb.DeviceValue(flag=True), "locked")
+    with pytest.raises(StaleMessageError, match="irradiance.number is not finite"):
+        _check_finite_fields(devices_pb.DeviceValue(number=math.nan), "irradiance")

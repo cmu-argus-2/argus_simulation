@@ -795,9 +795,19 @@ namespace Argus.Simulation.Core
                 json.Key("analytic_orbit");
                 WriteAnalyticOrbit(json, _begin.AnalyticOrbit);
                 json.EndObject().Key("devices").BeginArray();
+                // Every sensor that publishes frames, then the configured devices that publish none
+                // (actuators, from CON-2), so the manifest lists the whole spacecraft.
                 foreach (SensorDefinition sensor in _begin.Sensors)
                 {
-                    WriteSensor(json, sensor, run.Devices);
+                    WriteDevice(json, sensor, run.Devices);
+                }
+
+                foreach (DeviceConfiguration device in run.Devices)
+                {
+                    if (device.KindDefinition?.Role != DeviceRole.Sensor)
+                    {
+                        WriteDevice(json, device.Definition, run.Devices);
+                    }
                 }
 
                 // Camera models arrive with CORE-6 (#42) and CORE-8 (#44).
@@ -932,7 +942,7 @@ namespace Argus.Simulation.Core
                     .Key("cy_px").Value(intrinsics.PrincipalPointYPixels)
                     .EndObject();
 
-            private static void WriteSensor(
+            private static void WriteDevice(
                 DatasetJsonWriter json,
                 SensorDefinition sensor,
                 IReadOnlyList<DeviceConfiguration> configurations)

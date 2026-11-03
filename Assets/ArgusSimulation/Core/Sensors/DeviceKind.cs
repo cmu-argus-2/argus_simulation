@@ -3,52 +3,46 @@ using System.Collections.Generic;
 
 namespace Argus.Simulation.Core
 {
-    // A device kind whose parameters read into one typed profile. It checks the parameter map
-    // against its declared keys (unknown, missing, wrongly typed or non-finite values), then the
-    // profile's own IsValid, and names the key or the profile in the problem.
+    // A device kind whose parameters read into one typed profile. It checks the parameter and
+    // initial-state maps against its declared keys (unknown, missing, wrongly typed or non-finite
+    // values), then the profile's own validity, and names the key or group in the problem.
     public abstract class DeviceKind<TProfile> : IDeviceKind
         where TProfile : struct
     {
-        private readonly DeviceKey[] _parameterKeys;
+        private readonly DeclaredKeys _parameterKeys;
+        private readonly DeclaredKeys _initialStateKeys;
 
+        // initialStateKeys: the kind's state at t = 0 (docs/device-model.md §6); none by default.
         protected DeviceKind(
             string name,
             DeviceRole role,
             bool isBackendModelled,
             bool mayBeControllerVisible,
-            params DeviceKey[] parameterKeys)
+            DeviceKey[] parameterKeys,
+            DeviceKey[] initialStateKeys = null)
         {
             Name = name;
             Role = role;
             IsBackendModelled = isBackendModelled;
             MayBeControllerVisible = mayBeControllerVisible;
-            _parameterKeys = parameterKeys;
+            _parameterKeys = new DeclaredKeys(parameterKeys);
+            _initialStateKeys = new DeclaredKeys(initialStateKeys ?? Array.Empty<DeviceKey>());
         }
 
         public string Name { get; }
         public DeviceRole Role { get; }
         public bool IsBackendModelled { get; }
         public bool MayBeControllerVisible { get; }
-        public IReadOnlyList<DeviceKey> ParameterKeys => _parameterKeys;
+        public IReadOnlyList<DeviceKey> ParameterKeys => _parameterKeys.Keys;
+        public IReadOnlyList<DeviceKey> InitialStateKeys => _initialStateKeys.Keys;
 
         public string FindProblem(DeviceValues parameters, DeviceValues initialState)
         {
             parameters = parameters ?? DeviceValues.Empty;
-            string problem = FindKeyProblem("parameters", _parameterKeys, parameters) ?? FindValueProblem(parameters);
-            if (problem != null)
-            {
-                return problem;
-            }
-
-            // No kind has state yet; the first actuator kinds declare theirs (docs/device-model.md §6).
-            if (initialState != null && initialState.Count > 0)
-            {
-                return $"initialState: must be empty, because the {Name} kind has no state";
-            }
-
-            return IsValid(Parse(parameters))
-                ? null
-                : $"parameters: is not a valid {Name} profile (see {typeof(TProfile).Name}.IsValid)";
+            return FindKeyProblem("parameters", _parameterKeys, parameters) ??
+                FindKeyProblem("initialState", _initialStateKeys, initialState ?? DeviceValues.Empty) ??
+                FindValueProblem(parameters) ??
+                FindProfileProblem(Parse(parameters));
         }
 
         // The profile of a valid configuration of this kind.
@@ -78,14 +72,17 @@ namespace Argus.Simulation.Core
         // that must be whole. Null when there is none.
         protected virtual string FindValueProblem(DeviceValues parameters) => null;
 
+        // Why a parsed profile is invalid, naming the narrowest part the kind can (a group such as
+        // gyroscope.*), or null. The default names the whole profile.
+        protected virtual string FindProfileProblem(TProfile profile) =>
+            IsValid(profile) ? null : $"parameters: is not a valid {Name} profile (see {typeof(TProfile).Name}.IsValid)";
+
         // The first key in values that is not exactly one of the declared keys with its type and a
-        // finite value, or null. The group names the map in the problem: "parameters", "output".
-        protected string FindKeyProblem(string group, IReadOnlyList<DeviceKey> keys, DeviceValues values)
+        // set, finite value, or null. The group names the map in the problem: "parameters", "output".
+        protected string FindKeyProblem(string group, DeclaredKeys keys, DeviceValues values)
         {
-            HashSet<string> declared = new HashSet<string>(StringComparer.Ordinal);
-            foreach (DeviceKey key in keys)
+            foreach (DeviceKey key in keys.Keys)
             {
-                declared.Add(key.Name);
                 if (!values.TryGetValue(key.Name, out DeviceValue value))
                 {
                     return $"{group}[\"{key.Name}\"]: is required";
@@ -96,6 +93,11 @@ namespace Argus.Simulation.Core
                     return $"{group}[\"{key.Name}\"]: must be a {key.Type}, not a {value.Type}";
                 }
 
+                if (value.Type == DeviceValueType.Text && value.Text == null)
+                {
+                    return $"{group}[\"{key.Name}\"]: must not be null";
+                }
+
                 if (!value.IsFinite)
                 {
                     return $"{group}[\"{key.Name}\"]: must be finite";
@@ -104,13 +106,32 @@ namespace Argus.Simulation.Core
 
             foreach (string name in values.Keys)
             {
-                if (!declared.Contains(name))
+                if (!keys.Contains(name))
                 {
                     return $"{group}[\"{name}\"]: is not a {Name} key";
                 }
             }
 
             return null;
+        }
+
+        // A kind's declared keys and their names, built once: outputs are checked on every sample.
+        protected sealed class DeclaredKeys
+        {
+            private readonly HashSet<string> _names = new HashSet<string>(StringComparer.Ordinal);
+
+            public DeclaredKeys(DeviceKey[] keys)
+            {
+                Keys = keys;
+                foreach (DeviceKey key in keys)
+                {
+                    _names.Add(key.Name);
+                }
+            }
+
+            public IReadOnlyList<DeviceKey> Keys { get; }
+
+            public bool Contains(string name) => _names.Contains(name);
         }
     }
 
@@ -120,15 +141,15 @@ namespace Argus.Simulation.Core
         where TProfile : struct
         where TMeasurement : struct
     {
-        private readonly DeviceKey[] _outputKeys;
+        private readonly DeclaredKeys _outputKeys;
 
         protected BackendSensorKind(string name, DeviceKey[] outputKeys, params DeviceKey[] parameterKeys)
             : base(name, DeviceRole.Sensor, isBackendModelled: true, mayBeControllerVisible: true, parameterKeys)
         {
-            _outputKeys = outputKeys;
+            _outputKeys = new DeclaredKeys(outputKeys);
         }
 
-        public IReadOnlyList<DeviceKey> OutputKeys => _outputKeys;
+        public IReadOnlyList<DeviceKey> OutputKeys => _outputKeys.Keys;
 
         public object ReadOutput(DeviceValues output)
         {

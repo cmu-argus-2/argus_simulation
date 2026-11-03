@@ -360,9 +360,13 @@ namespace Argus.Simulation.Core
         private SensorManager BuildSensors(SimulationConfiguration run)
         {
             SensorManager sensors = new SensorManager();
+            // Only sensor devices publish frames; actuators take commands (D11).
             foreach (DeviceConfiguration device in run.Devices)
             {
-                sensors.Register(_sensorFactory(device));
+                if (IsSensor(device))
+                {
+                    sensors.Register(_sensorFactory(device));
+                }
             }
 
             sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
@@ -385,7 +389,7 @@ namespace Argus.Simulation.Core
             HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (DeviceConfiguration device in run.Devices)
             {
-                if (device.Definition.IsControllerVisible)
+                if (IsSensor(device) && device.Definition.IsControllerVisible)
                 {
                     ids.Add(device.Definition.SensorId);
                 }
@@ -393,6 +397,8 @@ namespace Argus.Simulation.Core
 
             return ids;
         }
+
+        private static bool IsSensor(DeviceConfiguration device) => device.KindDefinition?.Role == DeviceRole.Sensor;
 
         private static SimulationConfiguration WithRandomSeed(SimulationConfiguration scenario, int seed) =>
             new SimulationConfiguration(

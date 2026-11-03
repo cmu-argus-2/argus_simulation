@@ -249,12 +249,14 @@ message DeviceCommandSet {
   into its measurement type. An actuator kind gives its idle values and its limit checks.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
-  `CameraKind` only list their keys and map them. `DeviceKinds` lists every registration in one
+  `CameraKind` only list their keys and map them. A kind declares its initial-state keys the same
+  way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
+  (`parameters["gyroscope.*"]`). `DeviceKinds` lists every registration in one
   file. It replaced the `SensorKind` switches in `SensorFactory`, `SensorConfiguration`, the
   run-file parser, the recorder, `BasiliskProtoMapper` and `BasiliskStateMapper`.
 - **Service:** each Basilisk-modelled kind is one module, `argus_basilisk/devices/<kind>.py`, with
-  `KIND`, `PARAMETERS` and `OUTPUTS` (key to type), `check` (its range rules) and `build` (its
-  Basilisk modules and `output()`). `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
+  `KIND`, `PARAMETERS` and `OUTPUTS` (key to type), an optional `STATE` (none by default),
+  `check` (its range rules) and `build` (its Basilisk modules and `output()`). `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
   `validation.py` and the scenario walk `KINDS` instead of switching on kinds. Kind modules import
   numpy and Basilisk only inside `build`, so validation runs without Basilisk.
 - **Adding a kind** means writing its Core class, its service module if Basilisk models it, one
