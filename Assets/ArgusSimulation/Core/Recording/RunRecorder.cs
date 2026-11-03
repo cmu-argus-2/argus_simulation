@@ -21,9 +21,10 @@ namespace Argus.Simulation.Core
         public const string SchemaVersion = "argus-dataset/1";
         public const string RecorderVersion = "0.1.0";
         public const string OverflowPolicy = "drop-newest";
-        // TODO(#99): bound the queue by bytes as well as items before camera frames arrive. 65,536
-        // queued ~1 MB images is ~64 GB, and ImageFrame.Data is queued by reference, so a renderer
-        // that reuses its readback buffer would change frames already queued.
+        // TODO(#99): bound the queue by bytes as well as items before a renderer supplies camera pixels
+        // (UNITY-4). One full-resolution P0 frame (4608 x 2592 Rgb8) is 35.8 MB, so 65,536 queued frames
+        // would be ~2.3 TB. ImageFrame.Data is also queued by reference, so a renderer that reuses its
+        // readback buffer would change frames already queued.
         public const int DefaultCapacity = 65536;
 
         private const string StatesFile = "states.jsonl";
@@ -810,8 +811,25 @@ namespace Argus.Simulation.Core
                     }
                 }
 
-                // Camera models arrive with CORE-6 (#42) and CORE-8 (#44).
-                json.EndArray().Key("cameras").BeginArray().EndArray().Key("files").BeginObject();
+                // Every camera device that publishes, in device order, by sensor ID and profile ID
+                // (ICameraKind, CORE-6). Its values are its devices entry's parameters, so each has one
+                // spelling in the manifest (docs/device-model.md §3).
+                json.EndArray().Key("cameras").BeginArray();
+                foreach (SensorDefinition sensor in _begin.Sensors)
+                {
+                    foreach (DeviceConfiguration device in run.Devices)
+                    {
+                        if (device.Definition.SensorId == sensor.SensorId && device.KindDefinition is ICameraKind camera)
+                        {
+                            json.BeginObject()
+                                .Key("sensor_id").Value(sensor.SensorId)
+                                .Key("profile_id").Value(camera.Profile(device).ProfileId)
+                                .EndObject();
+                        }
+                    }
+                }
+
+                json.EndArray().Key("files").BeginObject();
                 if (complete)
                 {
                     json.Key(StatesFile).BeginObject().Key("lines").Value(_stateLines).EndObject()

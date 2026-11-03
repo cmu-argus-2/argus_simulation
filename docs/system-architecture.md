@@ -55,7 +55,7 @@ flowchart TB
             ana["Analytic engine<br/>development and test fixture"]
         end
         sim[/"SimulationState<br/>spacecraft, EnvironmentState (Basilisk runs),<br/>backend sensor measurements, applied commands"/]
-        sens["Sensor models — SensorManager<br/>Core and backend sensor models<br/>(planned: camera models)"]
+        sens["Sensor models — SensorManager<br/>Core and backend sensor models<br/>(camera models; rendering planned)"]
         rec["Run Recorder"]
     end
 
@@ -207,7 +207,7 @@ BackendSensorModel<TMeasurement>         (Basilisk-sourced)
 SensorModel<TPayload>                    (Argus-computed)
 ├── IdealBodyRateSensorModel
 └── CameraModel                          (base: exposure, pose, pending frames, G3)
-    ├── ArducamImx708CameraModel         (body cameras, CORE-18; DATA-6 profile in CORE-6)
+    ├── BodyCameraModel                  (body cameras; the P0 run file's DATA-6 profile, CORE-6)
     └── NadirGroundTruthCameraModel      (placeholder)
 
 Upcoming, source open (Basilisk module per D10, or Argus-computed); placeholders in Core/Sensors:
@@ -352,7 +352,7 @@ folders, is [code-organization.md](code-organization.md).
 - [x] Standard sensor and image envelopes.
 - [x] Renderer abstraction.
 - [x] Remove fabricated Unity telemetry and publish sensor data through the core model.
-- [ ] Implement camera base/profile classes and the Arducam IMX708 profile.
+- [x] Implement camera base/profile classes and the Arducam IMX708 profile (CORE-3, CORE-18, CORE-6).
 
 ### Runtime separation
 
@@ -382,11 +382,12 @@ The analytic backend is only a deterministic integration fixture. It records act
 commands but does not yet apply them to orbit or attitude. The only Argus-computed
 non-image sensor is a truth-backed, noise-free body-rate model. The IMU (rate and specific
 force), magnetometer and light sensors are Basilisk-sourced models that publish only what
-the Basilisk service measures, and that service does not build sensors yet. GNSS, fine Sun sensor,
+the Basilisk service measures (service build steps 1–4). GNSS, fine Sun sensor,
 star-tracker, power, thermal, radio and radiation models are unavailable until their physics
-and hardware profiles are implemented, and the camera models are placeholders. The v1
-Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's sensors,
-pacing and actuators, the run recorder, the other network transports and the physical hardware adapters are not
+and hardware profiles are implemented. The body cameras are configured (CORE-6), but their frames are
+`Unavailable` until a renderer exists (UNITY-4), and the nadir ground-truth camera is a placeholder (CORE-8). The v1
+Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's
+pacing and actuators, the other network transports and the physical hardware adapters are not
 implemented yet.
 
 ## References

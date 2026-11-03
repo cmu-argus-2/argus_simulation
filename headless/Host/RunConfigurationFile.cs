@@ -130,6 +130,7 @@ namespace Argus.Simulation.Host
 
             DeviceConfiguration[] devices = new DeviceConfiguration[element.GetArrayLength()];
             HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, DeviceConfiguration> cameraByProfileId = new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
             int index = 0;
             foreach (JsonElement device in element.EnumerateArray())
             {
@@ -142,10 +143,54 @@ namespace Argus.Simulation.Host
                     Join(devicePath, "samplePeriodSeconds"),
                     "must be a whole multiple of fixedStepSeconds");
                 Check(deviceIds.Add(devices[index].Definition.SensorId), Join(devicePath, "deviceId"), "duplicates another device's ID");
+                if (devices[index].KindDefinition is ICameraKind camera)
+                {
+                    // A profile ID names one parameter set (CameraProfile.IsSameParameterSetAs, CORE-6).
+                    CameraProfile profile = camera.Profile(devices[index]);
+                    if (cameraByProfileId.TryGetValue(profile.ProfileId, out DeviceConfiguration first))
+                    {
+                        CameraProfile firstProfile = ((ICameraKind)first.KindDefinition).Profile(first);
+                        Check(
+                            profile.IsSameParameterSetAs(firstProfile),
+                            $"{devicePath}.parameters[\"profile_id\"]",
+                            $"names another parameter set than {first.Definition.SensorId}: it differs in {DifferingParts(profile, firstProfile)}");
+                    }
+                    else
+                    {
+                        cameraByProfileId.Add(profile.ProfileId, devices[index]);
+                    }
+                }
+
                 index++;
             }
 
             return devices;
+        }
+
+        // Which parts of a camera's parameter set differ, in the file's groups, for the profile_id error.
+        // CameraProfile.IsSameParameterSetAs is the rule; keep the two in step.
+        private static string DifferingParts(CameraProfile profile, CameraProfile first)
+        {
+            List<string> parts = new List<string>();
+            if (!profile.Intrinsics.Equals(first.Intrinsics) ||
+                !string.Equals(profile.IntrinsicsSource, first.IntrinsicsSource, StringComparison.Ordinal) ||
+                profile.IsCalibrated != first.IsCalibrated)
+            {
+                parts.Add("intrinsics");
+            }
+
+            if (!profile.Distortion.Equals(first.Distortion))
+            {
+                parts.Add("distortion");
+            }
+
+            if (!string.Equals(profile.NoiseSource, first.NoiseSource, StringComparison.Ordinal))
+            {
+                parts.Add("noise");
+            }
+
+            // Falls back to the whole set if a versioned field is missing above.
+            return parts.Count == 0 ? "its parameter set" : string.Join(" and ", parts);
         }
 
         // One device: the common fields, its registered kind and that kind's parameters
@@ -200,7 +245,7 @@ namespace Argus.Simulation.Host
             Check(
                 !definition.IsControllerVisible || kind.MayBeControllerVisible,
                 Join(path, "controllerVisible"),
-                $"must be false, because {kindName} frames carry truth a controller may not see (D7; cameras until CORE-6, #42)");
+                $"must be false, because {kindName} frames carry truth a controller may not see (D7)");
             return configuration;
         }
 

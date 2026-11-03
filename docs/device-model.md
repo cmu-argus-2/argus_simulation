@@ -90,7 +90,8 @@ A new kind needs no contract change: the schema does not check fields, the kind 
 ## 4. Profile and run file
 
 A spacecraft profile holds the body and its devices. Here is the P0 profile, abbreviated: the
-accelerometer, the magnetometer and the other five light sensors follow the same pattern.
+accelerometer, the magnetometer, the other five light sensors and the four body cameras (CORE-6)
+follow the same pattern.
 
 ```json
 {
@@ -163,8 +164,8 @@ itself:
   devices) and sends the resolved devices to the service, which never reads files.
 - The dataset manifest records `profileId`, the path as written, and the resolved body and
   devices, so a dataset stands alone.
-- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 8 P0 sensors) and a run file
-  that names it (HOST-9).
+- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 12 P0 devices: the 8 sensors
+  Basilisk models and the 4 body cameras) and a run file that names it (HOST-9).
 
 ## 5. Wire
 
@@ -248,7 +249,8 @@ message DeviceCommandSet {
 - **Core:** each kind is one class implementing `IDeviceKind` (`Core/Contracts/IDeviceKind.cs`).
   The class holds the kind's name, role, modeller, declarations and validation. A sensor kind
   builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`) also reads its output map
-  into its measurement type. An actuator kind gives its idle values and its limit checks.
+  into its measurement type, and a camera kind (`ICameraKind`) gives its `CameraProfile`, for the
+  manifest's `cameras` and the shared profile-ID rule (CORE-6). An actuator kind gives its idle values and its limit checks.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
   `CameraKind` only list their keys and map them. A kind declares its initial-state keys the same

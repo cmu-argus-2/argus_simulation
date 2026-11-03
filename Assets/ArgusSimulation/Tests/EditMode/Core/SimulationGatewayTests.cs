@@ -273,7 +273,7 @@ namespace Argus.Simulation.Tests
         private static DeviceConfiguration Camera(string sensorId, bool isControllerVisible) =>
             CameraKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
-                new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
+                TestCameras.Imx708Profile());
 
         // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
         private static DeviceConfiguration Rate(string sensorId, bool isControllerVisible)

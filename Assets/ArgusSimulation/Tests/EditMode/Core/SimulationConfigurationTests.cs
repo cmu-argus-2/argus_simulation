@@ -42,7 +42,8 @@ namespace Argus.Simulation.Tests
         }
 
         // A camera frame carries the true camera pose, so a run may not show a camera to the
-        // controller (D7) until CORE-6 decides what it may see; other kinds may be visible.
+        // controller (D7) until CORE-23 (#125) gives it an observation without truth; other kinds
+        // may be visible.
         [Test]
         public void ControllerVisibleCameraIsInvalid()
         {
@@ -51,8 +52,33 @@ namespace Argus.Simulation.Tests
             Assert.That(Run(Imu(0.1, isControllerVisible: true)).IsValid, Is.True);
         }
 
-        private static SimulationConfiguration Run(DeviceConfiguration sensor) =>
-            new SimulationConfiguration("run-1", Epoch, 0.1, devices: new[] { sensor });
+        // A profile ID names one parameter set (intrinsics, distortion and noise), so two cameras that
+        // share one must share those values; otherwise the manifest's profile_id would name two sets
+        // (CORE-6). Exposure and the mount belong to each camera.
+        [Test]
+        public void CamerasSharingAProfileIdShareItsParameterSet()
+        {
+            DeviceConfiguration px = Camera(0.1, sensorId: "cam.px");
+            CameraIntrinsics raspberryPiLens = new CameraIntrinsics(4608, 2592, 3386.0, 3386.0, 2304.0, 1296.0);
+            CameraProfile imx708 = TestCameras.Imx708Profile();
+            CameraProfile recalibratedSource = new CameraProfile(
+                imx708.ProfileId, imx708.Intrinsics, imx708.IntrinsicsSource, imx708.IsCalibrated,
+                CameraDistortion.Zero("checkerboard"), imx708.NoiseSource, imx708.ExposureDurationSeconds, imx708.Extrinsics);
+            CameraProfile otherMount = new CameraProfile(
+                imx708.ProfileId, imx708.Intrinsics, imx708.IntrinsicsSource, imx708.IsCalibrated,
+                imx708.Distortion, imx708.NoiseSource, imx708.ExposureDurationSeconds,
+                new CameraExtrinsicsProvenance("cad", "geometric-centre", isOrientationVerified: true));
+
+            Assert.That(Run(px, Camera(0.1, sensorId: "cam.py")).IsValid, Is.True, "same set");
+            Assert.That(Run(px, Camera(0.1, sensorId: "cam.py", profile: TestCameras.Profile(raspberryPiLens, 0.0005))).IsValid, Is.False, "same ID, other focal length");
+            Assert.That(Run(px, Camera(0.1, sensorId: "cam.py", profile: recalibratedSource)).IsValid, Is.False, "same ID, other distortion source");
+            Assert.That(Run(px, Camera(0.1, sensorId: "cam.py", profile: TestCameras.Profile(TestCameras.Imx708Intrinsics, 0.002))).IsValid, Is.True, "same ID, own exposure");
+            Assert.That(Run(px, Camera(0.1, sensorId: "cam.py", profile: otherMount)).IsValid, Is.True, "same ID, own mount provenance");
+            Assert.That(Run(px, Imu(0.1), Camera(0.1, sensorId: "cam.py", profile: TestCameras.Profile(raspberryPiLens, 0.0005))).IsValid, Is.False, "another device between them");
+        }
+
+        private static SimulationConfiguration Run(params DeviceConfiguration[] devices) =>
+            new SimulationConfiguration("run-1", Epoch, 0.1, devices: devices);
 
         private static DeviceConfiguration Imu(double samplePeriodSeconds, bool isControllerVisible = true)
         {
@@ -65,9 +91,13 @@ namespace Argus.Simulation.Tests
                     new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
         }
 
-        private static DeviceConfiguration Camera(double samplePeriodSeconds, bool isControllerVisible = false) =>
+        private static DeviceConfiguration Camera(
+            double samplePeriodSeconds,
+            bool isControllerVisible = false,
+            string sensorId = "cam.px",
+            CameraProfile? profile = null) =>
             CameraKind.Instance.Configure(
-                new SensorDefinition("cam.px", "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity, isControllerVisible),
-                new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
+                new SensorDefinition(sensorId, "test-camera", sensorId.Replace('.', '_'), samplePeriodSeconds, "argus", SensorMount.Identity, isControllerVisible),
+                profile ?? TestCameras.Imx708Profile());
     }
 }
