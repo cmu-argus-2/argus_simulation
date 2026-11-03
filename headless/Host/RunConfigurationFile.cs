@@ -60,7 +60,7 @@ namespace Argus.Simulation.Host
 
                 ClassicalOrbitElements orbit = Orbit(Field(root, "initialOrbit", ""), "initialOrbit");
                 SpacecraftConfiguration spacecraft = Spacecraft(Field(root, "spacecraft", ""), "spacecraft");
-                SensorConfiguration[] sensors = Sensors(Field(root, "sensors", ""), "sensors");
+                SensorConfiguration[] sensors = Sensors(Field(root, "sensors", ""), "sensors", runId, epochUtc, fixedStepSeconds);
 
                 SimulationConfiguration configuration = new SimulationConfiguration(
                     runId,
@@ -116,7 +116,12 @@ namespace Argus.Simulation.Host
             return spacecraft;
         }
 
-        private static SensorConfiguration[] Sensors(JsonElement element, string path)
+        private static SensorConfiguration[] Sensors(
+            JsonElement element,
+            string path,
+            string runId,
+            DateTimeOffset epochUtc,
+            double fixedStepSeconds)
         {
             if (element.ValueKind != JsonValueKind.Array)
             {
@@ -130,6 +135,12 @@ namespace Argus.Simulation.Host
             {
                 string sensorPath = $"{path}[{index}]";
                 sensors[index] = Sensor(sensor, sensorPath);
+                // Sensor() has checked everything else IsValid checks for one sensor, so only the
+                // period can fail here.
+                Check(
+                    new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, sensors: new[] { sensors[index] }).IsValid,
+                    Join(sensorPath, "samplePeriodSeconds"),
+                    "must be a whole multiple of fixedStepSeconds");
                 Check(sensorIds.Add(sensors[index].Definition.SensorId), Join(sensorPath, "sensorId"), "duplicates another sensor's ID");
                 index++;
             }
@@ -144,7 +155,7 @@ namespace Argus.Simulation.Host
                 element,
                 path,
                 new[] { "sensorId", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount" },
-                new[] { "imu", "magnetometer", "lightSensor" });
+                new[] { "imu", "magnetometer", "lightSensor", "camera" });
 
             JsonElement mount = Field(element, "mount", path);
             string mountPath = Join(path, "mount");
@@ -188,6 +199,17 @@ namespace Argus.Simulation.Host
                         Number(magnetometer, "scaleFactor", profilePath),
                         Number(magnetometer, "rangeTesla", profilePath)));
             }
+            else if (element.TryGetProperty("camera", out JsonElement camera))
+            {
+                // Argus computes cameras, so the host never sends them to Basilisk (CORE-18).
+                profilePath = Join(path, "camera");
+                Fields(camera, profilePath, "intrinsics", "exposureDurationSeconds");
+                configuration = SensorConfiguration.ForCamera(
+                    definition,
+                    new CameraProfile(
+                        Intrinsics(Field(camera, "intrinsics", profilePath), Join(profilePath, "intrinsics")),
+                        Number(camera, "exposureDurationSeconds", profilePath)));
+            }
             else
             {
                 JsonElement light = Field(element, "lightSensor", path);
@@ -211,6 +233,10 @@ namespace Argus.Simulation.Host
             }
 
             Check(configuration.IsValid, profilePath, "is not a valid profile (see the Core profile's IsValid)");
+            Check(
+                !definition.IsControllerVisible || configuration.MayBeControllerVisible,
+                Join(path, "controllerVisible"),
+                $"must be false, because {configuration.Kind} frames carry truth a controller may not see (D7; cameras until CORE-6, #42)");
             return configuration;
         }
 
@@ -260,6 +286,28 @@ namespace Argus.Simulation.Host
                 Number(element, "resolutionMetersPerSecondSquared", path));
             Check(profile.IsValid, path, "is not a valid accelerometer profile (see AccelerometerProfile.IsValid)");
             return profile;
+        }
+
+        private static CameraIntrinsics Intrinsics(JsonElement element, string path)
+        {
+            Fields(
+                element,
+                path,
+                "widthPixels",
+                "heightPixels",
+                "focalLengthXPixels",
+                "focalLengthYPixels",
+                "principalPointXPixels",
+                "principalPointYPixels");
+            CameraIntrinsics intrinsics = new CameraIntrinsics(
+                Integer(element, "widthPixels", path),
+                Integer(element, "heightPixels", path),
+                Number(element, "focalLengthXPixels", path),
+                Number(element, "focalLengthYPixels", path),
+                Number(element, "principalPointXPixels", path),
+                Number(element, "principalPointYPixels", path));
+            Check(intrinsics.IsValid, path, "needs a width and height > 0 and finite focal lengths > 0 (see CameraIntrinsics.IsValid)");
+            return intrinsics;
         }
 
         // An object with exactly these fields.

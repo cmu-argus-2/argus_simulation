@@ -126,8 +126,9 @@ namespace Argus.Simulation.Core
                 ReferenceFrame.Itrf93);
         }
 
-        // Every configured sensor must report exactly on the steps its sample period divides, at the
-        // step time, with the payload type of its kind.
+        // Every backend-modelled sensor must report exactly on the steps its sample period divides, at
+        // the step time, with the payload type of its kind. Sensors Argus computes never reach the
+        // backend (D10), so a sample naming one is a sample for an unknown sensor.
         public static SensorMeasurementSet MapMeasurements(
             BasiliskStepState step,
             IReadOnlyList<SensorConfiguration> sensors)
@@ -136,7 +137,10 @@ namespace Argus.Simulation.Core
                 new Dictionary<string, SensorConfiguration>(StringComparer.Ordinal);
             foreach (SensorConfiguration sensor in sensors)
             {
-                sensorsById.Add(sensor.Definition.SensorId, sensor);
+                if (sensor.IsBackendModelled)
+                {
+                    sensorsById.Add(sensor.Definition.SensorId, sensor);
+                }
             }
 
             Dictionary<string, object> measurements = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -180,6 +184,11 @@ namespace Argus.Simulation.Core
 
             foreach (SensorConfiguration sensor in sensors)
             {
+                if (!sensor.IsBackendModelled)
+                {
+                    continue;
+                }
+
                 long periodNanoseconds = BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds);
                 bool isDue = step.SimulationTimeNanoseconds % periodNanoseconds == 0;
                 if (isDue != sampledSensorIds.Contains(sensor.Definition.SensorId))

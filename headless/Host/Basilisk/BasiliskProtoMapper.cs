@@ -41,9 +41,13 @@ namespace Argus.Simulation.Host
                 }
             };
 
+            // Only backend-modelled sensors go to Basilisk; Argus computes the rest (D10, CORE-18).
             foreach (SensorConfiguration sensor in configuration.Sensors)
             {
-                message.Sensors.Add(ToProto(sensor));
+                if (sensor.IsBackendModelled)
+                {
+                    message.Sensors.Add(ToProto(sensor));
+                }
             }
 
             return message;
