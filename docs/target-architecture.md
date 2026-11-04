@@ -164,10 +164,10 @@ sequenceDiagram
 
 The controller calls `Reset(seed, scenario)` and then `Step(commands)` on the gateway, which
 advances the engine by a fixed interval and returns observations. On `main`,
-`SimulationGateway` already exposes `Initialize`, `Reset()` and `Step(commands)` over the
-analytic engine in the tests and over `BasiliskEngine` in `headless/Host`, but it returns
-truth `SimulationState`s.
-`Reset(seed, scenario)` and observation-only returns are planned (§5, D7; CORE-4, #40).
+`SimulationGateway` exposes `Reset(seed, scenario)`, which returns observation 0, and
+`Step(command k)`, which returns observation k+1, over the analytic engine in the tests and
+over `BasiliskEngine` in `headless/Host` (§5, D7; CORE-4, #40). The observations are
+controller-visible; truth leaves the gateway only through `StateProduced`.
 
 Which engine a lockstep run uses (DATA-10, #75):
 - **SIL runs use Basilisk unpaced** (`real_time_factor` 0, paced by the caller). The analytic
@@ -181,6 +181,9 @@ Measured through `headless/Host` on one laptop (i7-1165G7, WSL2), 4 Nov 2026; CI
 - The table gives the median of 5 runs, interleaved across configurations after a warm-up run,
   with nothing else running.
 - An earlier set of 3 runs each agreed within 9%.
+- Measured at `070ff4b`, before CORE-6 (#42) added the four body cameras to
+  `runs/p0-default.json`, so "P0" here means its eight other sensors. Without a renderer the
+  cameras only publish `Unavailable` frames; their cost has not been measured.
 
 | devices | steps per second (range) | × real time (steps per second × 0.1 s) |
 |---|---|---|
@@ -189,7 +192,7 @@ Measured through `headless/Host` on one laptop (i7-1165G7, WSL2), 4 Nov 2026; CI
 | magnetometer | 1,005 (990–1,013) | 100 |
 | 1 light sensor (with albedo) | 615 (606–637) | 62 |
 | 6 light sensors (with albedo) | 237 (229–245) | 24 |
-| P0 (IMU, magnetometer, 6 light sensors) | 229 (223–233) | 23 |
+| P0 sensors (IMU, magnetometer, 6 light sensors; no cameras) | 229 (223–233) | 23 |
 
 - **Per-step budget:** about 1 ms per step for the dynamics and SPICE, with the IMU and the
   magnetometer adding little, plus about 0.5 to 0.7 ms per light sensor. That makes about 4.4 ms
@@ -435,7 +438,7 @@ the gateway.
   closes (§8 there).
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
   (D2) Answered by DATA-10 (#75): both, for different tests (§4).
-  - SIL runs use Basilisk at `real_time_factor` 0, at about 23× real time for P0 on a laptop;
+  - SIL runs use Basilisk at `real_time_factor` 0, at about 23× real time for the P0 sensors on a laptop;
   - unit and gateway tests keep the analytic fixture (D9).
 
   So SIL tests in CI need the bsk install and the kernels: about 45 MB, mostly `de440s.bsp` and the
