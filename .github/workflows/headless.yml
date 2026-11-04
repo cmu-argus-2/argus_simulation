@@ -36,6 +36,9 @@ jobs:
       - name: Build headless host
         run: dotnet build headless/Host/Argus.Simulation.Host.csproj --configuration Release
 
+      - name: Build Unity contract assembly
+        run: dotnet build Argus.Contracts/Unity/Argus.Stream.Contracts.csproj --configuration Release
+
       - name: Run headless EditMode tests
         run: dotnet test headless/Tests/Argus.Simulation.Tests.EditMode.Headless.csproj --configuration Release
 
