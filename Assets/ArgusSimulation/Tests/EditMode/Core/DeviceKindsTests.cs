@@ -19,7 +19,8 @@ namespace Argus.Simulation.Tests
                 ("imu", true, true, false),
                 ("magnetometer", true, true, false),
                 ("light_sensor", true, true, false),
-                ("camera", false, false, true)
+                ("camera", false, false, true),
+                ("nadir_ground_truth_camera", false, false, true)
             };
 
             Assert.That(DeviceKinds.All.Select(kind => kind.Name), Is.EquivalentTo(kinds.Select(row => row.Name)));
@@ -68,7 +69,8 @@ namespace Argus.Simulation.Tests
             Assert.That(Problem("sun_sensor", valid), Does.StartWith("kind: 'sun_sensor' is not a registered device kind"));
         }
 
-        // The profile accepts exactly what the CameraModel constructor accepts.
+        // The profile accepts exactly what the CameraModel constructor accepts, for both camera kinds:
+        // the body camera and the nadir ground-truth camera share their keys and checks.
         [TestCase(4608, 3548.0, 0.0005, true)]
         [TestCase(4608, 3548.0, 0.0, true)]
         [TestCase(0, 3548.0, 0.0005, false)]
@@ -83,14 +85,16 @@ namespace Argus.Simulation.Tests
             double exposureDurationSeconds,
             bool isValid)
         {
-            DeviceConfiguration camera = CameraKind.Instance.Configure(
-                Definition("cam.px"),
-                TestCameras.Profile(
-                    new CameraIntrinsics(widthPixels, 2592, focalLengthPixels, focalLengthPixels, 2304.0, 1296.0),
-                    exposureDurationSeconds));
+            CameraProfile profile = TestCameras.Profile(
+                new CameraIntrinsics(widthPixels, 2592, focalLengthPixels, focalLengthPixels, 2304.0, 1296.0),
+                exposureDurationSeconds);
+            foreach (CameraProfileKind kind in CameraKinds)
+            {
+                DeviceConfiguration camera = kind.Configure(Definition("cam.px"), profile);
 
-            Assert.That(camera.Kind, Is.EqualTo("camera"));
-            Assert.That(camera.IsValid, Is.EqualTo(isValid));
+                Assert.That(camera.Kind, Is.EqualTo(kind.Name));
+                Assert.That(camera.IsValid, Is.EqualTo(isValid), kind.Name);
+            }
         }
 
         // The DATA-6 (#71) profile as camera parameters (CORE-6): every value with where it came from.
@@ -124,9 +128,10 @@ namespace Argus.Simulation.Tests
                 ("extrinsics.orientation_verified", DeviceValueType.Flag)
             };
 
-            Assert.That(
-                CameraKind.Instance.ParameterKeys.Select(key => (key.Name, key.Type)),
-                Is.EquivalentTo(keys));
+            foreach (CameraProfileKind kind in CameraKinds)
+            {
+                Assert.That(kind.ParameterKeys.Select(key => (key.Name, key.Type)), Is.EquivalentTo(keys), kind.Name);
+            }
 
             // The parameters round-trip to the same profile, every field.
             CameraProfile profile = new CameraProfile(
@@ -183,7 +188,10 @@ namespace Argus.Simulation.Tests
             DeviceValues valid = TestCameras.Configuration(Definition("cam.px")).Parameters;
             DeviceValue changed = value is string text ? DeviceValue.FromText(text) : DeviceValue.FromNumber((double)value);
 
-            Assert.That(Problem("camera", With(Without(valid, key), key, changed)), Does.StartWith(expectedProblem));
+            foreach (CameraProfileKind kind in CameraKinds)
+            {
+                Assert.That(Problem(kind.Name, With(Without(valid, key), key, changed)), Does.StartWith(expectedProblem), kind.Name);
+            }
         }
 
         // Which kinds are cameras is the registry's ICameraKind, not a list of names, so a camera kind
@@ -204,7 +212,8 @@ namespace Argus.Simulation.Tests
                         new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3))),
                 Magnetometer(),
                 LightSensorKind.Instance.Configure(Definition("light.px"), new LightSensorProfile(1.0, 1.0, 0.0, 0.0, 1500.0)),
-                TestCameras.Configuration(Definition("cam.px"))
+                TestCameras.Configuration(Definition("cam.px")),
+                TestCameras.NadirConfiguration(Definition("cam.nadir_gt"))
             };
 
             Assert.That(samples.Select(sample => sample.Kind), Is.EquivalentTo(DeviceKinds.All.Select(kind => kind.Name)));
@@ -224,6 +233,9 @@ namespace Argus.Simulation.Tests
             DeviceConfiguration camera = samples[3];
             Assert.That(((ICameraKind)camera.KindDefinition).Profile(camera), Is.EqualTo(TestCameras.Imx708Profile()));
         }
+
+        // Both camera kinds share CameraProfileKind's keys and checks.
+        private static readonly CameraProfileKind[] CameraKinds = { CameraKind.Instance, NadirGroundTruthCameraKind.Instance };
 
         private static DeviceConfiguration Magnetometer() =>
             MagnetometerKind.Instance.Configure(

@@ -231,8 +231,8 @@ dataset v1 reader therefore writes that manifest into the run directory, with `i
 `payload.image` minus the leading `images/`.
 Both scripts keep only the camera `"NADIR EARTH  -Z"`, which this repo removed in `9206f11`, so they
 find no frames in today's exporter output. No camera replaces it one for one: CORE-6 (#42) added the
-four ±X/±Y cameras (`cam.px`, `cam.py`, `cam.mx`, `cam.my`), and CORE-8 (#44) adds the north-up nadir
-camera. The reader's owner picks the camera once the CORE-8 camera exists, and agrees its `camera_name`
+four ±X/±Y cameras (`cam.px`, `cam.py`, `cam.mx`, `cam.my`), and CORE-8 (#44) added the north-up nadir
+camera (kind `nadir_ground_truth_camera`). The reader's owner picks the camera, and agrees its `camera_name`
 with Krushna so the downstream scripts stay unchanged. Camera poses are in the OpenCV camera frame
 (see Frames above), not Unity's camera axes.
 

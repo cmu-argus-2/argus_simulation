@@ -253,8 +253,9 @@ message DeviceCommandSet {
   manifest's `cameras` and the shared profile-ID rule (CORE-6). An actuator kind gives its idle values and its limit checks.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
-  `CameraKind` only list their keys and map them. A kind declares its initial-state keys the same
-  way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
+  `CameraProfileKind` only list their keys and map them. `CameraKind` and
+  `NadirGroundTruthCameraKind` share `CameraProfileKind`'s keys and differ only in name and model.
+  A kind declares its initial-state keys the same way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
   (`parameters["gyroscope.*"]`). `DeviceKinds` lists every registration in one
   file. It replaced the `SensorKind` switches in `SensorFactory`, `SensorConfiguration`, the
   run-file parser, the recorder, `BasiliskProtoMapper` and `BasiliskStateMapper`.
