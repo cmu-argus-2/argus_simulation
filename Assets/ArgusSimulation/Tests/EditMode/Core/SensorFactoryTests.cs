@@ -20,13 +20,13 @@ namespace Argus.Simulation.Tests
 
             ISensor sensor = SensorFactory.Create(Camera());
 
-            Assert.That(sensor, Is.InstanceOf<ArducamImx708CameraModel>());
-            ArducamImx708CameraModel camera = (ArducamImx708CameraModel)sensor;
+            Assert.That(sensor, Is.InstanceOf<BodyCameraModel>());
+            BodyCameraModel camera = (BodyCameraModel)sensor;
             Assert.That(camera.Definition.SensorId, Is.EqualTo("cam.px"));
             Assert.That(camera.Intrinsics, Is.EqualTo(Imx708));
             Assert.That(camera.ExposureDurationSeconds, Is.EqualTo(0.0005));
             Assert.That(camera.MaximumLatencySeconds, Is.EqualTo(double.PositiveInfinity));
-            Assert.Throws<ArgumentException>(() => new ArducamImx708CameraModel(Imu(), null));
+            Assert.Throws<ArgumentException>(() => new BodyCameraModel(Imu(), null));
         }
 
         // The host or Unity supplies the renderer (CORE-18). Without one, every exposure is
@@ -65,7 +65,7 @@ namespace Argus.Simulation.Tests
         private static DeviceConfiguration Camera() =>
             CameraKind.Instance.Configure(
                 new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, "argus", SensorMount.Identity),
-                new CameraProfile(Imx708, 0.0005));
+                TestCameras.Profile(Imx708, 0.0005));
 
         // An analytic state: the camera still renders without an EnvironmentState.
         private static SensorSampleContext Context(long step) =>

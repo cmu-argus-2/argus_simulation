@@ -28,12 +28,13 @@ namespace Argus.Simulation.Host.Tests
                 .Select(device => device.DeviceId)
                 .ToArray();
 
-            Assert.That(echo, Does.Not.Contain("cam.px"));
+            // Every backend device, in order, and no Argus-computed camera (P0 has its own four).
+            Assert.That(echo, Is.EqualTo(configuration.Devices.Where(device => device.IsBackendModelled).Select(device => device.Definition.SensorId)));
             Assert.That(BasiliskEngine.HasSensorsInOrder(echo, configuration.Devices), Is.True);
             Assert.That(BasiliskEngine.HasSensorsInOrder(echo.Skip(1).ToArray(), configuration.Devices), Is.False);
             Assert.That(BasiliskEngine.HasSensorsInOrder(echo.Take(echo.Length - 1).ToArray(), configuration.Devices), Is.False);
             Assert.That(BasiliskEngine.HasSensorsInOrder(echo.Reverse().ToArray(), configuration.Devices), Is.False);
-            Assert.That(BasiliskEngine.HasSensorsInOrder(echo.Append("cam.px").ToArray(), configuration.Devices), Is.False);
+            Assert.That(BasiliskEngine.HasSensorsInOrder(echo.Append("cam.test").ToArray(), configuration.Devices), Is.False);
         }
 
         // The P0 run file with an Argus-computed camera second in its device list.
@@ -42,8 +43,16 @@ namespace Argus.Simulation.Host.Tests
             SimulationConfiguration p0 = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, "host-test");
             List<DeviceConfiguration> devices = new List<DeviceConfiguration>(p0.Devices);
             devices.Insert(1, CameraKind.Instance.Configure(
-                new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, "argus", SensorMount.Identity, isControllerVisible: false),
-                new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005)));
+                new SensorDefinition("cam.test", "arducam-imx708", "cam_test", 1.0, "argus", SensorMount.Identity, isControllerVisible: false),
+                new CameraProfile(
+                    "imx708-66deg-spec-v0",
+                    new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0),
+                    "spec-estimate",
+                    isCalibrated: false,
+                    CameraDistortion.Zero("none"),
+                    CameraProfile.NoNoise,
+                    0.0005,
+                    new CameraExtrinsicsProvenance("argus-2-config", "assumed-com", isOrientationVerified: false))));
             return new SimulationConfiguration(
                 p0.RunId,
                 p0.EpochUtc,

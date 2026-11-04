@@ -7,7 +7,7 @@ namespace Argus.Simulation.Core
 {
     // Base camera sensor (D5). It owns exposure timing, pose, intrinsics and exposure duration, asks
     // an IImageRenderer for each exposure, and publishes the image as a SensorFrame<ImageFrame>.
-    // Distortion and noise come with the concrete camera profiles (CORE-6, CORE-8).
+    // Distortion and noise are in CameraProfile (CORE-6); no renderer applies distortion yet.
     //
     // Rendering is asynchronous and TrySample is not, so every exposure is deferred: it starts at its
     // slot and is published on a later step, still stamped with its capture state and time (G3).

@@ -1,6 +1,6 @@
 # Core/Recording — run recorder
 
-**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1, with `commands.jsonl` from the gateway's command log (CORE-7, #43), except the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
+**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1, with `commands.jsonl` from the gateway's command log (CORE-7, #43) and the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
 
 The run recorder is the single export route (decision D6 in
 [target-architecture.md](../../../../docs/target-architecture.md)). It is a passive,
@@ -27,7 +27,8 @@ write-only archive. It never feeds data back into the run and never blocks the s
   manifest then stays `"complete": false`, and `Close` throws. Core has no JPEG decoder, so a
   `Jpeg` `ImageFrame` cannot become the PNG dataset v1 requires. `Png` frames are written as given.
   The recorder never overwrites a run directory that already exists.
-- **Not yet written:** `cameras` is `[]` until camera models exist (CORE-6, #42).
+- **Camera frames have no pixels yet:** `headless/Host` has no renderer, so every camera frame is
+  `Unavailable` until UNITY-4 (#57).
 
 ## Inputs
 
@@ -35,7 +36,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
   and backend sensor measurements when the backend provides them (Basilisk runs; the
   analytic engine reports neither).
 - Every `SensorOutputSet` from `SensorManager`, including ground-truth sensors and camera
-  `ImageFrame`s once cameras are sensor models. Camera frames carry their capture time;
+  `ImageFrame`s (the P0 body cameras, CORE-6). Camera frames carry their capture time;
   late frames follow the late-frame policy (gap G3, decided in CORE-3 #38: see Join keys).
 - The gateway's command log: requested, applied and rejected commands.
 
@@ -66,7 +67,7 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 | Numbers | Invariant culture (`.` as the decimal point), written round-trip so no precision is lost. JSON has no NaN or Infinity, so a non-finite value (for example in an `Invalid` frame's measurement or a rejected command) is written as `null`, element by element, so a vector keeps its length (`[null, 0.0, 0.0]`). This is the only case where a number holds `null` without its row saying so, and it is not a nullability change. |
 | Vectors and matrices | Vectors are `[x, y, z]`. A 3×3 matrix is row-major and nested: `[[a, b, c], [d, e, f], [g, h, i]]`. |
 | Quaternions | `[x, y, z, w]`, scalar last, Hamilton, active: `v' = q v q*` (`Core/Math/Quaterniond.cs`). A field named `a_to_b` rotates a vector expressed in frame a into frame b, as in `EnvironmentState.J2000ToItrf93`. |
-| Frames | Position, velocity and attitude are Earth-fixed in the frame named by `manifest.earth_fixed_frame`: `Itrf93` in Basilisk runs, `AnalyticEarthFixed` in the analytic fixture (D9). One run never mixes them. The body frame is `SpacecraftState`'s. The camera frame is proposed as x right, y down, z out of the lens (DATA-6, #71); no code defines it yet. |
+| Frames | Position, velocity and attitude are Earth-fixed in the frame named by `manifest.earth_fixed_frame`: `Itrf93` in Basilisk runs, `AnalyticEarthFixed` in the analytic fixture (D9). One run never mixes them. The body frame is `SpacecraftState`'s. The camera frame is OpenCV's: x right, y down, z out of the lens, with pixel (0, 0) at the centre of the top-left pixel (DATA-6 #71, CORE-6; `RenderRequest.CameraToEcef`). A camera's `devices[].mount.device_to_body_xyzw` takes camera-frame vectors to the body. |
 | Time | `simulation_time_s` is seconds since the run epoch. Every `*_utc` field (`timestamp_utc`, `created_utc`, `epoch_utc`) is UTC, written as `yyyy-MM-ddTHH:mm:ss.fffffffZ`: always 7 fractional digits, ending in `Z`, for example `2026-10-20T12:00:00.0000000Z`. C#'s `"O"` format on a `DateTimeOffset` writes `+00:00` instead, so the writer formats the UTC value with the explicit format and the invariant culture (in .NET custom formats, `:` and the calendar follow the culture). Python 3.11+ `datetime.fromisoformat` reads it to the microsecond; `strptime` with `%f` does not. |
 | Paths | Relative to the run directory, separated by `/` on every OS. |
 | Join keys | In `states.jsonl`, `sequence` is the spacecraft sequence and is unique within a run directory. Any reset restarts it at 0 (a gateway `Reset`, or `SimulationRunner.ResetSimulation` in Unity), so the recorder closes the directory and starts a new one. A gateway `Reset` keeps the `run_id`, so `manifest.segment` numbers the directories of one `run_id` from 0, and each directory is named `<run_id>_<segment>`. In `sensors.jsonl`, `sequence` counts per sensor, so a frame's key is (`sensor_id`, `sequence`). Every sensor frame carries `state_sequence`, the spacecraft sequence of the state it was captured at, so frames join to their state. A late camera frame (G3, CORE-3 #38) is published on the step its render finishes but keeps its capture state and capture time, not those of the step it arrived in: its `state_sequence` is `SensorFrame.StateSequence`, the capture state, not the `SensorOutputSet`'s. An `Unavailable` camera frame keeps its capture `state_sequence` too. A camera publishes its frames in sequence order, and an exposure not rendered within the camera's latency limit is published as `Unavailable`, so a camera frame is never dropped or marked `Stale`. In file order, the `sequence` of `states.jsonl` and each sensor's `sequence` strictly increase. |
@@ -86,7 +87,7 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 | `earth_fixed_frame` | string | `SpacecraftState.EarthFixedFrame` | `Itrf93` or `AnalyticEarthFixed`. |
 | `configuration` | object | `SimulationConfiguration` (G5); `AnalyticSimulationEngine` for `analytic_orbit` | `epoch_utc`, `fixed_step_s`, `random_seed`, `kernel_set_id` (or `null`), `initial_orbit` (classical elements in J2000, or `null`), `spacecraft` (`mass_kg`, `inertia_body_kg_m2` as a 3×3 matrix, `initial_body_to_j2000_xyzw`, `initial_angular_velocity_body_rad_s`; or `null`), and `analytic_orbit`. `fixed_step_s` and `random_seed` are the values the run actually uses. In Unity-driven runs these are `SimulationRunner`'s step and `SimulationSensorRuntime`'s seed, not the 0.1 s and seed 0 that `AnalyticStateSource` passes to the engine (which ignores the seed). Analytic runs have no `initial_orbit` or `spacecraft`, because `AnalyticSimulationEngine` takes its orbit from its constructor; it exposes that orbit as `AnalyticSimulationEngine.Orbit`. `analytic_orbit` (`altitude_m`, `inclination_deg`, `raan_deg`, `phase_deg`) is that orbit at the start of the run. Its angles are measured in the analytic fixture's own inertial frame, not J2000, so they cannot be compared with `initial_orbit`. The dashboard can change altitude and phase during a run, and `states.jsonl` records the result. `analytic_orbit` is `null` in Basilisk runs. |
 | `devices` | array | `SensorManager.Sensors[].Definition`, plus `DeviceConfiguration` where one exists (D11, CORE-19 #111) | Every sensor that publishes frames: `device_id` (the `sensor_id` of its `sensors.jsonl` frames), `model_name`, `frame_id`, `sample_period_s`, `source`, `mount` (`position_body_m`, `device_to_body_xyzw`), `controller_visible` (bool: whether the gateway may pass the sensor's frames to a controller, `SensorDefinition.IsControllerVisible`), then `kind` (its registered name, such as `light_sensor`), `parameters` and `initial_state`. `parameters` maps each of the kind's keys, in ordinal order, to its value: a number, `[x, y, z]`, a quaternion `{"x", "y", "z", "w"}`, three rows, a bool or a string ([device-model.md](../../../../docs/device-model.md) §3). Quaternions therefore come in two forms in the manifest: a named field such as `mount.device_to_body_xyzw` is a `[x, y, z, w]` array whose suffix gives the order, as everywhere in the dataset, while a parameter or state value is an object, because its key carries no order. After the sensors, the list also holds the configured devices that publish no frames (actuators, from CON-2 #34). The keys are the run file's and the wire's, with dotted groups flattened (`gyroscope.range_rad_per_s`). `initial_state` is `{}` until a kind has state. `kind`, `parameters` and `initial_state` are `null` for a sensor with no `DeviceConfiguration`, such as the ideal body-rate sensor `imu.body_rate`. Renamed from `sensors`, with `sensor_id` and `sensor_to_body_xyzw`, and with the per-kind `profile` replaced by `parameters`, before HOST-5 (#29) froze v1, so the schema stays at version 1. |
-| `cameras` | array | camera models (CORE-6) | Per camera: `sensor_id`, `profile_id`, `intrinsics` (`width_px`, `height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px`, `source`, `calibrated`), `distortion` (`model`, `coeffs`, `source`), `noise` (`source`), `extrinsics` (`source`, `origin`, `orientation_verified`), as in the DATA-6 profile (#71). When a calibration lands, `profile_id` changes and `calibrated` becomes `true`. |
+| `cameras` | array | the devices whose kind is an `ICameraKind` (CORE-6) | Every camera that publishes frames, in `devices` order: `sensor_id` and `profile_id`. The camera's values are its `devices` entry's `parameters`, under the camera kind's keys (`intrinsics.*` with `source` and `calibrated`, `distortion.*` with `model`, `k1`, `k2`, `p1`, `p2`, `k3` in OpenCV's order and `source`, `noise.source`, `exposure_duration_s`, `extrinsics.*`; `Core/Sensors/Camera/README.md`), so each value has one spelling in the manifest. `profile_id` names the part's parameter set (the intrinsics, distortion and noise): cameras that share one share those values, and a calibration gets a new one with `intrinsics.calibrated` `true`. Readers must reject a `distortion.model` they do not know. Narrowed from DATA-4's list, which no dataset ever wrote, before HOST-5 (#29) froze v1, so the schema stays at version 1. |
 | `files` | object | recorder | `{}` until close. Then one entry per JSONL file, keyed by its path, for example `{"states.jsonl": {"lines": 1200}, "sensors.jsonl": {"lines": 5400}, "commands.jsonl": {"lines": 1199}}`. Images and the manifest are not listed. |
 | `overflow` | object | recorder (CORE-5) | `policy` (`drop-newest`), `capacity`, `dropped_states`, `dropped_frames` and `dropped_commands` (added by CORE-7 before any v1 dataset was written, so the schema stays at version 1); see RunRecorder v0 above. Nothing is dropped silently. |
 
@@ -135,7 +136,7 @@ Backend sensor measurements (`SensorMeasurements`) are not repeated here. They a
 | `AngularRateMeasurement` | `angular_velocity_sensor_rad_s` |
 | `MagnetometerMeasurement` | `magnetic_field_sensor_t` |
 | `LightSensorMeasurement` | `irradiance_w_m2` |
-| `ImageFrame` | `image` (the PNG's path, or `null` when the frame has no pixels), `camera_id`, `intrinsics` (the six values, as in the manifest), `camera_position_ecef_m`, `camera_to_ecef_xyzw`, `renderer` (string), `state_sequence`, `exposure_start_simulation_time_s`, `exposure_duration_s` and `sun_position_ecef_m` (`null` when the state had no `EnvironmentState`, so the renderer lit the scene its own way, D9), from `ImageFrame.Request`. Pixels go only to the PNG. |
+| `ImageFrame` | `image` (the PNG's path, or `null` when the frame has no pixels), `camera_id`, `intrinsics` (the six values as `width_px`, `height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px`; the manifest holds the same values as the camera's `devices[].parameters` `intrinsics.width_px`, `intrinsics.height_px`, `intrinsics.focal_length_x_px`, `intrinsics.focal_length_y_px`, `intrinsics.principal_point_x_px` and `intrinsics.principal_point_y_px`), `camera_position_ecef_m`, `camera_to_ecef_xyzw`, `renderer` (string), `state_sequence`, `exposure_start_simulation_time_s`, `exposure_duration_s` and `sun_position_ecef_m` (`null` when the state had no `EnvironmentState`, so the renderer lit the scene its own way, D9), from `ImageFrame.Request`. Pixels go only to the PNG. |
 
 A sensor added later brings its own `payload_type`. That is an added payload type, so the schema stays at version 1.
 
@@ -177,7 +178,7 @@ rejected for a step is logged against it, but at most one line per `sequence` is
 
 - **One PNG per camera frame that has pixels,** whatever its `status`. An `Unavailable` frame has no
   payload, so it has no PNG. The name is the frame's `sequence`, zero-padded to 8 digits, for example
-  `images/cam_xp/00000042.png`. Readers take the path from `payload.image` and never rebuild it.
+  `images/cam.px/00000042.png`. Readers take the path from `payload.image` and never rebuild it.
 - **Run and sensor IDs are path-safe:** a lowercase letter or digit, then lowercase letters, digits, `.`, `_`
   or `-` (`[a-z0-9][a-z0-9._-]*`), not ending in `.` and not a Windows device name such as `con` or
   `nul`, as in `light.px` and `imu.body_rate`. The pattern is the kernel-set ID rule in
@@ -229,10 +230,11 @@ the navigation owner, confirmed on 26 Oct. The exporter has one reader,
 dataset v1 reader therefore writes that manifest into the run directory, with `image_file` set to
 `payload.image` minus the leading `images/`.
 Both scripts keep only the camera `"NADIR EARTH  -Z"`, which this repo removed in `9206f11`, so they
-find no frames in today's exporter output. No planned camera replaces it: CORE-6 (#42) adds the four
-±X/±Y cameras and CORE-8 (#44) the north-up nadir camera. The reader's owner picks
-the camera once the CORE-6 and CORE-8 cameras exist, and agrees its `camera_name` with Krushna so the
-downstream scripts stay unchanged.
+find no frames in today's exporter output. No camera replaces it one for one: CORE-6 (#42) added the
+four ±X/±Y cameras (`cam.px`, `cam.py`, `cam.mx`, `cam.my`), and CORE-8 (#44) adds the north-up nadir
+camera. The reader's owner picks the camera once the CORE-8 camera exists, and agrees its `camera_name`
+with Krushna so the downstream scripts stay unchanged. Camera poses are in the OpenCV camera frame
+(see Frames above), not Unity's camera axes.
 
 The reader moves to dataset v1, and Maggie Pai owns it. It emits the same manifest contract as today:
 all 16 fields in the table below, with their current names and nesting, and a stable `frame_id`. The
