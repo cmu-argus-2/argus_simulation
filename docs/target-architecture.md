@@ -118,7 +118,7 @@ tiles. It is not run data and sits outside D6.
 | # | Decision | Why | Consequence |
 |---|---|---|---|
 | D1 | The core is headless: `Argus.Simulation.Core` never references Unity. Unity is a client and a renderer. | Runs, SIL and HIL must work without the GUI. | The Core asmdef sets `noEngineReferences`, and `headless/` builds Core with plain `dotnet`. |
-| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` becomes a follower. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Whether lockstep SIL runs also use Basilisk is open (§11). |
+| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` becomes a follower. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Lockstep SIL runs use Basilisk too, unpaced (DATA-10, #75; §4). |
 | D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. |
 | D4 | Environment data travels inside `SimulationState` as `EnvironmentState` (Sun vector, J2000 ↔ ITRF93 orientation, eclipse). There is no separate environment service. | It is per-step data produced together with the dynamics. | Lighting, camera models and the recorder read it through the state broadcast. |
 | D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. The camera frame is OpenCV's (+x image right, +y image down, +z out of the lens; pixel (0, 0) is the centre of the top-left pixel), as in the Argus flight and GNC code, so the DATA-6 mounts are used unchanged (CORE-6); the renderer converts to its own axes. |
@@ -164,11 +164,44 @@ sequenceDiagram
 
 The controller calls `Reset(seed, scenario)` and then `Step(commands)` on the gateway, which
 advances the engine by a fixed interval and returns observations. On `main`,
-`SimulationGateway` already exposes `Initialize`, `Reset()` and `Step(commands)` over the
-analytic engine in the tests and over `BasiliskEngine` in `headless/Host`, but it returns
-truth `SimulationState`s.
-`Reset(seed, scenario)` and observation-only returns are planned (§5, D7; CORE-4, #40). Whether
-Basilisk also runs lockstep (faster than real time, paced by the caller) is an open question (§11).
+`SimulationGateway` exposes `Reset(seed, scenario)`, which returns observation 0, and
+`Step(command k)`, which returns observation k+1, over the analytic engine in the tests and
+over `BasiliskEngine` in `headless/Host` (§5, D7; CORE-4, #40). The observations are
+controller-visible; truth leaves the gateway only through `StateProduced`.
+
+Which engine a lockstep run uses (DATA-10, #75):
+- **SIL runs use Basilisk unpaced** (`real_time_factor` 0, paced by the caller). The analytic
+  fixture reports no environment and no backend measurements (D9, D10), so a controller run on
+  the P0 sensors needs Basilisk.
+- **Unit and gateway tests stay on the analytic fixture** (D9). They need no bsk install and no
+  kernels. Unity's analytic development runs (below) are unchanged.
+
+Measured through `headless/Host` on one laptop (i7-1165G7, WSL2), 4 Nov 2026; CI runners differ.
+- Each run is unpaced: 600 s at 0.1 s steps.
+- The table gives the median of 5 runs, interleaved across configurations after a warm-up run,
+  with nothing else running.
+- An earlier set of 3 runs each agreed within 9%.
+- Measured at `070ff4b`, before CORE-6 (#42) added the four body cameras to
+  `runs/p0-default.json`, so "P0" here means its eight other sensors. Without a renderer the
+  cameras only publish `Unavailable` frames; their cost has not been measured.
+
+| devices | steps per second (range) | × real time (steps per second × 0.1 s) |
+|---|---|---|
+| none | 1,107 (1,014–1,159) | 111 |
+| IMU | 1,030 (963–1,048) | 103 |
+| magnetometer | 1,005 (990–1,013) | 100 |
+| 1 light sensor (with albedo) | 615 (606–637) | 62 |
+| 6 light sensors (with albedo) | 237 (229–245) | 24 |
+| P0 sensors (IMU, magnetometer, 6 light sensors; no cameras) | 229 (223–233) | 23 |
+
+- **Per-step budget:** about 1 ms per step for the dynamics and SPICE, with the IMU and the
+  magnetometer adding little, plus about 0.5 to 0.7 ms per light sensor. That makes about 4.4 ms
+  per P0 step. Extrapolated from these runs, one orbit (about 56,800 steps) takes about
+  4 minutes, and 24 hours about 1 hour.
+- **Where the time goes:** the service is the bottleneck. Its CPU time is 75% of the loop time
+  without sensors and 87% for P0.
+- **Other costs:** recording costs about 3% (`--record`, about 23 MB per 600 s P0 run). Starting
+  a run (process start through `Reset`) takes about 0.3 s.
 
 Step ordering (decided in DATA-5, #70), so the controller computes command k from
 observation k with no actuation delay:
@@ -482,8 +515,12 @@ the gateway.
   change ([device-model.md](device-model.md) §3). The change was made in v1 before HOST-5 (#29)
   froze it (§8 there).
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
-  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service
-  rejects any other value until BSK-7 (#20) builds pacing); whether lockstep runs use it stays open.
+  (D2) Answered by DATA-10 (#75): both, for different tests (§4).
+  - SIL runs use Basilisk at `real_time_factor` 0, at about 23× real time for the P0 sensors on a laptop;
+  - unit and gateway tests keep the analytic fixture (D9).
+
+  So SIL tests in CI need the bsk install and the kernels: about 45 MB, mostly `de440s.bsp` and the
+  Earth PCK. They belong in BSK-11's (#24) job, not HOST-2's.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6) Answered by DATA-4 (#69) with the navigation owner: no.
   Dataset v1 replaces it, and the one reader moves to dataset v1. Layout and field mapping:
