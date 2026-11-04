@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -47,6 +48,32 @@ namespace Argus.Simulation.Tests
             Assert.That(NasaGibsUrl.TryParseDate("06/21/2025", out _), Is.False);
             Assert.That(NasaGibsUrl.TryParseDate("2025-06-21T00:00:00Z", out _), Is.False);
             Assert.That(NasaGibsUrl.TryParseDate(null, out _), Is.False);
+        }
+
+        [Test]
+        public void BuildPackTemplate_EscapesDirectoryButKeepsPlaceholders()
+        {
+            string directory = Path.Combine(
+                Path.GetTempPath(),
+                "Imagery Packs",
+                NasaGibsUrl.DefaultLayer,
+                "2025-06-21");
+
+            string result = NasaGibsUrl.BuildPackTemplate(directory, "png");
+
+            Assert.That(result, Does.StartWith("file:///"));
+            Assert.That(result, Does.Contain("Imagery%20Packs"));
+            Assert.That(
+                result,
+                Does.EndWith(
+                    "/" + NasaGibsUrl.DefaultLayer + "/2025-06-21/{z}/{x}/{reverseY}.png"));
+        }
+
+        [Test]
+        public void BuildPackTemplate_RejectsUnknownExtension()
+        {
+            Assert.Throws<ArgumentException>(() =>
+                NasaGibsUrl.BuildPackTemplate(Path.GetTempPath(), "tif"));
         }
 
         [Test]

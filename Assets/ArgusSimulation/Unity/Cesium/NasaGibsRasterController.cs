@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Argus.Simulation.Core;
 using CesiumForUnity;
 using Unity.Mathematics;
@@ -15,6 +16,8 @@ namespace Argus.Simulation.Unity
 
         public const string DateCommandLineOption = "-gt-date";
         public const string LayerCommandLineOption = "-gt-layer";
+        public const string PackCommandLineOption = "-gt-pack";
+        private const string StaticPackDate = "static";
 
         // Northern summer solstice: VIIRS has gap-free daylight imagery all the way to the north
         // pole. GIBS returns opaque black over whichever pole is in polar night, so no date covers
@@ -27,6 +30,25 @@ namespace Argus.Simulation.Unity
         [SerializeField] private string nightDateUtc = "2016-01-01";
         [SerializeField, Range(0, 8)] private int maximumLevel = 8;
         [SerializeField] private Light sunlight;
+
+        [Header("Offline imagery pack")]
+        [Tooltip("Read the base and observation layers from a pack made by " +
+            "Argus.Imagery/download_gibs_pack.py. Falls back to streaming when the pack is missing.")]
+        [SerializeField] private bool useImageryPack;
+        [Tooltip("Pack root. Empty uses ImageryPacks/ in the project root.")]
+        [SerializeField] private string imageryPackDirectory = "";
+
+        // JsonUtility reads public fields named as in manifest.json.
+        [Serializable]
+        private sealed class ImageryPackManifest
+        {
+            public string extension;
+            public int tile_size;
+            public int root_tiles_x;
+            public int root_tiles_y;
+            public int max_level;
+            public bool complete;
+        }
 
         private CesiumUrlTemplateRasterOverlay _baseOverlay;
         private CesiumUrlTemplateRasterOverlay _observationOverlay;
@@ -204,13 +226,15 @@ namespace Argus.Simulation.Unity
             {
                 ConfigureOverlay(
                     _baseOverlay,
-                    NasaGibsUrl.BuildBaseTemplate(),
+                    ResolvePackTemplate(NasaGibsUrl.DefaultBaseLayer, StaticPackDate) ??
+                        NasaGibsUrl.BuildBaseTemplate(),
                     "0",
                     false,
                     90.0);
                 ConfigureOverlay(
                     _observationOverlay,
-                    NasaGibsUrl.BuildTemplate(layer, date),
+                    ResolvePackTemplate(layer, observationDateUtc) ??
+                        NasaGibsUrl.BuildTemplate(layer, date),
                     "1",
                     true,
                     90.0);
@@ -241,9 +265,82 @@ namespace Argus.Simulation.Unity
             }
         }
 
+        // The night layer keeps streaming: its tiles follow the moving night-side rectangle,
+        // so they never line up with a pre-downloaded grid.
+        private string ResolvePackTemplate(string packLayer, string packDate)
+        {
+            if (!useImageryPack)
+            {
+                return null;
+            }
+
+            string root = string.IsNullOrWhiteSpace(imageryPackDirectory)
+                ? Path.Combine(Application.dataPath, "..", "ImageryPacks")
+                : imageryPackDirectory.Trim();
+            string directory = Path.Combine(root, packLayer, packDate);
+            string manifestPath = Path.Combine(directory, "manifest.json");
+            string problem = null;
+            ImageryPackManifest manifest = null;
+            if (!File.Exists(manifestPath))
+            {
+                problem = "has not been downloaded";
+            }
+            else
+            {
+                try
+                {
+                    manifest = JsonUtility.FromJson<ImageryPackManifest>(File.ReadAllText(manifestPath));
+                }
+                catch (ArgumentException)
+                {
+                    // Invalid JSON leaves the manifest null, which is reported below.
+                }
+
+                if (manifest == null)
+                {
+                    problem = "has an unreadable manifest.json";
+                }
+                else if (!manifest.complete)
+                {
+                    problem = "is incomplete; rerun the download to finish it";
+                }
+                else if (manifest.max_level < maximumLevel || manifest.tile_size != 512 ||
+                         manifest.root_tiles_x != 2 || manifest.root_tiles_y != 1)
+                {
+                    problem = $"does not match this overlay (needs level {maximumLevel}, 512 px, 2x1 roots)";
+                }
+            }
+
+            if (problem != null)
+            {
+                Debug.LogWarning(
+                    $"Imagery pack {directory} {problem}. Streaming {packLayer} from NASA GIBS instead. " +
+                    "See Argus.Imagery/README.md.",
+                    this);
+                return null;
+            }
+
+            try
+            {
+                return NasaGibsUrl.BuildPackTemplate(directory, manifest.extension);
+            }
+            catch (ArgumentException exception)
+            {
+                Debug.LogWarning($"Imagery pack {directory}: {exception.Message}", this);
+                return null;
+            }
+        }
+
         private void ApplyCommandLineOverrides()
         {
             string[] args = Environment.GetCommandLineArgs();
+            string requestedPack = GetCommandLineValue(args, PackCommandLineOption);
+            if (requestedPack != null)
+            {
+                useImageryPack = true;
+                imageryPackDirectory = requestedPack;
+            }
+
             string requestedDate = GetCommandLineValue(args, DateCommandLineOption);
             string requestedLayer = GetCommandLineValue(args, LayerCommandLineOption);
             if ((requestedDate != null || requestedLayer != null) &&
