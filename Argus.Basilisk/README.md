@@ -576,7 +576,8 @@ Details name the field path and the bad value.
 - 100 steps, Reset, 100 steps: bit-identical.
 - For 2025-01-15T00:00Z with `argus-2026-09-25`, Step(0) Earth `J20002Pfix` and
   `J20002Pfix_dot` equal the t = 0 `rotation` and `rotation_rate` of
-  `origin/spice-integration:Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json`
+  `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json` at `f2e9fc8`
+  (`git fetch origin pull/5/head`; the same file as on the `spice-integration` branch)
   to 1e-12, and Sun − Earth equals its `sun_position_j2000_m` to 1e-3 m. These are the
   inputs of Core `BasiliskStateMapperTests`.
 - `dotnet run --project headless/Host/Argus.Simulation.Host.csproj` runs clean against the
