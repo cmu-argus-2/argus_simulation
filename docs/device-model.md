@@ -269,16 +269,16 @@ message DeviceCommandSet {
 Both sides declare a kind's keys. A single machine-readable schema both read is out of scope for
 now.
 
-## 8. Before HOST-5
+## 8. Versioning
 
-`Argus.Contracts/README.md` allows incompatible v1 changes until HOST-5 (#29) marks the Basilisk
-path verified, and dataset v1 follows the same rule. Changes that break v1 must merge first;
-additions can follow.
+`Argus.Contracts/README.md` allowed incompatible v1 changes until HOST-5 (#29) verified the
+Basilisk path, and dataset v1 followed the same rule. The changes that break v1 merged first;
+v1 is now additive only, and the rest are additions.
 
 | Change | Breaks v1 | Lands in |
 |---|---|---|
-| `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), before HOST-5 |
-| `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), before HOST-5 |
+| `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), merged before HOST-5 |
+| `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), merged before HOST-5 |
 | Profile and run file split | no (a host format) | HOST-9 (#113), any time |
 | Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | BSK-8 (#21), with the first actuator |
 | New kinds | no (registry only) | CON-2 (#34) and later |

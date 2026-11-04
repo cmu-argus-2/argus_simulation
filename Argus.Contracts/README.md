@@ -37,15 +37,13 @@ types directly.
 
 ## v1 rules
 
-- **Until the first end-to-end run, v1 may change incompatibly.** Nothing yet runs the
-  host against the service end to end with the P0 scenario, so no two deployed revisions
-  depend on each other. Until HOST-5 (#29) marks the Basilisk path verified, a v1 change
-  may rename a field or change its meaning, provided the client, the service and their
-  tests change in the same PR (or in PRs merged together). The change to
-  `StepRequest.command`'s interval (DATA-5, #70) is one.
-- From then on, additive only: new messages, fields, RPCs and oneof members, with new
-  field numbers. Never change a field's number, type, name, unit, frame or meaning. A
-  deleted field becomes `reserved`. A breaking change goes to `v2`.
+- **v1 is additive only.** HOST-5 (#29) verified the Basilisk path end to end with the P0
+  scenario, which froze v1. Allowed: new messages, fields, RPCs and oneof members, with new
+  field numbers, and new device kinds, which need no message at all (D11). Never change a
+  field's number, type, name, unit, frame or meaning. A deleted field becomes `reserved`. A
+  breaking change goes to `v2`. Before the freeze, v1 changed in place when the client, the
+  service and their tests changed together: `StepRequest`'s command interval (DATA-5, #70)
+  and the device model (CORE-19 #111, CORE-20 #112). Dataset v1 follows the same rule.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the

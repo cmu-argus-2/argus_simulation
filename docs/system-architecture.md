@@ -279,9 +279,11 @@ Basilisk Python service (Argus.Basilisk), with SPICE through spiceInterface
 Keep Argus extensions outside the Basilisk source tree. Do not expose Basilisk-specific
 message classes to Unity or flight-hardware adapters. Mapping tests must cover
 units, ECI/ECEF conversion, attitude convention, timestamp conversion, resets, and
-command application. `BasiliskStateMapperTests` covers frames, attitude and time today;
-reset and command-application tests are still missing (no backend applies commands yet,
-target-architecture G1).
+command application. `BasiliskStateMapperTests` covers frames, attitude and time with literal
+SPICE data. On real Basilisk, HOST-4 (#28) and HOST-5 (#29) confirmed units, J2000 to ITRF93,
+the attitude convention, timestamps and resets on the host's output, against CSPICE and an
+independent orbit propagation (target-architecture G4). Still missing: command application,
+since no backend applies commands yet (target-architecture G1, BSK-8 #21).
 
 ## 12. Transport strategy
 

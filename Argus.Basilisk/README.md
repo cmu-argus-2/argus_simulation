@@ -396,6 +396,15 @@ and `[b, b, b]` in the tables below are shorthand for `np.zeros((3, 3))`, `np.ey
 3-vector; T is the sample period in seconds. Outputs are scale × (true + noise + bias), then
 quantised (IMU only), then clipped.
 
+**IMU quantisation truncates toward zero.** `imuSensor`'s `setLSBs` keeps the whole number of
+LSBs toward zero, not the nearest, so every value within ±1 LSB reads 0: a dead band two LSBs
+wide. On a recorded P0 orbit, 27% of gyro samples and 8.5% of accelerometer samples are exactly
+0, as truncation predicts (rounding would give 14% and 4.2%). The noise comes out narrower than
+configured: σ 0.33 mrad/s instead of 0.38 for the gyro, and 5.45 mm/s² instead of 5.69 for the
+accelerometer. A small rate below one LSB reads 0. DATA-1 (#67) confirms whether the flight
+IMU rounds or truncates before the P0 resolutions are set; if it rounds, the service has to
+quantise itself instead of using `setLSBs`.
+
 Every module's required input messages must be linked, or `InitializeSimulation` raises
 `BasiliskError`: IMU (both modules) and CSS `scStateInMsg` / `stateInMsg` from
 `scStateOutMsg`; albedo `spacecraftStateInMsg` from `scStateOutMsg` and `sunPositionInMsg`
@@ -411,14 +420,14 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 | `gyroscope.constant_bias_sensor_rad_per_s` | vector3 | `senRotBias` |
 | `gyroscope.scale_factor_per_axis` | vector3 | `gyroScale`; each > 0 |
 | `gyroscope.range_rad_per_s` | number | `senRotMax`; > 0 |
-| `gyroscope.resolution_rad_per_s` | number | `setLSBs(accelerometer LSB, this)`; 0 = no quantisation; < range |
+| `gyroscope.resolution_rad_per_s` | number | `setLSBs(accelerometer LSB, this)`; 0 = no quantisation; < range; truncates toward zero |
 | `accelerometer.noise_density_m_per_s2_per_sqrt_hz` | number | `PMatrixAccel = N / √T I`; `setAMatrixAccel(0)` |
 | `accelerometer.bias_random_walk_m_per_s2_per_sqrt_s` | number | `PMatrixAccel = K √T I`; `setAMatrixAccel(I)` |
 | `accelerometer.bias_random_walk_bound_m_per_s2` | number | `setWalkBoundsAccel([b, b, b])` |
 | `accelerometer.constant_bias_sensor_m_per_s2` | vector3 | `senTransBias` |
 | `accelerometer.scale_factor_per_axis` | vector3 | `accelScale` |
 | `accelerometer.range_m_per_s2` | number | `senTransMax` |
-| `accelerometer.resolution_m_per_s2` | number | `setLSBs(this, gyroscope LSB)` |
+| `accelerometer.resolution_m_per_s2` | number | `setLSBs(this, gyroscope LSB)`; truncates toward zero |
 
 The accelerometer keys follow the gyroscope rules. Noise density and random walk exclude each
 other per channel.

@@ -1,6 +1,6 @@
 # Core/Basilisk: Basilisk-to-Argus mapping
 
-**Diagram block:** BasiliskEngine · **Assembly:** `Argus.Simulation.Core` · **Status:** mapping built; used by `BasiliskEngine` in `headless/Host` (not yet run against a real Basilisk service)
+**Diagram block:** BasiliskEngine · **Assembly:** `Argus.Simulation.Core` · **Status:** mapping built; used by `BasiliskEngine` in `headless/Host`, and verified on real Basilisk and SPICE with the full P0 scenario (HOST-4 #28, HOST-5 #29; target-architecture G4)
 
 This folder holds the transport-free half of `BasiliskEngine`: plain C# mirrors of the
 Basilisk messages Argus reads, and the conversions from them to Argus contracts. The
