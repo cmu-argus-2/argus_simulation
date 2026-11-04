@@ -72,20 +72,36 @@ namespace Argus.Simulation.Core
         // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor whose
         // frames carry truth may not be controller-visible, because the gateway forwards those frames
         // unchanged (D7, IDeviceKind.MayBeControllerVisible). Device IDs are unique across the run.
+        // Cameras that share a profile ID share its parameter set, so the recorded profile_id names
+        // one set (ICameraKind, CORE-6); the profile is read only once the device is valid.
         private static bool AreDevicesValid(IReadOnlyList<DeviceConfiguration> devices, double fixedStepSeconds)
         {
             HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, CameraProfile> cameraProfiles = new Dictionary<string, CameraProfile>(StringComparer.Ordinal);
             foreach (DeviceConfiguration device in devices)
             {
                 if (!device.IsValid ||
                     !IsWholeNumberOfSteps(device.Definition.SamplePeriodSeconds, fixedStepSeconds) ||
                     (device.Definition.IsControllerVisible && !device.MayBeControllerVisible) ||
-                    !deviceIds.Add(device.Definition.SensorId))
+                    !deviceIds.Add(device.Definition.SensorId) ||
+                    (device.KindDefinition is ICameraKind camera && !IsConsistent(cameraProfiles, camera.Profile(device))))
                 {
                     return false;
                 }
             }
 
+            return true;
+        }
+
+        // The first camera with a profile ID sets its parameter set; every later one must match it.
+        private static bool IsConsistent(Dictionary<string, CameraProfile> profiles, CameraProfile profile)
+        {
+            if (profiles.TryGetValue(profile.ProfileId, out CameraProfile first))
+            {
+                return profile.IsSameParameterSetAs(first);
+            }
+
+            profiles.Add(profile.ProfileId, profile);
             return true;
         }
 

@@ -141,7 +141,7 @@ namespace Argus.Simulation.Tests
         private static DeviceConfiguration Camera(string sensorId, double samplePeriodSeconds) =>
             CameraKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity),
-                new CameraProfile(new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0), 0.0005));
+                TestCameras.Profile(new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0), 0.0005));
 
         private static BasiliskStepState Step(long nanoseconds, Mrp sigmaBN, Vector3d omegaBNBody, params BasiliskSensorSample[] samples)
         {

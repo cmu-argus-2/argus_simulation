@@ -8,26 +8,29 @@ namespace Argus.Simulation.Tests
     {
         // Each kind declares whether the backend models it, so Argus never computes a kind the
         // backend models (D10, CORE-18), and whether a controller may see its frames, which a kind
-        // whose frames carry truth may not (D7). A new kind fails here until it has a row.
+        // whose frames carry truth may not (D7), and whether it is a camera (ICameraKind: the
+        // recorder's cameras[] and the shared profile-ID rule, CORE-6). A new kind fails here until it
+        // has a row.
         [Test]
-        public void EveryKindDeclaresWhoModelsItAndWhetherAControllerMaySeeIt()
+        public void EveryKindDeclaresWhoModelsItWhetherAControllerMaySeeItAndWhetherItIsACamera()
         {
-            (string Name, bool IsBackendModelled, bool MayBeControllerVisible)[] kinds =
+            (string Name, bool IsBackendModelled, bool MayBeControllerVisible, bool IsCamera)[] kinds =
             {
-                ("imu", true, true),
-                ("magnetometer", true, true),
-                ("light_sensor", true, true),
-                ("camera", false, false)
+                ("imu", true, true, false),
+                ("magnetometer", true, true, false),
+                ("light_sensor", true, true, false),
+                ("camera", false, false, true)
             };
 
             Assert.That(DeviceKinds.All.Select(kind => kind.Name), Is.EquivalentTo(kinds.Select(row => row.Name)));
-            foreach ((string name, bool isBackendModelled, bool mayBeControllerVisible) in kinds)
+            foreach ((string name, bool isBackendModelled, bool mayBeControllerVisible, bool isCamera) in kinds)
             {
                 IDeviceKind kind = DeviceKinds.Find(name);
                 Assert.That(kind.Role, Is.EqualTo(DeviceRole.Sensor), name);
                 Assert.That(kind.IsBackendModelled, Is.EqualTo(isBackendModelled), name);
                 Assert.That(kind.MayBeControllerVisible, Is.EqualTo(mayBeControllerVisible), name);
                 Assert.That(kind is IBackendSensorKind, Is.EqualTo(isBackendModelled), name);
+                Assert.That(kind is ICameraKind, Is.EqualTo(isCamera), name);
             }
 
             Assert.That(default(DeviceConfiguration).IsBackendModelled, Is.False);
@@ -82,12 +85,144 @@ namespace Argus.Simulation.Tests
         {
             DeviceConfiguration camera = CameraKind.Instance.Configure(
                 Definition("cam.px"),
-                new CameraProfile(
+                TestCameras.Profile(
                     new CameraIntrinsics(widthPixels, 2592, focalLengthPixels, focalLengthPixels, 2304.0, 1296.0),
                     exposureDurationSeconds));
 
             Assert.That(camera.Kind, Is.EqualTo("camera"));
             Assert.That(camera.IsValid, Is.EqualTo(isValid));
+        }
+
+        // The DATA-6 (#71) profile as camera parameters (CORE-6): every value with where it came from.
+        // Distortion is Brown-Conrady, one key per coefficient in OpenCV's order (there is no array
+        // value type). Keys carry their units (docs/device-model.md §3).
+        [Test]
+        public void CameraParametersAreTheDataSixProfile()
+        {
+            (string Name, DeviceValueType Type)[] keys =
+            {
+                ("profile_id", DeviceValueType.Text),
+                ("intrinsics.width_px", DeviceValueType.Number),
+                ("intrinsics.height_px", DeviceValueType.Number),
+                ("intrinsics.focal_length_x_px", DeviceValueType.Number),
+                ("intrinsics.focal_length_y_px", DeviceValueType.Number),
+                ("intrinsics.principal_point_x_px", DeviceValueType.Number),
+                ("intrinsics.principal_point_y_px", DeviceValueType.Number),
+                ("intrinsics.source", DeviceValueType.Text),
+                ("intrinsics.calibrated", DeviceValueType.Flag),
+                ("distortion.model", DeviceValueType.Text),
+                ("distortion.k1", DeviceValueType.Number),
+                ("distortion.k2", DeviceValueType.Number),
+                ("distortion.p1", DeviceValueType.Number),
+                ("distortion.p2", DeviceValueType.Number),
+                ("distortion.k3", DeviceValueType.Number),
+                ("distortion.source", DeviceValueType.Text),
+                ("noise.source", DeviceValueType.Text),
+                ("exposure_duration_s", DeviceValueType.Number),
+                ("extrinsics.source", DeviceValueType.Text),
+                ("extrinsics.origin", DeviceValueType.Text),
+                ("extrinsics.orientation_verified", DeviceValueType.Flag)
+            };
+
+            Assert.That(
+                CameraKind.Instance.ParameterKeys.Select(key => (key.Name, key.Type)),
+                Is.EquivalentTo(keys));
+
+            // The parameters round-trip to the same profile, every field.
+            CameraProfile profile = new CameraProfile(
+                "imx708-cal-1",
+                new CameraIntrinsics(4608, 2592, 3540.5, 3541.5, 2300.25, 1290.75),
+                "checkerboard",
+                isCalibrated: true,
+                CameraDistortion.Zero("checkerboard-2026-11"),
+                CameraProfile.NoNoise,
+                0.002,
+                new CameraExtrinsicsProvenance("cad-2026", "geometric-centre", isOrientationVerified: true));
+            DeviceConfiguration camera = CameraKind.Instance.Configure(Definition("cam.px"), profile);
+            Assert.That(camera.IsValid, Is.True, camera.FindProblem());
+            Assert.That(CameraKind.Instance.Profile(camera), Is.EqualTo(profile));
+            Assert.That(camera.Parameters["profile_id"].Text, Is.EqualTo("imx708-cal-1"));
+            Assert.That(camera.Parameters["intrinsics.focal_length_y_px"].Number, Is.EqualTo(3541.5));
+            Assert.That(camera.Parameters["intrinsics.calibrated"].Flag, Is.True);
+            Assert.That(camera.Parameters["distortion.source"].Text, Is.EqualTo("checkerboard-2026-11"));
+            Assert.That(camera.Parameters["extrinsics.origin"].Text, Is.EqualTo("geometric-centre"));
+            Assert.That(camera.Parameters["extrinsics.orientation_verified"].Flag, Is.True);
+
+            // Each coefficient lands under its own name. Non-zero distortion stays invalid until a
+            // renderer applies it (UNITY-4), so it is checked on the parameters, not read back.
+            DeviceConfiguration distorted = CameraKind.Instance.Configure(
+                Definition("cam.px"),
+                new CameraProfile(
+                    profile.ProfileId, profile.Intrinsics, profile.IntrinsicsSource, profile.IsCalibrated,
+                    new CameraDistortion(CameraDistortion.BrownConrady5, 1e-3, 2e-3, 3e-3, 4e-3, 5e-3, "calibration"),
+                    profile.NoiseSource, profile.ExposureDurationSeconds, profile.Extrinsics));
+            Assert.That(
+                new[] { "distortion.k1", "distortion.k2", "distortion.p1", "distortion.p2", "distortion.k3" }
+                    .Select(key => distorted.Parameters[key].Number),
+                Is.EqualTo(new[] { 1e-3, 2e-3, 3e-3, 4e-3, 5e-3 }));
+            Assert.That(distorted.FindProblem(), Does.StartWith("parameters[\"distortion.*\"]: must be all zero"));
+        }
+
+        // An invalid camera profile names the narrowest key (CORE-6). Distortion must be zero until a
+        // renderer applies it (UNITY-4), and there is no noise model yet (DATA-6), so both are closed.
+        [TestCase("profile_id", "IMX708", "parameters[\"profile_id\"]: must match [a-z0-9][a-z0-9._-]*")]
+        [TestCase("profile_id", "", "parameters[\"profile_id\"]: must match [a-z0-9][a-z0-9._-]*")]
+        [TestCase("intrinsics.source", " ", "parameters[\"intrinsics.source\"]: must not be blank")]
+        [TestCase("intrinsics.focal_length_x_px", 0.0, "parameters[\"intrinsics.*\"]: are not valid intrinsics")]
+        [TestCase("distortion.model", "kannala-brandt", "parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
+        [TestCase("distortion.k1", 1e-3, "parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion (UNITY-4 #57)")]
+        [TestCase("distortion.p2", -1e-3, "parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion (UNITY-4 #57)")]
+        [TestCase("distortion.k3", 1e-3, "parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion (UNITY-4 #57)")]
+        [TestCase("distortion.source", "", "parameters[\"distortion.source\"]: must not be blank")]
+        [TestCase("noise.source", "dark-frames", "parameters[\"noise.source\"]: must be \"none\": there is no camera noise model yet (DATA-6 #71)")]
+        [TestCase("exposure_duration_s", -1.0, "parameters[\"exposure_duration_s\"]: must be finite and >= 0")]
+        [TestCase("extrinsics.source", " ", "parameters[\"extrinsics.source\"]: must not be blank")]
+        [TestCase("extrinsics.origin", "", "parameters[\"extrinsics.origin\"]: must not be blank")]
+        public void InvalidCameraProfileNamesTheKey(string key, object value, string expectedProblem)
+        {
+            DeviceValues valid = TestCameras.Configuration(Definition("cam.px")).Parameters;
+            DeviceValue changed = value is string text ? DeviceValue.FromText(text) : DeviceValue.FromNumber((double)value);
+
+            Assert.That(Problem("camera", With(Without(valid, key), key, changed)), Does.StartWith(expectedProblem));
+        }
+
+        // Which kinds are cameras is the registry's ICameraKind, not a list of names, so a camera kind
+        // added later (CORE-8's nadir camera, #44) must declare it: every sensor kind builds a
+        // CameraModel exactly when it is an ICameraKind, and no other role is a camera. A new kind
+        // fails here until it has a sample.
+        [Test]
+        public void EverySensorKindBuildsACameraModelExactlyWhenItIsACameraKind()
+        {
+            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
+            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
+            DeviceConfiguration[] samples =
+            {
+                ImuKind.Instance.Configure(
+                    Definition("imu.main"),
+                    new ImuProfile(
+                        new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
+                        new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3))),
+                Magnetometer(),
+                LightSensorKind.Instance.Configure(Definition("light.px"), new LightSensorProfile(1.0, 1.0, 0.0, 0.0, 1500.0)),
+                TestCameras.Configuration(Definition("cam.px"))
+            };
+
+            Assert.That(samples.Select(sample => sample.Kind), Is.EquivalentTo(DeviceKinds.All.Select(kind => kind.Name)));
+            foreach (DeviceConfiguration sample in samples)
+            {
+                IDeviceKind kind = sample.KindDefinition;
+                Assert.That(sample.IsValid, Is.True, sample.Kind + ": " + sample.FindProblem());
+                if (kind.Role != DeviceRole.Sensor)
+                {
+                    Assert.That(kind is ICameraKind, Is.False, sample.Kind);
+                    continue;
+                }
+
+                Assert.That(kind.CreateSensor(sample, null) is CameraModel, Is.EqualTo(kind is ICameraKind), sample.Kind);
+            }
+
+            DeviceConfiguration camera = samples[3];
+            Assert.That(((ICameraKind)camera.KindDefinition).Profile(camera), Is.EqualTo(TestCameras.Imx708Profile()));
         }
 
         private static DeviceConfiguration Magnetometer() =>
