@@ -665,6 +665,11 @@ namespace Argus.Simulation.Unity
             {
                 _statusText.text = $"● LOADING NADIR {_nadirPriority.WarmUpProgress:0}%";
             }
+            if (_episodeExporter != null && _episodeExporter.IsCaptureInProgress)
+            {
+                _statusText.text = _episodeExporter.LastCaptureStatus;
+                _statusText.color = new Color(0.98f, 0.72f, 0.22f);
+            }
             _pauseButtonText.text = _runner.IsRunning ? "PAUSE" : "RESUME";
 
             SpacecraftState state = _runner.LastState.Spacecraft;
@@ -873,7 +878,9 @@ namespace Argus.Simulation.Unity
         {
             if (_captureButtonText != null)
             {
-                _captureButtonText.text = status;
+                bool busy = _episodeExporter != null && _episodeExporter.IsCaptureInProgress;
+                _captureButtonText.text = busy ? "CAPTURE…" : status == "CAPTURE" ? "CAPTURE" : "CAPTURE / " + status;
+                _captureButtonText.GetComponentInParent<Button>().interactable = !busy;
             }
         }
 

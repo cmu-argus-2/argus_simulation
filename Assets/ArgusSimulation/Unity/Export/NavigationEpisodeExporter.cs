@@ -44,6 +44,8 @@ namespace Argus.Simulation.Unity
         private UnityImageRenderer _renderer;
         private CancellationTokenSource _captureCancellation;
         private bool _resumeSimulation;
+        private int _captureIndex;
+        private int _captureTotal;
 
         private string _episodeDirectory;
         private string _metadataPath;
@@ -53,6 +55,7 @@ namespace Argus.Simulation.Unity
 
         public bool IsCaptureInProgress { get; private set; }
         public string LastCaptureStatus { get; private set; } = "CAPTURE";
+        public string LastCaptureError { get; private set; } = string.Empty;
         public string EpisodeDirectory => _episodeDirectory ?? string.Empty;
 
         // JsonUtility serializes public fields, not C# properties.
@@ -114,7 +117,15 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        public bool RequestCapture()
+        public bool RequestCapture() => BeginCapture(false);
+
+        // A manual acceptance capture, not a replacement for the Core camera configuration.
+        // Uses the DATA-6 v0 full-resolution calibration for the four body views only.
+        public bool RequestFullResolutionCapture() => BeginCapture(true);
+
+        public void CancelCapture() => _captureCancellation?.Cancel();
+
+        private bool BeginCapture(bool fullResolution)
         {
             if (IsCaptureInProgress)
             {
@@ -144,13 +155,17 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
+            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState, fullResolution));
             return true;
         }
 
-        private IEnumerator CaptureWhenCesiumIsReady(SimulationState state)
+        private IEnumerator CaptureWhenCesiumIsReady(SimulationState state, bool fullResolution)
         {
             IsCaptureInProgress = true;
+            // Reserve a capture number even if a later camera fails. Retrying must not overwrite
+            // already saved images or append metadata pointing at a replacement image.
+            int captureNumber = _captureNumber++;
+            LastCaptureError = string.Empty;
             _resumeSimulation = runner.IsRunning;
             runner.IsRunning = false;
             _captureCancellation = new CancellationTokenSource();
@@ -160,11 +175,14 @@ namespace Argus.Simulation.Unity
                 if (_renderer == null) _renderer = gameObject.AddComponent<UnityImageRenderer>();
             }
             runner.ConfigureImageRenderer(_renderer);
+            _renderer.CaptureStatusChanged += HandleRendererStatus;
             string status = "EXPORT ERROR";
             try
             {
-                int first = captureAllCameras ? 0 : selectedCameraIndex;
-                int last = captureAllCameras ? cameraRig.Cameras.Count : selectedCameraIndex + 1;
+                int first = fullResolution || captureAllCameras ? 0 : selectedCameraIndex;
+                int last = fullResolution ? Math.Min(4, cameraRig.Cameras.Count)
+                    : captureAllCameras ? cameraRig.Cameras.Count : selectedCameraIndex + 1;
+                _captureTotal = last - first;
                 if (first < 0 || last > cameraRig.Cameras.Count)
                 {
                     status = "NO CAMERA";
@@ -178,7 +196,7 @@ namespace Argus.Simulation.Unity
                     // later states must not change the exposure while terrain is loading.
                     for (int index = first; index < last; index++)
                     {
-                        requests[index - first] = CreateRequest(state, index);
+                        requests[index - first] = CreateRequest(state, index, fullResolution, captureNumber);
                         cameraToBody[index - first] = Quaternion.Inverse(cameraRig.transform.rotation) *
                             cameraRig.Cameras[index].transform.rotation;
                     }
@@ -186,7 +204,8 @@ namespace Argus.Simulation.Unity
                 catch (Exception exception) { Debug.LogException(exception, this); yield break; }
                 for (int index = first; index < last; index++)
                 {
-                    SetCaptureStatus("LOADING / CAPTURING");
+                    _captureIndex = index - first + 1;
+                    SetCaptureStatus($"{_captureIndex}/{_captureTotal} QUEUED");
                     System.Threading.Tasks.Task<ImageFrame> task = null;
                     try
                     {
@@ -199,24 +218,31 @@ namespace Argus.Simulation.Unity
                     {
                         ImageFrame frame = task.GetAwaiter().GetResult();
                         EnsureOutputDirectory();
-                        ExportCamera(state.Spacecraft, index, _captureNumber, frame, cameraToBody[index - first]);
+                        ExportCamera(state.Spacecraft, index, captureNumber, frame, cameraToBody[index - first]);
                     }
-                    catch (TimeoutException) { status = "LOAD TIMEOUT"; yield break; }
+                    catch (TimeoutException exception)
+                    {
+                        LastCaptureError = exception.Message;
+                        Debug.LogWarning("Camera capture timed out: " + LastCaptureError, this);
+                        status = "LOAD TIMEOUT";
+                        yield break;
+                    }
                     catch (OperationCanceledException) { status = "CANCELLED"; yield break; }
                     catch (Exception exception) { Debug.LogException(exception, this); yield break; }
                 }
-                _captureNumber++;
                 status = "SAVED";
+                Debug.Log($"Camera capture saved {_captureTotal} images to: {_episodeDirectory}", this);
             }
             finally
             {
+                _renderer.CaptureStatusChanged -= HandleRendererStatus;
                 _captureCancellation.Dispose();
                 _captureCancellation = null;
                 CompleteCapture(_resumeSimulation, status);
             }
         }
 
-        private RenderRequest CreateRequest(SimulationState state, int index)
+        private RenderRequest CreateRequest(SimulationState state, int index, bool fullResolution, int captureNumber)
         {
             Camera camera = cameraRig.Cameras[index];
             RenderTexture target = cameraRig.RenderTextures[index];
@@ -228,10 +254,13 @@ namespace Argus.Simulation.Unity
             Vector3d down = ToEcefDirection(reference, -camera.transform.up);
             Vector3d forward = ToEcefDirection(reference, camera.transform.forward);
             double fy = 0.5 * target.height / Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
-            return new RenderRequest(cameraRig.Names[index], _captureNumber, state.Spacecraft.Sequence,
+            CameraIntrinsics intrinsics = fullResolution
+                ? new CameraIntrinsics(4608, 2592, 3548, 3548, 2304, 1296)
+                : new CameraIntrinsics(target.width, target.height, fy, fy, (target.width - 1) / 2.0, (target.height - 1) / 2.0);
+            return new RenderRequest(cameraRig.Names[index], captureNumber, state.Spacecraft.Sequence,
                 state.Spacecraft.SimulationTimeSeconds, state.Spacecraft.TimestampUtc, 0,
                 new Vector3d(position.x, position.y, position.z), Quaterniond.FromBasis(right, down, forward),
-                new CameraIntrinsics(target.width, target.height, fy, fy, (target.width - 1) / 2.0, (target.height - 1) / 2.0),
+                intrinsics,
                 state.Environment?.SunPositionItrf93Meters);
         }
 
@@ -246,6 +275,7 @@ namespace Argus.Simulation.Unity
         {
             if (!IsCaptureInProgress) return;
             _captureCancellation?.Cancel();
+            if (_renderer != null) _renderer.CaptureStatusChanged -= HandleRendererStatus;
             StopAllCoroutines();
             _captureCancellation?.Dispose();
             _captureCancellation = null;
@@ -263,6 +293,12 @@ namespace Argus.Simulation.Unity
             SetCaptureStatus(status);
         }
 
+        private void HandleRendererStatus(string status)
+        {
+            if (IsCaptureInProgress && status != "IDLE")
+                SetCaptureStatus($"{_captureIndex}/{_captureTotal} {status}");
+        }
+
         private void SetCaptureStatus(string status)
         {
             LastCaptureStatus = status;
@@ -277,7 +313,7 @@ namespace Argus.Simulation.Unity
             }
 
             string safeEpisodeName = MakeSafeFileName(episodeName);
-            string runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
+            string runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ");
             _episodeDirectory = Path.Combine(
                 Application.persistentDataPath,
                 "NavigationEpisodes",

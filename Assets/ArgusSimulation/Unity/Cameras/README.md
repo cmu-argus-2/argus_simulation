@@ -14,7 +14,9 @@ automatic preview rendering. Preview FOV defaults to the IMX708 calibration (fy=
 2592 pixels high); these preview textures are not recorded Core exposures.
 
 The rig owns a separate, disabled request camera. The renderer allocates a target at the
-request's exact dimensions, registers that view with Cesium, and renders it once. It does not
+request's exact dimensions, registers that view with Cesium, and renders it once.
+Only the exposure view participates in Cesium tile selection during capture; dashboard,
+observer and look-ahead views are restored afterwards. It does not
 move a preview camera or replace a preview target. The request camera is unregistered and its
 target released on success, failure, cancellation or renderer disable.
 
@@ -33,7 +35,11 @@ Exposure duration is metadata; this renderer does not integrate motion blur over
 
 The readiness check enumerates current enabled tilesets on every check, including ones created
 or activated during the wait. No enabled tileset means ready. Defaults are 100% progress for
-10 consecutive frames, then a 1-second settle, with a 60-second wall-clock loading timeout.
+10 consecutive frames, then a 1-second settle. Loading times out after 60 seconds without a
+progress change of at least 0.5 percentage points, or a 240-second total deadline. Progress can
+drop when Cesium discovers finer tiles; that change also restarts the inactivity timer. The total
+deadline still bounds refinement churn. This lets large captures finish while they are making
+progress, rather than aborting them at 60 seconds regardless of progress.
 It yields Unity frames throughout; it never blocks the main thread waiting for tiles.
 `NadirTilePriority` uses the same progress helper and refreshes its look-ahead render target
 from the nadir preview each frame.
@@ -69,5 +75,33 @@ of asynchronous GPU readback throughput or a full Host-to-Unity rendering RPC.
 Run PlayMode tests with a GPU (no `-nographics`). The renderer tests use a small synthetic scene,
 not remote Cesium terrain. They verify off-centre intrinsics and image orientation with coloured
 markers, capture metadata, light restoration, cancellation/disable cleanup, task ordering after
-failure, step-loop gating, and PNG export through the legacy entry point. Real Cesium imagery
-loading and the full-resolution four-camera workload still need a scene smoke test.
+failure, step-loop gating, and PNG export through the legacy entry point. The separate opt-in scene smoke test covers real Cesium imagery loading and the
+full-resolution four-camera workload; synthetic tests alone do not establish that result.
+
+## Manual scene acceptance
+
+In Play Mode, the dashboard CAPTURE button saves all five preview-sized views. It keeps its
+CAPTURE label while busy; the adjacent status shows the camera number, loading percentage and
+elapsed seconds. Completion and timeouts are also logged in the Console. Outputs are PNGs plus
+`navigation_metadata.jsonl` under `Application.persistentDataPath/NavigationEpisodes`.
+
+The editor menu **Argus Simulation > Cameras** also provides Capture Preview, Capture Full
+Resolution (4 Body Cameras), Cancel Capture and Log Capture Status. The full-resolution command
+sends four native 4608×2592 requests (DATA-6 v0 fx=fy=3548, cx=2304, cy=1296), without enlarging
+the preview targets. This manual snapshot keeps exposure duration at zero; it is not the
+configured sensor sampling/noise/mount integration owned by CORE-6.
+
+`UnityImageRendererCesiumSmokeTests` is opt-in. Set `ARGUS_RUN_CESIUM_SMOKE=1` and select its
+`FoundationSavesPreviewAndFourFullResolutionBodyImages` test to exercise the actual Foundation
+scene, existing Cesium credentials, preview export, then four full-size exports. It retains
+images and metadata for inspection. Normal offline test runs skip this network-dependent test.
+
+## Local acceptance record — 2026-11-04
+
+On macOS with Unity 6000.6.0f1 and Metal: 14 offline PlayMode tests passed; the real-Cesium
+opt-in scene test passed separately in 266 seconds. The scene run saved five 768×432 images,
+four native 4608×2592 body images and nine matching metadata records. PNG decoding, dimensions,
+unique paths and full-size intrinsics were checked, and Earth-facing images were inspected.
+This validates the renderer and manual capture path; it does not validate a remote Host render
+RPC or CORE-6's configured sensor/noise integration. Network and uncached full-size tile loading
+can take minutes; this is not a real-time throughput result.

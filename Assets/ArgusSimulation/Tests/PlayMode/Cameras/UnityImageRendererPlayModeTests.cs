@@ -122,9 +122,15 @@ namespace Argus.Simulation.Tests
                 yield return null;
                 yield return null;
                 Assert.That(active.IsCompleted, Is.False);
+                CesiumCameraManager manager = _world.GetComponent<CesiumCameraManager>();
+                Assert.That(manager.useMainCamera, Is.False);
+                Assert.That(manager.additionalCameras.Count, Is.EqualTo(1));
+                Assert.That(manager.additionalCameras[0], Is.SameAs(_rig.RequestCamera));
                 cancellation.Cancel();
                 yield return Wait(active);
                 Assert.That(active.IsCanceled, Is.True);
+                Assert.That(manager.useMainCamera, Is.True);
+                foreach (Camera view in _rig.Cameras) Assert.That(manager.additionalCameras, Has.Member(view));
                 Assert.That(_rig.RequestCamera.targetTexture, Is.Null);
             }
             Task<ImageFrame> first = _renderer.RenderAsync(Request(), CancellationToken.None);
@@ -231,6 +237,99 @@ namespace Argus.Simulation.Tests
                 if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
             }
         }
+
+        [UnityTest]
+        public IEnumerator RetryingAPartialCaptureDoesNotOverwriteSavedImagesOrDuplicatePaths()
+        {
+            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            runner.IsRunning = false;
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(exporter, "unity4-retry-test-" + Guid.NewGuid().ToString("N"));
+            Assert.That(exporter.RequestCapture(), Is.True);
+            try
+            {
+                for (int frame = 0; frame < 180 && string.IsNullOrEmpty(exporter.EpisodeDirectory); frame++) yield return null;
+                Assert.That(exporter.EpisodeDirectory, Is.Not.Empty);
+                exporter.CancelCapture();
+                for (int frame = 0; frame < 180 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("CANCELLED"));
+                int partial = Directory.GetFiles(exporter.EpisodeDirectory, "*.png").Length;
+                Assert.That(partial, Is.InRange(1, 4));
+                Assert.That(exporter.RequestCapture(), Is.True);
+                for (int frame = 0; frame < 180 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"));
+                Assert.That(Directory.GetFiles(exporter.EpisodeDirectory, "*.png").Length, Is.EqualTo(partial + 5));
+                string[] metadata = File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl"));
+                Assert.That(metadata.Length, Is.EqualTo(partial + 5));
+                var paths = new HashSet<string>();
+                foreach (string row in metadata)
+                {
+                    // Each record must continue to refer to its own capture, rather than a retry overwriting it.
+                    string path = row.Substring(row.IndexOf("capture_", StringComparison.Ordinal)).Split('"')[0];
+                    Assert.That(paths.Add(path), Is.True, "Duplicate image path in metadata");
+                }
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator OverallLoadingDeadlineFaultsAndRestoresViews()
+        {
+            SetField("stableFramesRequired", int.MaxValue);
+            SetField("maximumLoadSeconds", 1f);
+            Task<ImageFrame> task = _renderer.RenderAsync(Request(), CancellationToken.None);
+            yield return new WaitForSecondsRealtime(1.2f);
+            yield return Wait(task);
+            Assert.That(task.IsFaulted, Is.True);
+            Assert.That(task.Exception.InnerException, Is.TypeOf<TimeoutException>());
+            Assert.That(_rig.RequestCamera.targetTexture, Is.Null);
+            var manager = _world.GetComponent<CesiumCameraManager>();
+            Assert.That(manager.useMainCamera, Is.True);
+            foreach (Camera view in _rig.Cameras) Assert.That(manager.additionalCameras, Has.Member(view));
+        }
+
+        [UnityTest]
+        public IEnumerator FullResolutionCaptureSavesFourNativeSizeBodyImages()
+        {
+            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            runner.IsRunning = false;
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(exporter, "unity4-full-test-" + Guid.NewGuid().ToString("N"));
+            Assert.That(exporter.RequestFullResolutionCapture(), Is.True);
+            try
+            {
+                for (int frame = 0; frame < 600 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.IsCaptureInProgress, Is.False);
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                string[] images = Directory.GetFiles(exporter.EpisodeDirectory, "*.png");
+                Assert.That(images.Length, Is.EqualTo(4));
+                foreach (string path in images)
+                {
+                    byte[] png = File.ReadAllBytes(path);
+                    Assert.That(ReadPngInteger(png, 16), Is.EqualTo(4608));
+                    Assert.That(ReadPngInteger(png, 20), Is.EqualTo(2592));
+                }
+                Assert.That(File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl")).Length,
+                    Is.EqualTo(4));
+                Assert.That(_rig.RenderTextures[0].width, Is.EqualTo(768), "Full-size capture must not resize the live preview");
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
+            }
+        }
+
+        private static int ReadPngInteger(byte[] png, int start) =>
+            (png[start] << 24) | (png[start + 1] << 16) | (png[start + 2] << 8) | png[start + 3];
 
         private RenderRequest Request(bool withSun = false)
         {

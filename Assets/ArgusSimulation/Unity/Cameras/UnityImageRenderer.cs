@@ -23,6 +23,7 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(1)] private int stableFramesRequired = 10;
         [SerializeField, Min(0f)] private float postLoadSettleSeconds = 1f;
         [SerializeField, Min(1f)] private float loadTimeoutSeconds = 60f;
+        [SerializeField, Min(1f)] private float maximumLoadSeconds = 240f;
 
         private readonly object _gate = new object();
         private readonly Queue<PendingRender> _requests = new Queue<PendingRender>();
@@ -32,6 +33,15 @@ namespace Argus.Simulation.Unity
         private Coroutine _pump;
 
         public string RendererName => "Unity/Cesium";
+        public string CaptureStatus { get; private set; } = "IDLE";
+        public event Action<string> CaptureStatusChanged;
+
+        private void SetCaptureStatus(string status)
+        {
+            if (CaptureStatus == status) return;
+            CaptureStatus = status;
+            CaptureStatusChanged?.Invoke(status);
+        }
         public bool IsRendering { get { lock (_gate) return _active != null || _requests.Count > 0; } }
 
         public void Configure(CubeSatCameraRig rig, CesiumGeoreference reference,
@@ -89,6 +99,7 @@ namespace Argus.Simulation.Unity
             _capture = null;
             lock (_gate) _active = null;
             _pump = null;
+            SetCaptureStatus("IDLE");
         }
 
         private IEnumerator Capture(PendingRender pending)
@@ -99,6 +110,9 @@ namespace Argus.Simulation.Unity
             Camera camera = cameraRig.RequestCamera;
             RenderTexture target = null;
             CesiumCameraManager manager = CesiumCameraManager.GetOrCreate(cameraRig.gameObject);
+            var previousViews = new List<Camera>(manager.additionalCameras);
+            bool previousMainView = manager.useMainCamera;
+            bool previousSceneView = manager.useSceneViewCameraInEditor;
             bool registered = false;
             try
             {
@@ -117,7 +131,9 @@ namespace Argus.Simulation.Unity
                 camera.fieldOfView = (float)(2 * Math.Atan(Math.Max(halfY, halfX / camera.aspect)) * 180 / Math.PI);
                 camera.projectionMatrix = Projection(request.Intrinsics, camera.nearClipPlane, camera.farClipPlane);
                 ApplyPose(camera, request);
-                manager.additionalCameras.Add(camera);
+                // Loading progress is tileset-wide. Select only the exposure view while waiting,
+                // so unrelated dashboard and look-ahead views cannot keep it below 100%.
+                SelectCaptureView(manager, camera, previousViews, ref previousMainView, ref previousSceneView);
                 registered = true;
 
                 Vector3? towardSun = null;
@@ -132,18 +148,31 @@ namespace Argus.Simulation.Unity
                 rasterController?.SetCaptureSunDirection(towardSun);
 
                 float startedAt = Time.realtimeSinceStartup;
+                float lastProgressAt = startedAt;
+                float lastProgress = -1f;
                 int stable = 0;
                 while (stable < Math.Max(1, stableFramesRequired))
                 {
                     pending.Token.ThrowIfCancellationRequested();
                     // Reapply after origin shifts; poses are Earth-fixed, not stale Unity positions.
                     ApplyPose(camera, request);
+                    SelectCaptureView(manager, camera, previousViews, ref previousMainView, ref previousSceneView);
                     float progress = MinimumEnabledTilesetProgress();
+                    float now = Time.realtimeSinceStartup;
+                    if (Mathf.Abs(progress - lastProgress) >= 0.5f)
+                    {
+                        lastProgress = progress;
+                        lastProgressAt = now;
+                    }
+                    SetCaptureStatus($"LOADING {progress:0}% ({now - startedAt:0}s)");
                     stable = progress >= minimumLoadProgress ? stable + 1 : 0;
-                    if (Time.realtimeSinceStartup - startedAt >= Math.Max(1f, loadTimeoutSeconds))
-                        throw new TimeoutException("Cesium did not load the requested view before the capture timeout.");
+                    if (now - lastProgressAt >= Math.Max(1f, loadTimeoutSeconds) ||
+                        now - startedAt >= Math.Max(1f, maximumLoadSeconds))
+                        throw new TimeoutException($"Cesium view is at {progress:0}% after {now - startedAt:0}s " +
+                            $"({now - lastProgressAt:0}s without progress); check terrain/network errors and retry.");
                     yield return null;
                 }
+                SetCaptureStatus("SETTLING");
                 float settleUntil = Time.realtimeSinceStartup + Math.Max(0f, postLoadSettleSeconds);
                 while (Time.realtimeSinceStartup < settleUntil)
                 {
@@ -163,6 +192,7 @@ namespace Argus.Simulation.Unity
                         sunlight.transform.rotation = Quaternion.LookRotation(-direction,
                             Mathf.Abs(Vector3.Dot(direction, Vector3.up)) > 0.99f ? Vector3.right : Vector3.up);
                     }
+                    SetCaptureStatus("READING PIXELS");
                     camera.Render();
                     image = ReadRenderTexture(target);
                     pending.Token.ThrowIfCancellationRequested();
@@ -179,10 +209,31 @@ namespace Argus.Simulation.Unity
             finally
             {
                 rasterController?.SetCaptureSunDirection(null);
-                if (registered && manager != null) manager.additionalCameras.Remove(camera);
+                if (registered && manager != null)
+                {
+                    manager.additionalCameras.Remove(camera);
+                    foreach (Camera view in previousViews)
+                        if (view != null && !manager.additionalCameras.Contains(view)) manager.additionalCameras.Add(view);
+                    manager.useMainCamera = previousMainView;
+                    manager.useSceneViewCameraInEditor = previousSceneView;
+                }
                 if (camera != null) { camera.targetTexture = null; camera.ResetProjectionMatrix(); }
                 if (target != null) { target.Release(); Destroy(target); }
             }
+        }
+
+        private static void SelectCaptureView(CesiumCameraManager manager, Camera camera,
+            List<Camera> previousViews, ref bool previousMainView, ref bool previousSceneView)
+        {
+            // Warm-up can finish while a request is loading. Remember views it restores too.
+            foreach (Camera view in manager.additionalCameras)
+                if (view != null && view != camera && !previousViews.Contains(view)) previousViews.Add(view);
+            previousMainView |= manager.useMainCamera;
+            previousSceneView |= manager.useSceneViewCameraInEditor;
+            manager.useMainCamera = false;
+            manager.useSceneViewCameraInEditor = false;
+            manager.additionalCameras.Clear();
+            manager.additionalCameras.Add(camera);
         }
 
         private void ResolveScene()
@@ -291,6 +342,7 @@ namespace Argus.Simulation.Unity
             lock (_gate) _active = null;
             _capture = null;
             _pump = null;
+            SetCaptureStatus("IDLE");
         }
 
         private sealed class PendingRender
