@@ -90,8 +90,10 @@ file; the host gives each run its own.
   `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`,
   `mount` with `positionBodyMeters` and `deviceToBody`) and `parameters`, the keys its kind
   declares. `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
-  `magnetometer` and `light_sensor`, which Basilisk models, and `camera`, which Argus computes
-  and never sends to the service (CORE-18). Parameter keys are snake_case with their unit,
+  `magnetometer` and `light_sensor`, which Basilisk models, and `camera` and
+  `nadir_ground_truth_camera` (the north-up nadir ground-truth camera, CORE-8), which Argus
+  computes and never sends to the service (CORE-18). Both camera kinds take the same keys; a
+  nadir camera needs its own `profile_id`, since cameras that share one share its parameters. Parameter keys are snake_case with their unit,
   the same spelling as on the wire and in the manifest (`noise_std_tesla`,
   `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists the keys of the kinds
   Basilisk models, and `Core/Sensors/Camera/README.md` the camera's. A key's group may be
@@ -104,7 +106,7 @@ file; the host gives each run its own.
   kind has state yet. `controllerVisible` is `false` for a ground-truth sensor: the gateway
   never returns its frames to a controller, though the recorder still receives them (D7). It
   must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
-  observation is CORE-23 (#125). `runs/p0-default.json` includes the four body cameras
+  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
   a 0.5 ms exposure (CORE-6). The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different

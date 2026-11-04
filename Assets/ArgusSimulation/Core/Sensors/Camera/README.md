@@ -1,6 +1,6 @@
 # Core/Sensors/Camera — camera sensor models
 
-**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** `CameraModel` base implemented (CORE-3); `BodyCameraModel` built from the run configuration (CORE-18), with the four P0 body cameras and their DATA-6 profile (CORE-6); `NadirGroundTruthCameraModel` is a placeholder (`TODO(D5, D7)`)
+**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** `CameraModel` base implemented (CORE-3); `BodyCameraModel` built from the run configuration (CORE-18), with the four P0 body cameras and their DATA-6 profile (CORE-6); `NadirGroundTruthCameraModel` built from the run configuration (CORE-8)
 
 Cameras are Core sensor models; Unity only renders (decision D5 in
 [target-architecture.md](../../../../../docs/target-architecture.md)).
@@ -27,13 +27,26 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   15 s, flight's capture interval. Their exposure is 0.5 ms, the driver's minimum: a v0
   estimate for sunlit Earth, where flight uses auto exposure between 0.5 and 65.5 ms (#42
   comment, 27 Oct).
-- `NadirGroundTruthCameraModel` (CORE-8): follows spacecraft position with a north-up nadir
-  orientation that ignores attitude, by overriding `ComputePose`.
+- `NadirGroundTruthCameraModel` (CORE-8): the north-up nadir ground-truth camera.
+  `NadirGroundTruthCameraKind` builds it from a `nadir_ground_truth_camera` device
+  configuration with the same DATA-6 parameters as a `camera`, and its own profile ID (for
+  example `nadir-gt-768x432-9deg`, the Unity rig's 768 x 432 px, 9 degree ground-truth view).
+  It overrides `ComputePose`: the camera sits at the spacecraft position (the mount is
+  ignored) and ignores attitude. In the camera frame (x right, y down, z out of the lens;
+  DATA-6, #71) z is geodetic down, perpendicular to the WGS84 ellipsoid through the geodetic
+  point beneath the spacecraft, -y is north and x is east, so the image is north-up and
+  centred on that point. Exactly on the polar axis east is taken as Earth-fixed +y. Cesium's
+  East-North-Up frame, which the Unity rig's ground-truth camera uses today, takes the
+  ellipsoid gradient at the spacecraft instead; at 500 km the two differ by about 0.01
+  degrees. It is ground truth, so it is never controller-visible (D7): its frames reach the
+  recorder, never a gateway observation. `runs/p0-default.json` does not include it.
 
 A kind whose sensor is a camera implements `ICameraKind` (`Core/Contracts/ICameraKind.cs`):
 the recorder lists it in the manifest's `cameras`, and cameras that share a profile ID must
 share its parameter set. `DeviceKindsTests` fails for a kind that builds a `CameraModel`
-without it.
+without it. `CameraKind` and `NadirGroundTruthCameraKind` both derive from `CameraProfileKind`,
+which implements it and holds the camera parameter keys and their checks, so the two kinds
+cannot drift apart.
 
 ## Camera profile
 

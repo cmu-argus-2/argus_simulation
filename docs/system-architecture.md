@@ -208,7 +208,7 @@ SensorModel<TPayload>                    (Argus-computed)
 ├── IdealBodyRateSensorModel
 └── CameraModel                          (base: exposure, pose, pending frames, G3)
     ├── BodyCameraModel                  (body cameras; the P0 run file's DATA-6 profile, CORE-6)
-    └── NadirGroundTruthCameraModel      (placeholder)
+    └── NadirGroundTruthCameraModel      (north-up nadir ground truth, CORE-8)
 
 Upcoming, source open (Basilisk module per D10, or Argus-computed); placeholders in Core/Sensors:
 GnssSensor, SunSensor, StarTrackerSensor, PowerTelemetrySensor, ThermalSensor,
@@ -386,8 +386,8 @@ non-image sensor is a truth-backed, noise-free body-rate model. The IMU (rate an
 force), magnetometer and light sensors are Basilisk-sourced models that publish only what
 the Basilisk service measures (service build steps 1–4). GNSS, fine Sun sensor,
 star-tracker, power, thermal, radio and radiation models are unavailable until their physics
-and hardware profiles are implemented. The body cameras are configured (CORE-6), but their frames are
-`Unavailable` until a renderer exists (UNITY-4), and the nadir ground-truth camera is a placeholder (CORE-8). The v1
+and hardware profiles are implemented. The body cameras (CORE-6) and the nadir ground-truth camera (CORE-8) are built, but their frames are
+`Unavailable` until a renderer exists (UNITY-4). The v1
 Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's
 pacing and actuators, the other network transports and the physical hardware adapters are not
 implemented yet.

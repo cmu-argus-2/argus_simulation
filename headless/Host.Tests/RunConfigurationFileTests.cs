@@ -149,6 +149,31 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
         }
 
+        // The nadir ground-truth camera is a devices[] entry of its own kind, with the camera's
+        // DATA-6 parameters and its own profile ID next to P0's body cameras. Argus computes it, so it
+        // is never sent to Basilisk either (CORE-8).
+        [Test]
+        public void NadirGroundTruthCameraLoadsButIsNotSentToBasilisk()
+        {
+            JsonObject root = P0();
+            root["devices"].AsArray().Add(NadirCameraNode("cam.nadir_gt"));
+
+            SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
+
+            Assert.That(withCamera.IsValid, Is.True);
+            DeviceConfiguration camera = withCamera.Devices[withCamera.Devices.Count - 1];
+            Assert.That(camera.Kind, Is.EqualTo("nadir_ground_truth_camera"));
+            Assert.That(camera.IsBackendModelled, Is.False);
+            Assert.That(camera.MayBeControllerVisible, Is.False);
+            Assert.That(camera.Definition.IsControllerVisible, Is.False);
+            CameraProfile profile = NadirGroundTruthCameraKind.Instance.Profile(camera);
+            Assert.That(profile.ProfileId, Is.EqualTo("nadir-gt-768x432-9deg"));
+            Assert.That(profile.Intrinsics.WidthPixels, Is.EqualTo(768));
+            Assert.That(profile.Intrinsics.FocalLengthYPixels, Is.EqualTo(2744.54));
+            Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
+        }
+
         [TestCase("missing field", "initialOrbit.eccentricity: is required")]
         [TestCase("unknown field", "spacecraft.massKg: is not a known field")]
         [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
@@ -176,6 +201,9 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("profile ID reused, other intrinsics", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
         [TestCase("profile ID reused, other distortion source", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in distortion")]
         [TestCase("coefficients as an array", "devices[{new}].parameters.distortion.coefficients: is not a camera parameter")]
+        [TestCase("invalid nadir camera intrinsics", "devices[{new}].parameters[\"intrinsics.*\"]: are not valid intrinsics")]
+        [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
+        [TestCase("nadir camera with the body cameras' profile ID", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
@@ -288,6 +316,23 @@ namespace Argus.Simulation.Host.Tests
 
                     distortion["coefficients"] = new JsonArray(0.0, 0.0, 0.0, 0.0, 0.0);
                     devices.Add(asArray);
+                    break;
+                case "invalid nadir camera intrinsics":
+                    JsonObject invalidNadir = NadirCameraNode("cam.nadir_gt");
+                    invalidNadir["parameters"]["intrinsics"]["focal_length_y_px"] = -2744.54;
+                    devices.Add(invalidNadir);
+                    break;
+                case "controller-visible nadir camera":
+                    JsonObject visibleNadir = NadirCameraNode("cam.nadir_gt");
+                    visibleNadir["controllerVisible"] = true;
+                    devices.Add(visibleNadir);
+                    break;
+                case "nadir camera with the body cameras' profile ID":
+                    // Cameras that share a profile ID share its parameters (CORE-6), so the nadir camera
+                    // needs its own.
+                    JsonObject sharedId = NadirCameraNode("cam.nadir_gt");
+                    sharedId["parameters"]["profile_id"] = "imx708-66deg-spec-v0";
+                    devices.Add(sharedId);
                     break;
             }
 
@@ -417,6 +462,33 @@ namespace Argus.Simulation.Host.Tests
                 }
             }
         };
+
+        // The Unity ground-truth camera's view (CubeSatCameraRig): 768 x 432 px, 9 degrees vertical,
+        // with its own profile ID. The mount is ignored, so it is the identity.
+        private static JsonObject NadirCameraNode(string deviceId)
+        {
+            JsonObject camera = CameraNode(deviceId);
+            camera["kind"] = "nadir_ground_truth_camera";
+            camera["modelName"] = "nadir-ground-truth";
+            camera["mount"] = new JsonObject
+            {
+                ["positionBodyMeters"] = new JsonArray(0.0, 0.0, 0.0),
+                ["deviceToBody"] = new JsonObject { ["x"] = 0.0, ["y"] = 0.0, ["z"] = 0.0, ["w"] = 1.0 }
+            };
+            JsonNode parameters = camera["parameters"];
+            parameters["profile_id"] = "nadir-gt-768x432-9deg";
+            parameters["intrinsics"]["width_px"] = 768;
+            parameters["intrinsics"]["height_px"] = 432;
+            parameters["intrinsics"]["focal_length_x_px"] = 2744.54;
+            parameters["intrinsics"]["focal_length_y_px"] = 2744.54;
+            parameters["intrinsics"]["principal_point_x_px"] = 384.0;
+            parameters["intrinsics"]["principal_point_y_px"] = 216.0;
+            parameters["intrinsics"]["source"] = "unity-gt-rig";
+            parameters["exposure_duration_s"] = 0.0;
+            parameters["extrinsics"]["source"] = "computed-nadir";
+            parameters["extrinsics"]["origin"] = "spacecraft-position";
+            return camera;
+        }
 
         private static void AssertClose(Vector3d actual, Vector3d expected, string what)
         {
