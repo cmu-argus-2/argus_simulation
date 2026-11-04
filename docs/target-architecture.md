@@ -325,13 +325,13 @@ for provenance and the offline GPU validation command.
 ## 8. Teammate branches reconciled with these decisions
 
 Five early branches came before these decisions. DATA-9 (#74) records what was ported from each
-and what was dropped. No ports remain. After the two remaining branches are deleted, every commit
+and what was dropped. No ports remain, and none of the branches is left on the remote; every commit
 stays reachable through its pull request's ref (`git fetch origin pull/<n>/head`).
 
 | branch | owner | PR | state |
 |---|---|---|---|
-| `spice-integration` | Rsarabu28, narrowed by sidqian123 | #5, closed 28 Sep | ports merged; branch to delete (kept by `pull/5/head` and `pull/7/head`) |
-| `spice-unity-presentation` | sidqian123 | #7, closed 28 Sep | `spice-integration` plus Unity presentation, attitude overrides and #11; nothing more ported; branch to delete (kept by `pull/7/head`) |
+| `spice-integration` | Rsarabu28, narrowed by sidqian123 | #5, closed 28 Sep | ports merged; branch deleted 4 Nov (kept by `pull/5/head` and `pull/7/head`) |
+| `spice-unity-presentation` | sidqian123 | #7, closed 28 Sep | `spice-integration` plus Unity presentation, attitude overrides and #11; nothing more ported; branch deleted 4 Nov (kept by `pull/7/head`) |
 | `runtime-spice-integration` | sidqian123 | #11, merged into `spice-unity-presentation` 28 Sep, never into `main` | branch deleted (kept by `pull/11/head` and `pull/7/head`) |
 | `dynamics/basilisk-integration` | Songdddd | #6, closed 30 Sep | ports merged; branch deleted (kept by `pull/6/head`) |
 | `basilisk-integration` | — | — | not on the remote; presumed to be #6's `dynamics/basilisk/` work, which BSK-4 (#17) cites as `basilisk-integration:dynamics/basilisk/experiments` |
