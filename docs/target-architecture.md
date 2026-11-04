@@ -289,41 +289,118 @@ for provenance and the offline GPU validation command.
 - Attitude nudges change what the cameras render but not the recorded `BodyToEcef`, so
   exported images can disagree with the exported attitude.
 
-## 8. Teammate branches that diverge from these decisions
+## 8. Teammate branches reconciled with these decisions
 
-These branches are not on `main`. They need to be reconciled with the decisions above
-before they merge.
+Five early branches came before these decisions. DATA-9 (#74) records what was ported from each
+and what was dropped. No ports remain. After the two remaining branches are deleted, every commit
+stays reachable through its pull request's ref (`git fetch origin pull/<n>/head`).
 
-- `spice-integration` (and the local `spice-unity-presentation` ref) generate SPICE
-  environment tables offline with `Argus.Spice/generate_reference.py`, and Unity loads
-  them at runtime. `runtime-spice-integration` (merged into `origin/spice-unity-presentation`
-  as PR #11) runs a persistent Python SPICE worker (`runtime_service.py`). Both add a
-  SPICE source outside Basilisk, which conflicts with D3. Both also add a separate
-  ephemeris provider (`IEphemerisProvider` in `Core/Abstractions/`, `EphemerisSample` and
-  `SunObservation` in `Core/Contracts/`, implementations in `Core/Environment/`) instead of
-  `EnvironmentState` in the state, which conflicts with D4.
+| branch | owner | PR | state |
+|---|---|---|---|
+| `spice-integration` | Rsarabu28, narrowed by sidqian123 | #5, closed 28 Sep | ports merged; branch to delete (kept by `pull/5/head` and `pull/7/head`) |
+| `spice-unity-presentation` | sidqian123 | #7, closed 28 Sep | `spice-integration` plus Unity presentation, attitude overrides and #11; nothing more ported; branch to delete (kept by `pull/7/head`) |
+| `runtime-spice-integration` | sidqian123 | #11, merged into `spice-unity-presentation` 28 Sep, never into `main` | branch deleted (kept by `pull/11/head` and `pull/7/head`) |
+| `dynamics/basilisk-integration` | Songdddd | #6, closed 30 Sep | ports merged; branch deleted (kept by `pull/6/head`) |
+| `basilisk-integration` | — | — | not on the remote; presumed to be #6's `dynamics/basilisk/` work, which BSK-4 (#17) cites as `basilisk-integration:dynamics/basilisk/experiments` |
 
-  Port/drop list for `spice-integration` (DATA-9, #74):
-  - Ported: `Argus.Spice/kernels.json` → `Argus.Basilisk/kernel_sets/argus-2026-09-25.json`
-    (on `main`); `ensure_kernels`, `download`, `sha256_file` and `check_coverage` from
-    `generate_reference.py` → `Argus.Basilisk/scripts/fetch_kernels.py` (SPICE-1, #12); the
-    t = 0 values of `foundation_one_orbit.json` → `BasiliskStateMapperTests` (on `main`;
-    BSK-3, #16, checks the service against them). `Matrix3d` and `AssemblyInfo` are already
-    on `main`.
-  - Dropped: the rest of `Argus.Spice/` (reference-table generation, `regenerate.sh`,
-    `scenarios/`) and `Assets/StreamingAssets/Argus/Spice/` (offline tables, D3);
-    `IEphemerisProvider`, `EphemerisSample`, `SunObservation`, `TabulatedEphemerisProvider`,
-    `SpiceReferenceFile`, `SolarGeometry`, `EarthShadowModel` and their tests (Sun and
-    eclipse come from Basilisk in `EnvironmentState`, D3 and D4).
-  - To confirm with the branch owners before the branch is closed: the `Quaterniond`,
-    `CircularOrbitModel`, `AnalyticSimulationEngine`, `AnalyticOrbitStateSource` and
-    `OrbitTrailRenderer` changes, `Core/Serialization/JsonReader` and the orbit-trail PlayMode
-    tests.
-- `basilisk-integration` replays an offline Basilisk recording from `dynamics/basilisk/`.
-  This conflicts with D2. Its Unity `BasiliskReplayStateSource` also parses Basilisk output
-  inside Unity and supplies gyro measurements outside `BasiliskEngine` and the Core sensor
-  models, which conflicts with D8. It is also based on a `main` from before the sensor PRs.
-  Its Basilisk work belongs in `Argus.Basilisk/`.
+**`spice-integration` (#5).** It generates SPICE environment tables offline with
+`Argus.Spice/generate_reference.py`, and Unity loads them at runtime. That is a SPICE source
+outside Basilisk (D3). It also adds an ephemeris provider (`IEphemerisProvider`,
+`EphemerisSample`, `SunObservation`) instead of `EnvironmentState` in the state (D4).
+- Ported:
+  - `Argus.Spice/kernels.json` → `Argus.Basilisk/kernel_sets/argus-2026-09-25.json`, with the
+    same files, URLs and hashes. That file's comment cites `origin/spice-integration`; the same
+    `kernels.json` is at `f2e9fc8` (`pull/5/head`);
+  - `ensure_kernels`, `download`, `sha256_file` and `check_coverage` from `generate_reference.py`
+    → `Argus.Basilisk/scripts/fetch_kernels.py` (SPICE-1, #12);
+  - the t = 0 values of `foundation_one_orbit.json` → `BasiliskStateMapperTests` (BSK-3, #16,
+    checks the service against them; `Argus.Basilisk/README.md` §13);
+  - the Hamilton product and `Rotate` in `Quaterniond`: the same formulas are on `main` (`493e482`).
+- Dropped:
+  - the rest of `Argus.Spice/` (reference-table generation, `regenerate.sh`, `scenarios/`, its
+    README and requirements) and `Assets/StreamingAssets/Argus/Spice/` (offline tables, D3);
+  - `IEphemerisProvider`, `EphemerisSample`, `SunObservation`, `TabulatedEphemerisProvider`,
+    `SpiceReferenceFile`, `SolarGeometry` and `EarthShadowModel` (Sun and eclipse come from Basilisk
+    in `EnvironmentState`, D3 and D4);
+  - `Core/Serialization/JsonReader`, whose only production caller was `SpiceReferenceFile`;
+  - the branch's `Matrix3d` and `AssemblyInfo`. `main` has its own: a smaller `Matrix3d` for the
+    SPICE matrices, and an `AssemblyInfo` that grants the host rather than the PlayMode tests;
+  - the `CircularOrbitModel` and `AnalyticSimulationEngine` changes and their three new
+    `CircularOrbitModelTests`. They route the analytic fixture through `IEphemerisProvider`, and the
+    fixture never approximates SPICE data (D9);
+  - the `AnalyticOrbitStateSource` and `OrbitTrailRenderer` changes. `main` renamed the source
+    `AnalyticStateSource` when Unity moved to `ISimulationStateSource` (`e08660b`), and the trail
+    stays the analytic-fixture trail until G2. The orbit-trail PlayMode test goes with them. Its
+    check that building the trail neither advances nor publishes the live run is worth keeping when
+    G2 rebuilds the trail;
+  - `Quaterniond.Identity`, `Conjugate` and `FromAxisAngle`, whose callers are all dropped code and
+    its tests;
+  - the tests of the dropped code: `SpiceFrameConversionTests`, `SpiceMilestoneValidationTests`,
+    `SpiceReferenceEphemerisTests`, `SunGeometryTests`, the Sun-geometry and analytic-source
+    PlayMode tests, and the spacecraft reference fixture. On `main`, `BasiliskStateMapperTests` and
+    the HOST-4 (#28) check against CSPICE cover the frame mapping (G4);
+  - `SpacecraftState.WithBodyToEcef`, which exists only in `f2e9fc8` (`e2825fa` removed it), and
+    the `MockSensorSuite` Sun-geometry wiring, which went when the branch merged `main` (`9573e60`)
+    because `main` had deleted that file;
+  - the README, `docs/code-organization.md` and `docs/system-architecture.md` edits, which describe
+    this design.
+
+**`spice-unity-presentation` (#7) and `runtime-spice-integration` (#11).** Their history contains
+`spice-integration`, but their tree replaces the offline tables with a persistent Python SPICE
+worker: `generate_reference.py`, `JsonReader`, `SpiceReferenceFile` and the tables are deleted.
+Nothing more is ported.
+- Dropped:
+  - `Argus.Spice/runtime_service.py`, `run_runtime.sh` and `SpiceRuntimeEphemerisProvider` (a SPICE
+    worker outside Basilisk, D3), with the rest of `Argus.Spice/`. That includes the Earth PCK
+    update in its `kernels.json`; kernel files change only through a new kernel set in
+    `Argus.Basilisk/kernel_sets/`;
+  - the attitude overrides: `IAttitudeOverrideTarget`, `AttitudeOverrideCommand`, their tests, and
+    their wiring through the analytic engine, `AnalyticOrbitStateSource`, `SimulationRunner`,
+    `SimulatorDashboard` and `CesiumSpacecraftPoseDriver` (whose manual `NudgeAttitude` moves into
+    the override). Attitude nudges are to become engine commands (§10);
+  - the rest of the `SimulationRunner` and `SimulatorDashboard` changes: the dashboard's
+    environment panel, which shows SPICE Earth orientation and Sun and eclipse status from
+    `SunObservation` (D4), and the runner pausing when `StepOnce` returns no state. That pause is
+    worth keeping for step-driven sources; under G2 a stalled stream needs its own handling;
+  - the `NasaGibsRasterController` change, which converts the light direction to Earth-fixed
+    coordinates. UNITY-1 (#54) made the same fix on `main`;
+  - `SunLightDriver`, which aims the scene light from `EphemerisSample`, and its
+    `FoundationSceneBuilder` wiring. `main` keeps a placeholder `SunLightDriver` with `TODO(D4)` for
+    UNITY-3 (#59). The branch version (`pull/7/head`) is a reference for aiming the Cesium light,
+    but its Sun direction must come from `EnvironmentState`;
+  - the docs edits, as on `spice-integration`.
+
+**`dynamics/basilisk-integration` (#6).** It replays an offline Basilisk recording from
+`dynamics/basilisk/` (D2). Its Unity `BasiliskReplayStateSource` also parses Basilisk output inside
+Unity and supplies gyro measurements outside `BasiliskEngine` and the Core sensor models (D8).
+- Ported by BSK-4 (#17, PR #90) as service checks in `Argus.Basilisk/tests/test_devices.py`:
+  - `accel_truth_test` →
+    `test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity`;
+  - the ideal case of `gyro_truth_test` and the rotated case of `imu_mounting_test` →
+    `test_noise_free_imu_reads_the_body_rate_in_sensor_axes` (the same quarter turn about z).
+- Replaced: the experiment's default random-walk transition matrix. The service sets A = I
+  explicitly when a bias random walk is set, which
+  `test_bias_random_walk_uses_an_identity_a_matrix` checks.
+- Dropped:
+  - `BasiliskReplayStateSource`, `IGyroMeasurementSource`, `BasiliskReplayTests`, and the
+    `ISpacecraftStateSource`, `AnalyticOrbitStateSource`, `MockSensorSuite`, `SimulationRunner`,
+    `SimulatorDashboard` and `OrbitTrailRenderer` changes, with the `SimulatorDashboard` PlayMode
+    test and EditMode `.asmdef` changes (replay inside Unity, D2 and D8);
+  - the rest of `dynamics/basilisk/`: `orbit/argus_truth_sim.py`, `export_gyro.py`,
+    `frame_adapter.py` and its test, `experiments/synchronized_gyro.py`, `samples/`, its README,
+    `VALIDATION.md` and requirements. They export recordings for replay (D2), and Argus converts
+    frames once, in `BasiliskStateMapper`;
+  - the experiments' illustrative noise settings. Noise comes from the device parameters
+    (DATA-1, #67).
+
+**Check.** `git grep` on `main` for the dropped names (`IEphemerisProvider`, `EphemerisSample`,
+`SunObservation`, `TabulatedEphemerisProvider`, `SpiceReferenceFile`,
+`SpiceRuntimeEphemerisProvider`, `SolarGeometry`, `EarthShadowModel`, `JsonReader`,
+`IAttitudeOverrideTarget`, `AttitudeOverrideCommand`, `BasiliskReplayStateSource`,
+`IGyroMeasurementSource`, `runtime_service`, `generate_reference`, `export_gyro`, `frame_adapter`)
+finds them only in this section. `Argus.Spice` and `dynamics/basilisk` appear only in provenance
+notes and the porting rule in `Argus.Basilisk/README.md`. `SunLightDriver` is on `main` as the
+UNITY-3 placeholder, not the branch version.
 
 ## 9. Code layout
 
@@ -389,7 +466,7 @@ Argus.Hardware/            HIL adapters                                        p
       noise).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream
-      (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
+      (G1, G2). Teammate Basilisk and SPICE work is reconciled with this layout (§8).
 - [ ] Orbit and attitude nudges become engine commands, so rendered images match the
       recorded state.
 
