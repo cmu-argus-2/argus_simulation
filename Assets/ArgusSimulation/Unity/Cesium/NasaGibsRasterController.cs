@@ -35,6 +35,7 @@ namespace Argus.Simulation.Unity
         private CesiumGeoreference _georeference;
         private bool _hasSunDirectionInput;
         private Vector3 _sunDirectionWorld;
+        private Vector3? _captureSunDirection;
         private float _lastNightCenterLongitude = float.NaN;
 
         public string ActiveTemplateUrl =>
@@ -72,6 +73,14 @@ namespace Argus.Simulation.Unity
             }
 
             ApplySettings();
+        }
+
+        internal void SetCaptureSunDirection(Vector3? direction)
+        {
+            if (_captureSunDirection == direction) return;
+            _captureSunDirection = direction;
+            _lastNightCenterLongitude = float.NaN;
+            Update();
         }
 
         private void Update()
@@ -133,6 +142,11 @@ namespace Argus.Simulation.Unity
 
         private bool TryGetSunDirectionWorld(out Vector3 towardSunWorld)
         {
+            if (_captureSunDirection.HasValue)
+            {
+                towardSunWorld = _captureSunDirection.Value;
+                return towardSunWorld.sqrMagnitude > 0f;
+            }
             if (_hasSunDirectionInput)
             {
                 towardSunWorld = _sunDirectionWorld;

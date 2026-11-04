@@ -4,7 +4,8 @@
   "references": [
     "Argus.Simulation.Core",
     "Argus.Simulation.Unity",
-    "CesiumForUnity"
+    "CesiumForUnity",
+    "Unity.Mathematics"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"

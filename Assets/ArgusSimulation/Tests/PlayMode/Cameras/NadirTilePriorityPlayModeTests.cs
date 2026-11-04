@@ -77,6 +77,23 @@ namespace Argus.Simulation.Tests
             LogAssert.NoUnexpectedReceived();
         }
 
+        [UnityTest]
+        public IEnumerator LookaheadTracksAReplacementNadirRenderTarget()
+        {
+            NadirScene scene = new NadirScene();
+            yield return null;
+            yield return null;
+            RenderTexture replacement = new RenderTexture(128, 64, 24);
+            replacement.Create();
+            scene.CameraRig.GroundTruthCamera.targetTexture = replacement;
+            yield return null;
+            Assert.That(scene.Priority.LookaheadCamera.targetTexture, Is.SameAs(replacement));
+            yield return scene.Destroy();
+            replacement.Release();
+            Object.Destroy(replacement);
+            yield return null;
+        }
+
         // A georeference with a camera manager, the main camera, an analytic runner set to run, and
         // the spacecraft with its camera rig and NadirTilePriority. No tilesets.
         private sealed class NadirScene

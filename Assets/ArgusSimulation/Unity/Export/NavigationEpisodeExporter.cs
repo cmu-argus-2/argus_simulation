@@ -18,14 +18,16 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.IO;
+using System.Threading;
+using Unity.Mathematics;
 using Argus.Simulation.Core;
 using CesiumForUnity;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(D6): retire once Core RunRecorder covers what the Python navigation code reads. Move the
-    // tile-wait and readback code into UnityImageRenderer first, then remove this component from
+    // TODO(D6): retire once Core RunRecorder covers what the Python navigation code reads.
+    // This component delegates tile-wait and readback to UnityImageRenderer; remove this component from
     // the scene, FoundationSceneBuilder and the tests in one change.
     [DisallowMultipleComponent]
     public sealed class NavigationEpisodeExporter : MonoBehaviour
@@ -39,11 +41,9 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(0)] private int selectedCameraIndex = 0;
         [SerializeField] private string episodeName = "unity_navigation_episode";
 
-        [Header("Cesium readiness")]
-        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 100f;
-        [SerializeField, Min(1)] private int stableFramesRequired = 10;
-        [SerializeField, Min(0f)] private float postLoadSettleSeconds = 1f;
-        [SerializeField, Min(1f)] private float loadTimeoutSeconds = 60f;
+        private UnityImageRenderer _renderer;
+        private CancellationTokenSource _captureCancellation;
+        private bool _resumeSimulation;
 
         private string _episodeDirectory;
         private string _metadataPath;
@@ -144,95 +144,112 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState.Spacecraft));
+            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
             return true;
         }
 
-        private IEnumerator CaptureWhenCesiumIsReady(SpacecraftState state)
+        private IEnumerator CaptureWhenCesiumIsReady(SimulationState state)
         {
             IsCaptureInProgress = true;
-            bool resumeSimulation = runner.IsRunning;
+            _resumeSimulation = runner.IsRunning;
             runner.IsRunning = false;
-
-            Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
-                FindObjectsInactive.Exclude);
-            int requiredStableFrames = Math.Max(1, stableFramesRequired);
-            float timeout = Math.Max(1f, loadTimeoutSeconds);
-            float startedAt = Time.realtimeSinceStartup;
-            int stableFrames = 0;
-
-            while (stableFrames < requiredStableFrames)
+            _captureCancellation = new CancellationTokenSource();
+            if (_renderer == null)
             {
-                float progress = MinimumEnabledTilesetProgress(tilesets);
-                if (progress >= minimumLoadProgress)
-                {
-                    stableFrames++;
-                }
-                else
-                {
-                    stableFrames = 0;
-                }
-
-                SetCaptureStatus($"LOADING {progress:0}%");
-                if (Time.realtimeSinceStartup - startedAt >= timeout)
-                {
-                    Debug.LogWarning(
-                        $"Image capture cancelled because Cesium did not reach " +
-                        $"{minimumLoadProgress:0}% load progress within {timeout:0} seconds.",
-                        this);
-                    CompleteCapture(resumeSimulation, "LOAD TIMEOUT");
-                    yield break;
-                }
-
-                yield return null;
+                _renderer = GetComponent<UnityImageRenderer>();
+                if (_renderer == null) _renderer = gameObject.AddComponent<UnityImageRenderer>();
             }
-
-            if (postLoadSettleSeconds > 0f)
-            {
-                SetCaptureStatus("FINALIZING");
-                yield return new WaitForSecondsRealtime(postLoadSettleSeconds);
-            }
-
-            yield return new WaitForEndOfFrame();
-            SetCaptureStatus("CAPTURING");
-            string finalStatus;
+            runner.ConfigureImageRenderer(_renderer);
+            string status = "EXPORT ERROR";
             try
             {
-                EnsureOutputDirectory();
-                ExportState(state, _captureNumber);
+                int first = captureAllCameras ? 0 : selectedCameraIndex;
+                int last = captureAllCameras ? cameraRig.Cameras.Count : selectedCameraIndex + 1;
+                if (first < 0 || last > cameraRig.Cameras.Count)
+                {
+                    status = "NO CAMERA";
+                    yield break;
+                }
+                var requests = new RenderRequest[last - first];
+                var cameraToBody = new Quaternion[last - first];
+                try
+                {
+                    // Snapshot every view before yielding: manual pose changes or a follower's
+                    // later states must not change the exposure while terrain is loading.
+                    for (int index = first; index < last; index++)
+                    {
+                        requests[index - first] = CreateRequest(state, index);
+                        cameraToBody[index - first] = Quaternion.Inverse(cameraRig.transform.rotation) *
+                            cameraRig.Cameras[index].transform.rotation;
+                    }
+                }
+                catch (Exception exception) { Debug.LogException(exception, this); yield break; }
+                for (int index = first; index < last; index++)
+                {
+                    SetCaptureStatus("LOADING / CAPTURING");
+                    System.Threading.Tasks.Task<ImageFrame> task = null;
+                    try
+                    {
+                        task = _renderer.RenderAsync(requests[index - first], _captureCancellation.Token);
+                    }
+                    catch (Exception exception) { Debug.LogException(exception, this); }
+                    if (task == null) yield break;
+                    while (!task.IsCompleted) yield return null;
+                    try
+                    {
+                        ImageFrame frame = task.GetAwaiter().GetResult();
+                        EnsureOutputDirectory();
+                        ExportCamera(state.Spacecraft, index, _captureNumber, frame, cameraToBody[index - first]);
+                    }
+                    catch (TimeoutException) { status = "LOAD TIMEOUT"; yield break; }
+                    catch (OperationCanceledException) { status = "CANCELLED"; yield break; }
+                    catch (Exception exception) { Debug.LogException(exception, this); yield break; }
+                }
                 _captureNumber++;
-                finalStatus = "SAVED";
-
-                Debug.Log(
-                    "Navigation image capture complete.\nDirectory:\n" + _episodeDirectory,
-                    this);
+                status = "SAVED";
             }
-            catch (Exception exception)
+            finally
             {
-                finalStatus = "EXPORT ERROR";
-                Debug.LogException(exception, this);
+                _captureCancellation.Dispose();
+                _captureCancellation = null;
+                CompleteCapture(_resumeSimulation, status);
             }
-
-            CompleteCapture(resumeSimulation, finalStatus);
         }
 
-        internal static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
+        private RenderRequest CreateRequest(SimulationState state, int index)
         {
-            float progress = 100f;
-            bool foundEnabledTileset = false;
+            Camera camera = cameraRig.Cameras[index];
+            RenderTexture target = cameraRig.RenderTextures[index];
+            CesiumGeoreference reference = cameraRig.GetComponentInParent<CesiumGeoreference>();
+            Vector3 localPosition = reference.transform.InverseTransformPoint(camera.transform.position);
+            double3 position = reference.TransformUnityPositionToEarthCenteredEarthFixed(
+                new double3(localPosition.x, localPosition.y, localPosition.z));
+            Vector3d right = ToEcefDirection(reference, camera.transform.right);
+            Vector3d down = ToEcefDirection(reference, -camera.transform.up);
+            Vector3d forward = ToEcefDirection(reference, camera.transform.forward);
+            double fy = 0.5 * target.height / Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
+            return new RenderRequest(cameraRig.Names[index], _captureNumber, state.Spacecraft.Sequence,
+                state.Spacecraft.SimulationTimeSeconds, state.Spacecraft.TimestampUtc, 0,
+                new Vector3d(position.x, position.y, position.z), Quaterniond.FromBasis(right, down, forward),
+                new CameraIntrinsics(target.width, target.height, fy, fy, (target.width - 1) / 2.0, (target.height - 1) / 2.0),
+                state.Environment?.SunPositionItrf93Meters);
+        }
 
-            foreach (Cesium3DTileset tileset in tilesets)
-            {
-                if (tileset == null || !tileset.isActiveAndEnabled)
-                {
-                    continue;
-                }
+        private static Vector3d ToEcefDirection(CesiumGeoreference reference, Vector3 worldDirection)
+        {
+            Vector3 local = reference.transform.InverseTransformDirection(worldDirection);
+            double3 direction = reference.TransformUnityDirectionToEarthCenteredEarthFixed(new double3(local.x, local.y, local.z));
+            return new Vector3d(direction.x, direction.y, direction.z).Normalized();
+        }
 
-                foundEnabledTileset = true;
-                progress = Math.Min(progress, tileset.ComputeLoadProgress());
-            }
-
-            return foundEnabledTileset ? progress : 100f;
+        private void OnDisable()
+        {
+            if (!IsCaptureInProgress) return;
+            _captureCancellation?.Cancel();
+            StopAllCoroutines();
+            _captureCancellation?.Dispose();
+            _captureCancellation = null;
+            CompleteCapture(_resumeSimulation, "CANCELLED");
         }
 
         private void CompleteCapture(bool resumeSimulation, string status)
@@ -273,63 +290,20 @@ namespace Argus.Simulation.Unity
             File.WriteAllText(_metadataPath, string.Empty);
         }
 
-        private void ExportState(SpacecraftState state, int captureNumber)
-        {
-            if (captureAllCameras)
-            {
-                for (int index = 0; index < cameraRig.Cameras.Count; index++)
-                {
-                    ExportCamera(state, index, captureNumber);
-                }
-
-                return;
-            }
-
-            if (selectedCameraIndex < 0 ||
-                selectedCameraIndex >= cameraRig.Cameras.Count)
-            {
-                Debug.LogError(
-                    "selectedCameraIndex is outside CubeSatCameraRig.Cameras.",
-                    this);
-                return;
-            }
-
-            ExportCamera(state, selectedCameraIndex, captureNumber);
-        }
-
         private void ExportCamera(
             SpacecraftState state,
             int cameraIndex,
-            int captureNumber)
+            int captureNumber,
+            ImageFrame frame,
+            Quaternion cameraToBody)
         {
-            Camera camera = cameraRig.Cameras[cameraIndex];
-            RenderTexture renderTexture = cameraRig.RenderTextures[cameraIndex];
-
-            if (camera == null || renderTexture == null)
-            {
-                Debug.LogWarning("Skipping unavailable camera feed.", this);
-                return;
-            }
-
-            // Render the camera now, then copy its RenderTexture to a PNG.
-            camera.Render();
-
             string safeCameraName = MakeSafeFileName(cameraRig.Names[cameraIndex]);
             string imageFileName =
                 $"capture_{captureNumber:D4}_frame_{state.Sequence:D6}_{safeCameraName}.png";
             string imagePath = Path.Combine(_episodeDirectory, imageFileName);
 
-            SaveRenderTextureAsPng(renderTexture, imagePath);
-
-            double fy = 0.5 * renderTexture.height /
-                Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
-            // Unity's Camera.fieldOfView is vertical. With square pixels, the
-            // horizontal FOV changes with aspect ratio while fx remains equal to fy.
-            double fx = fy;
-
-            // Rotation from this camera frame into the CubeSat body frame.
-            Quaternion cameraToBody = Quaternion.Inverse(cameraRig.transform.rotation) *
-                camera.transform.rotation;
+            File.WriteAllBytes(imagePath, UnityImageRenderer.EncodePng(frame));
+            CameraIntrinsics intrinsics = frame.Intrinsics;
 
             NavigationRecord record = new NavigationRecord
             {
@@ -341,13 +315,13 @@ namespace Argus.Simulation.Unity
 
                 image_file = imageFileName,
                 camera_name = cameraRig.Names[cameraIndex],
-                image_width_px = renderTexture.width,
-                image_height_px = renderTexture.height,
+                image_width_px = frame.Intrinsics.WidthPixels,
+                image_height_px = frame.Intrinsics.HeightPixels,
 
-                fx_px = fx,
-                fy_px = fy,
-                cx_px = 0.5 * renderTexture.width,
-                cy_px = 0.5 * renderTexture.height,
+                fx_px = intrinsics.FocalLengthXPixels,
+                fy_px = intrinsics.FocalLengthYPixels,
+                cx_px = intrinsics.PrincipalPointXPixels,
+                cy_px = intrinsics.PrincipalPointYPixels,
 
                 rotation_camera_to_body_unity_xyzw = new[]
                 {
@@ -376,32 +350,6 @@ namespace Argus.Simulation.Unity
             File.AppendAllText(
                 _metadataPath,
                 JsonUtility.ToJson(record) + Environment.NewLine);
-        }
-
-        private static void SaveRenderTextureAsPng(
-            RenderTexture renderTexture,
-            string outputPath)
-        {
-            RenderTexture previous = RenderTexture.active;
-            RenderTexture.active = renderTexture;
-
-            Texture2D image = new Texture2D(
-                renderTexture.width,
-                renderTexture.height,
-                TextureFormat.RGB24,
-                false);
-
-            image.ReadPixels(
-                new Rect(0, 0, renderTexture.width, renderTexture.height),
-                0,
-                0);
-
-            image.Apply();
-
-            File.WriteAllBytes(outputPath, image.EncodeToPNG());
-
-            RenderTexture.active = previous;
-            Destroy(image);
         }
 
         private static double[] ToArray(Vector3d vector)

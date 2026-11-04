@@ -5,8 +5,8 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(D5): render on request through UnityImageRenderer (IImageRenderer) for the Core camera
-    // models, instead of rendering every camera every frame.
+    // Dashboard cameras remain live previews. Core exposures use a separate disabled camera,
+    // configured and rendered only by UnityImageRenderer, so capture never moves a live feed.
     [DisallowMultipleComponent]
     public sealed class CubeSatCameraRig : MonoBehaviour
     {
@@ -22,11 +22,15 @@ namespace Argus.Simulation.Unity
 
         [Header("Physical side cameras")]
         [SerializeField, Range(1f, 120f)]
-        private float sideCameraVerticalFieldOfViewDegrees = 75f;
+        private float sideCameraVerticalFieldOfViewDegrees =
+            (float)(2.0 * System.Math.Atan(2592.0 / (2.0 * 3548.0)) * 180.0 / System.Math.PI);
 
         [Header("Ground-truth camera")]
         [SerializeField, Range(1f, 120f)]
         private float groundTruthVerticalFieldOfViewDegrees = 9f;
+
+        [Header("Dashboard display only")]
+        [SerializeField] private bool livePreviewEnabled = true;
 
         [Header("Shared render settings")]
         [SerializeField, Min(1)] private int imageWidthPixels = 768;
@@ -47,6 +51,21 @@ namespace Argus.Simulation.Unity
         public IReadOnlyList<RenderTexture> RenderTextures => _renderTextures;
         public IReadOnlyList<string> Names => FeedNames;
         public Camera GroundTruthCamera => _groundTruthCamera;
+
+        private Camera _requestCamera;
+        public Camera RequestCamera
+        {
+            get
+            {
+                if (_requestCamera == null)
+                {
+                    _requestCamera = CreateCamera("Core Request Camera", transform.parent, Vector3.zero, Quaternion.identity);
+                    ConfigureCamera(_requestCamera, VisibleWorldLayers(), nearClipMeters, farClipMeters, 45f);
+                    _requestCamera.enabled = false;
+                }
+                return _requestCamera;
+            }
+        }
 
         private void Awake()
         {
@@ -203,7 +222,7 @@ namespace Argus.Simulation.Unity
 
         private void RegisterCamera(Camera camera)
         {
-            camera.enabled = true;
+            camera.enabled = livePreviewEnabled;
 
             RenderTexture renderTexture = new RenderTexture(
                 imageWidthPixels,
@@ -255,6 +274,7 @@ namespace Argus.Simulation.Unity
 
         private void OnDestroy()
         {
+            if (_requestCamera != null) Destroy(_requestCamera.gameObject);
             foreach (Camera camera in _cameras)
             {
                 if (_cameraManager != null)

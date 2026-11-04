@@ -17,6 +17,8 @@ namespace Argus.Simulation.Unity
         [SerializeField] private bool runOnStart = true;
         [SerializeField, Min(1)] private int maximumStepsPerFrame = 100;
 
+        [SerializeField] private UnityImageRenderer imageRenderer;
+
         private ISimulationStateSource _stateSource;
         private IStepDrivenStateSource _stepDrivenSource;
         private bool _isSubscribed;
@@ -29,6 +31,7 @@ namespace Argus.Simulation.Unity
         public event Action SimulationReset;
 
         public bool IsRunning { get; set; }
+        public bool IsWaitingForRenderer => imageRenderer != null && imageRenderer.IsRendering;
         public double SimulationTimeSeconds => _simulationTimeSeconds;
         public double FixedStepSeconds => fixedStepSeconds;
         public bool HasState { get; private set; }
@@ -58,7 +61,7 @@ namespace Argus.Simulation.Unity
 
         private void Update()
         {
-            if (!IsRunning || _stepDrivenSource == null)
+            if (!IsRunning || _stepDrivenSource == null || IsWaitingForRenderer)
             {
                 return;
             }
@@ -67,7 +70,7 @@ namespace Argus.Simulation.Unity
             int steps = 0;
             while (_accumulatorSeconds >= fixedStepSeconds && steps < maximumStepsPerFrame)
             {
-                StepOnce();
+                if (!StepOnce()) break;
                 _accumulatorSeconds -= fixedStepSeconds;
                 steps++;
             }
@@ -80,9 +83,17 @@ namespace Argus.Simulation.Unity
             ResolveStateSource();
         }
 
+        // Yield Unity frames while the renderer finishes its tasks. The next allowed step samples
+        // cameras again and publishes completed exposures; never wait on PendingExposureCount.
+        public void ConfigureImageRenderer(UnityImageRenderer renderer)
+        {
+            imageRenderer = renderer;
+        }
+
         // Advances a step-driven source by one fixed step; false for a follower source.
         public bool StepOnce()
         {
+            if (IsWaitingForRenderer) return false;
             if (_stateSource == null)
             {
                 ResolveStateSource();

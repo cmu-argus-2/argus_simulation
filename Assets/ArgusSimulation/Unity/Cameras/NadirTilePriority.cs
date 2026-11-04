@@ -100,8 +100,6 @@ namespace Argus.Simulation.Unity
                 _runner.StepOnce();
             }
 
-            Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
-                FindObjectsInactive.Exclude);
             int requiredStableFrames = Math.Max(1, stableFramesRequired);
             float startedAt = Time.realtimeSinceStartup;
             int stableFrames = 0;
@@ -117,7 +115,7 @@ namespace Argus.Simulation.Unity
                 }
 
                 // Guard against NaN while a tileset has not counted any tiles yet.
-                float progress = NavigationEpisodeExporter.MinimumEnabledTilesetProgress(tilesets);
+                float progress = UnityImageRenderer.MinimumEnabledTilesetProgress();
                 WarmUpProgress = float.IsNaN(progress) ? 0f : progress;
                 stableFrames = WarmUpProgress >= minimumLoadProgress
                     ? stableFrames + 1
@@ -145,6 +143,10 @@ namespace Argus.Simulation.Unity
 
         private void LateUpdate()
         {
+            if (_lookaheadCamera != null && _cameraRig.GroundTruthCamera != null)
+            {
+                _lookaheadCamera.targetTexture = _cameraRig.GroundTruthCamera.targetTexture;
+            }
             if (_lookaheadAnchor == null || _runner == null || !_runner.HasState)
             {
                 return;

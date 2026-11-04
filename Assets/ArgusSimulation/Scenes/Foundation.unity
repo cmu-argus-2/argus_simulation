@@ -130,6 +130,7 @@ GameObject:
   - component: {fileID: 383434572}
   - component: {fileID: 383434574}
   - component: {fileID: 383434573}
+  - component: {fileID: 339894093}
   m_Layer: 0
   m_Name: CubeSat Truth Pose
   m_TagString: Untagged
@@ -556,6 +557,7 @@ GameObject:
   - component: {fileID: 841086720}
   - component: {fileID: 841086719}
   - component: {fileID: 841086718}
+  - component: {fileID: 411201597}
   m_Layer: 0
   m_Name: Simulation
   m_TagString: Untagged
@@ -580,10 +582,6 @@ MonoBehaviour:
   captureAllCameras: 1
   selectedCameraIndex: 0
   episodeName: unity_navigation_episode
-  minimumLoadProgress: 100
-  stableFramesRequired: 10
-  postLoadSettleSeconds: 1
-  loadTimeoutSeconds: 60
 --- !u!114 &841086719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -616,6 +614,7 @@ MonoBehaviour:
   timeScale: 1
   runOnStart: 1
   maximumStepsPerFrame: 100
+  imageRenderer: {fileID: 411201597}
 --- !u!114 &841086721
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1118,6 +1117,45 @@ MonoBehaviour:
       z: 7520690.372692183
       w: 1
   _localToGlobeFixedMatrixIsValid: 1
+--- !u!114 &339894093
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 383434571}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 11ce47bde8fb24bbf96472d360d12785, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.CubeSatCameraRig
+  sideCameraVerticalFieldOfViewDegrees: 40.13209
+  groundTruthVerticalFieldOfViewDegrees: 9
+  livePreviewEnabled: 1
+  imageWidthPixels: 768
+  imageHeightPixels: 432
+  nearClipMeters: 1
+  farClipMeters: 10000000
+--- !u!114 &411201597
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 841086717}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 86fdf3b81d5e4be297d9589a6d5eb5df, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.UnityImageRenderer
+  cameraRig: {fileID: 339894093}
+  georeference: {fileID: 1022502078}
+  sunlight: {fileID: 754132933}
+  rasterController: {fileID: 825971916}
+  minimumLoadProgress: 100
+  stableFramesRequired: 10
+  postLoadSettleSeconds: 1
+  loadTimeoutSeconds: 60
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

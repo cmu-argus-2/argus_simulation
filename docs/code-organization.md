@@ -70,7 +70,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile` |
 | Camera/image contracts | `CameraIntrinsics`, `CameraProfile`, `RenderRequest`, `ImageFrame` |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
-| Unity camera system | `CubeSatCameraRig`, `NadirTilePriority` |
+| Unity camera system | `UnityImageRenderer`, `CubeSatCameraRig`, `NadirTilePriority` ([capture and preview policy](../Assets/ArgusSimulation/Unity/Cameras/README.md)) |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
 | Visualization | `CesiumSpacecraftPoseDriver`, `CubeSatVisualModel`, `OrbitTrailRenderer` |
@@ -120,7 +120,6 @@ Core/Sensors/
 ├── PowerTelemetrySensor.cs, ThermalSensor.cs
 ├── RadioLinkSensor.cs, RadiationSensor.cs
 └── Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
-Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
