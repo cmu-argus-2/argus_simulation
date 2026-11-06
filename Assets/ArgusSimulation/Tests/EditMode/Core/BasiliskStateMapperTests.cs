@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -85,10 +86,16 @@ namespace Argus.Simulation.Tests
 
         // A mixed run configuration (CORE-18): Basilisk reports the backend-modelled IMU on its
         // period and never the camera Argus computes, so a sample for the camera is an unknown sensor.
+        // The engine passes the configuration's BackendSensors, worked out once (CORE-22).
         [Test]
         public void MeasurementsCoverOnlyBackendModelledSensors()
         {
-            DeviceConfiguration[] sensors = { Imu("imu.main", 0.2), Camera("cam.px", 0.1) };
+            SimulationConfiguration run = new SimulationConfiguration(
+                "run-1",
+                DateTimeOffset.UnixEpoch,
+                0.1,
+                devices: new[] { Imu("imu.main", 0.2), Camera("cam.px", 0.1) });
+            IReadOnlyList<DeviceConfiguration> sensors = run.BackendSensors;
             ImuMeasurement measured = new ImuMeasurement(
                 new Vector3d(0.01, 0.02, 0.03),
                 new Vector3d(0.0, 0.0, 1e-6));
@@ -127,15 +134,40 @@ namespace Argus.Simulation.Tests
             Assert.That(unknown.Message, Does.StartWith("Unknown sensor 'cam.px'."));
         }
 
+        // MapMeasurements no longer filters its list on every step (CORE-22): it maps exactly the
+        // sensors it is given. A list that still holds an Argus-computed camera fails loudly, even
+        // when a sample names the camera with an empty output, which would otherwise pass as
+        // Unavailable (CORE-22 review).
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MeasurementsAreMappedForExactlyTheGivenSensors(bool cameraReportsEmpty)
+        {
+            DeviceValues output = new DeviceValues.Builder()
+                .Add("angular_velocity_sensor_rad_per_s", new Vector3d(0.01, 0.02, 0.03))
+                .Add("specific_force_sensor_m_per_s2", new Vector3d(0.0, 0.0, 1e-6))
+                .Build();
+            List<BasiliskSensorSample> samples = new List<BasiliskSensorSample>
+            {
+                new BasiliskSensorSample("imu.main", 100_000_000, output),
+            };
+            if (cameraReportsEmpty)
+            {
+                samples.Add(new BasiliskSensorSample("cam.px", 100_000_000, DeviceValues.Empty));
+            }
+
+            DeviceConfiguration[] mixed = { Imu("imu.main", 0.1), Camera("cam.px", 0.1) };
+
+            ArgumentException error = Assert.Throws<ArgumentException>(() => BasiliskStateMapper.MapMeasurements(
+                Step(100_000_000, new Mrp(0.0, 0.0, 0.0), new Vector3d(0.0, 0.0, 0.0), samples.ToArray()),
+                mixed));
+            Assert.That(error.Message, Does.StartWith("Sensor 'cam.px' is not one the backend samples."));
+        }
+
         private static DeviceConfiguration Imu(string sensorId, double samplePeriodSeconds)
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             return ImuKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity),
-                new ImuProfile(
-                    new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
-                    new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
+                TestImu.Profile());
         }
 
         private static DeviceConfiguration Camera(string sensorId, double samplePeriodSeconds) =>

@@ -87,9 +87,11 @@ file; the host gives each run its own.
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
 - **Devices** (D11, `docs/device-model.md`): each entry holds the common fields (`deviceId`,
-  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`,
+  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `controllerVisible`,
   `mount` with `positionBodyMeters` and `deviceToBody`) and `parameters`, the keys its kind
-  declares. `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
+  declares. There is no `source`: which side models a device belongs to its kind
+  (`docs/device-model.md` §1), so the host records `basilisk` or `argus` from the kind, and a
+  file that still sets `source` exits 2 naming it (CORE-22). `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
   `magnetometer` and `light_sensor`, which Basilisk models, and `camera` and
   `nadir_ground_truth_camera` (the north-up nadir ground-truth camera, CORE-8), which Argus
   computes and never sends to the service (CORE-18). Both camera kinds take the same keys; a
@@ -116,7 +118,8 @@ file; the host gives each run its own.
   each device by its kind, so the file accepts exactly what Core accepts and an error names
   the key (`devices[1].parameters["range_tesla"]: is required`). Every
   `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
-  at steps. Cameras that share a `profile_id` must share its parameter set; the error names
+  at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
+  one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
   the camera that set it and the part that differs
   (`devices[12].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
