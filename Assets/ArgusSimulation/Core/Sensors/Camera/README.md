@@ -59,7 +59,7 @@ profile, each value with where it came from:
 | `intrinsics.*` | `width_px`, `height_px`, `focal_length_x_px`, `focal_length_y_px`, `principal_point_x_px`, `principal_point_y_px`, plus `source` (e.g. `spec-estimate`) and `calibrated` |
 | `distortion.*` | `model`, which must be `brown-conrady-5`; `k1`, `k2`, `p1`, `p2`, `k3` in OpenCV's order, all zero until a renderer applies distortion (UNITY-4, `TODO(D5)` in `CameraProfile`); `source` |
 | `noise.source` | `none`: there is no camera noise model yet |
-| `exposure_duration_s` | this camera's exposure |
+| `exposure_duration_s` | this camera's exposure; no longer than its `samplePeriodSeconds`, since one camera can't start an exposure before the last one ends (CORE-22) |
 | `extrinsics.*` | where this camera's mount came from: `source`, `origin` (the body point the position is measured from), `orientation_verified` |
 
 Exposure and extrinsics belong to each camera, not to the profile ID.

@@ -47,6 +47,9 @@ namespace Argus.Simulation.Core
         public string ModelName { get; }
         public string FrameId { get; }
         public double SamplePeriodSeconds { get; }
+        // Who computes the frames, recorded with each frame and in the manifest. For a configured
+        // device it is its kind's (DeviceSource, CORE-22); other sensors, such as Unity's analytic
+        // bridge sensors, carry their own label.
         public string Source { get; }
         public SensorMount Mount { get; }
 

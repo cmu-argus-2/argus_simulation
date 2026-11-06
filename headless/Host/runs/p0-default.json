@@ -28,7 +28,6 @@
       "modelName": "placeholder-mems-imu",
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
@@ -61,7 +60,6 @@
       "modelName": "placeholder-magnetometer",
       "frameId": "mag_main",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
@@ -80,7 +78,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_px",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.05, 0.0, 0.0],
@@ -100,7 +97,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_mx",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [-0.05, 0.0, 0.0],
@@ -120,7 +116,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_py",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.05, 0.0],
@@ -140,7 +135,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_my",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, -0.05, 0.0],
@@ -160,7 +154,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_pz",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.05675],
@@ -180,7 +173,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_mz",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, -0.05675],
@@ -200,7 +192,6 @@
       "modelName": "arducam-imx708",
       "frameId": "cam_px",
       "samplePeriodSeconds": 15.0,
-      "source": "argus",
       "controllerVisible": false,
       "mount": {
         "positionBodyMeters": [0.05116, -0.000198, -0.02927],
@@ -230,7 +221,6 @@
       "modelName": "arducam-imx708",
       "frameId": "cam_py",
       "samplePeriodSeconds": 15.0,
-      "source": "argus",
       "controllerVisible": false,
       "mount": {
         "positionBodyMeters": [-0.00018, 0.051362, -0.02927],
@@ -260,7 +250,6 @@
       "modelName": "arducam-imx708",
       "frameId": "cam_mx",
       "samplePeriodSeconds": 15.0,
-      "source": "argus",
       "controllerVisible": false,
       "mount": {
         "positionBodyMeters": [-0.05214, 0.000022, -0.02927],
@@ -290,7 +279,6 @@
       "modelName": "arducam-imx708",
       "frameId": "cam_my",
       "samplePeriodSeconds": 15.0,
-      "source": "argus",
       "controllerVisible": false,
       "mount": {
         "positionBodyMeters": [-0.00030, -0.051438, -0.02927],
