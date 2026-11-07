@@ -248,6 +248,23 @@ namespace Argus.Simulation.Tests
             }
         }
 
+        // Configure sets that source from the kind, whatever the definition carries, so code that
+        // builds a device needn't know it (CORE-22 review). A device built with the constructor is
+        // still checked, as above.
+        [TestCase("test")]
+        [TestCase("simulation")]
+        [TestCase(DeviceSource.Argus)]
+        public void ConfigureSetsTheSourceFromTheKind(string given)
+        {
+            DeviceConfiguration imu = ImuKind.Instance.Configure(Definition("imu.main", given), TestImu.Profile());
+            DeviceConfiguration camera = TestCameras.Configuration(Definition("cam.px", given));
+
+            Assert.That(imu.Definition.Source, Is.EqualTo(DeviceSource.Basilisk));
+            Assert.That(imu.IsValid, Is.True);
+            Assert.That(camera.Definition.Source, Is.EqualTo(DeviceSource.Argus));
+            Assert.That(camera.IsValid, Is.True);
+        }
+
         // MapMeasurements reads the output of every sensor the backend models, so a Basilisk-modelled
         // sensor kind must say how (IBackendSensorKind). Otherwise it would be sent to the service
         // and its samples rejected as unknown (CORE-22).

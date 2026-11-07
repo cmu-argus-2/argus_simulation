@@ -445,15 +445,25 @@ namespace Argus.Simulation.Core
                 return "source";
             }
 
-            Quaterniond a = built.Mount.SensorToBody;
-            Quaterniond b = configured.Mount.SensorToBody;
-            if (!built.Mount.PositionBodyMeters.Equals(configured.Mount.PositionBodyMeters) ||
-                a.X != b.X || a.Y != b.Y || a.Z != b.Z || a.W != b.W)
+            // An invalid built mount (a zero, infinite or far off-unit quaternion) is refused first:
+            // the rotation comparison scales with it and would accept it.
+            if (!built.Mount.IsValid ||
+                !built.Mount.PositionBodyMeters.Equals(configured.Mount.PositionBodyMeters) ||
+                !IsSameRotation(built.Mount.SensorToBody, configured.Mount.SensorToBody))
             {
                 return "mount";
             }
 
             return null;
+        }
+
+        // q and -q are one rotation, and a valid mount may be up to 1e-6 off unit length
+        // (Quaterniond.IsUnit), so two quaternions are the same rotation when their normalised dot
+        // product is +1 or -1. The margin allows about 3 µrad (CORE-22).
+        private static bool IsSameRotation(Quaterniond a, Quaterniond b)
+        {
+            double dot = a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W;
+            return Math.Abs(dot) >= (1.0 - 1e-12) * a.Magnitude * b.Magnitude;
         }
 
         private static SensorDefinition[] SensorDefinitions(SensorManager sensors)

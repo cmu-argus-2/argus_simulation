@@ -126,7 +126,7 @@ Backend sensor measurements (`SensorMeasurements`) are not repeated here. They a
 | `simulation_time_s` | number | `SimulationTimeSeconds` |
 | `timestamp_utc` | string | `TimestampUtc` |
 | `status` | string | `SensorFrameStatus`: `Valid`, `Unavailable`, `Stale` or `Invalid` |
-| `source` | string | `Source`: the sensor's, which for a configured device equals its `devices` entry's `source` (`SimulationGateway` rejects a built sensor whose ID, frame ID, sample period, source or mount differs from its device's, CORE-22) |
+| `source` | string | `Source`: the sensor's, which for a configured device equals its `devices` entry's `source` (`SimulationGateway` rejects a built sensor whose ID, frame ID, sample period, source or mount differs from its device's; a mount rotation written as −q, or normalised, is the same rotation, CORE-22) |
 | `payload_type` | string | the payload's C# type name without its namespace, for example `ImuMeasurement`. Set on every frame, even when `payload` is `null`. |
 | `payload` | object or `null` | the payload's fields (below). `null` when `status` is `Unavailable`. Otherwise it is written as the model produced it, so an `Invalid` frame keeps its measurement; readers check `status` first. |
 

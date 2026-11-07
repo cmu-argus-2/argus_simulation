@@ -287,23 +287,29 @@ namespace Argus.Simulation.Tests
         }
 
         // A camera places its frames by its own mount, so the built sensor must keep its device's
-        // position and every component of its rotation. Each case changes one of them: a sign of
-        // the device's 120-degree turn about (1, 1, 1), or the position.
+        // position and rotation (up to the quaternion's sign). The device turns 120 degrees about
+        // (1, 1, 1); flipping one sign of it gives a turn 120 degrees away. "zero" forgets the
+        // mount's rotation and "scaled" doubles its quaternion: both invalid mounts, which the
+        // rotation comparison alone would accept (CORE-22 review).
         [TestCase("x")]
         [TestCase("y")]
         [TestCase("z")]
         [TestCase("w")]
         [TestCase("position")]
+        [TestCase("zero")]
+        [TestCase("scaled")]
         public void ResetRejectsASensorMountedElsewhereThanItsDevice(string changed)
         {
             SensorMount mount = new SensorMount(new Vector3d(0.1, 0.0, 0.0), new Quaterniond(0.5, 0.5, 0.5, 0.5));
             SensorMount builtMount = new SensorMount(
                 changed == "position" ? new Vector3d(0.0, 0.0, 0.0) : mount.PositionBodyMeters,
-                new Quaterniond(
-                    changed == "x" ? -0.5 : 0.5,
-                    changed == "y" ? -0.5 : 0.5,
-                    changed == "z" ? -0.5 : 0.5,
-                    changed == "w" ? -0.5 : 0.5));
+                changed == "zero" ? new Quaterniond(0.0, 0.0, 0.0, 0.0)
+                    : changed == "scaled" ? new Quaterniond(1.0, 1.0, 1.0, 1.0)
+                    : new Quaterniond(
+                        changed == "x" ? -0.5 : 0.5,
+                        changed == "y" ? -0.5 : 0.5,
+                        changed == "z" ? -0.5 : 0.5,
+                        changed == "w" ? -0.5 : 0.5));
             AnalyticSimulationEngine engine = Engine();
             DeviceConfiguration device = ImuKind.Instance.Configure(
                 new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
@@ -322,6 +328,38 @@ namespace Argus.Simulation.Tests
             ArgumentException error = Assert.Throws<ArgumentException>(() => gateway.Reset(0, Scenario(0.1, device)));
             Assert.That(error.Message, Is.EqualTo("The sensor built for device 'rate.main' must keep its device's mount; it has another."));
             Assert.That(engine.IsInitialized, Is.False);
+        }
+
+        // The same rotation can be written differently: q and -q are one rotation, and a valid mount
+        // may be up to 1e-6 off unit length (Quaterniond.IsUnit), so a sensor may hold it normalised.
+        // Both keep the device's mount (CORE-22 review). The device's turn is 2e-7 short of unit
+        // length, so a raw dot product without normalising would fall short of 1 in both cases.
+        [TestCase("negated")]
+        [TestCase("normalised")]
+        public void ResetAcceptsASensorWhoseMountRotationIsWrittenDifferently(string written)
+        {
+            Quaterniond turn = new Quaterniond(0.5, 0.5, 0.5, 0.4999996);
+            SensorMount mount = new SensorMount(new Vector3d(0.1, 0.0, 0.0), turn);
+            SensorMount builtMount = new SensorMount(
+                mount.PositionBodyMeters,
+                written == "negated" ? new Quaterniond(-turn.X, -turn.Y, -turn.Z, -turn.W) : turn.Normalized());
+            AnalyticSimulationEngine engine = Engine();
+            DeviceConfiguration device = ImuKind.Instance.Configure(
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                TestImu.P0LikeProfile());
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                configured => new DefinitionOnlySensor(new SensorDefinition(
+                    configured.Definition.SensorId,
+                    configured.Definition.ModelName,
+                    configured.Definition.FrameId,
+                    configured.Definition.SamplePeriodSeconds,
+                    configured.Definition.Source,
+                    builtMount,
+                    configured.Definition.IsControllerVisible)));
+
+            Assert.DoesNotThrow(() => gateway.Reset(0, Scenario(0.1, device)));
+            Assert.That(engine.IsInitialized, Is.True);
         }
 
         // A Reset refused by the gateway's own checks (an invalid scenario, or a sensor that disagrees
