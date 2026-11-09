@@ -162,7 +162,7 @@ is distinct from the original per-step SensorManager output used by the recorder
 
 ### Presence and encoding
 
-Reuse sim/v1 vectors, quaternions, commands and measurements; no Basilisk imports.
+Reuse sim/v1 vectors, quaternions, `DeviceValue` and `DeviceCommand`; no Basilisk imports.
 Initial/no-command states omit applied_commands. Analytic states omit environment;
 ITRF93 states require it. At state k, present applied_commands has sequence k-1.
 Backend unavailable is an empty output map; no sample entry means not sampled.

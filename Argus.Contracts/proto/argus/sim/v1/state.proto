@@ -49,7 +49,7 @@ message AppliedCommand {
   // Start of the command interval, seconds since simulation start (t_(k-1)).
   optional double apply_at_simulation_time_s = 2;
   // Every configured actuator, including idle values; unique IDs. Keys/types/units
-  // belong to its kind (D11). Empty until actuator kinds exist.
+  // belong to its kind (D11). Empty when the run configures no actuator.
   repeated DeviceCommand commands = 3;
 }
 
