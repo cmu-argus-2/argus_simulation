@@ -40,6 +40,15 @@ namespace Argus.Simulation.Core
                 throw new ArgumentOutOfRangeException(nameof(exposureDurationSeconds), "Must be finite and >= 0.");
             }
 
+            // One camera can't start an exposure before its last one ends (CORE-22); equal is
+            // continuous exposure.
+            if (exposureDurationSeconds > definition.SamplePeriodSeconds)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(exposureDurationSeconds),
+                    "Must not exceed the sample period: one camera can't start an exposure before the last one ends.");
+            }
+
             if (!(maximumLatencySeconds > 0.0))
             {
                 throw new ArgumentOutOfRangeException(nameof(maximumLatencySeconds), "Must be > 0 (infinity never gives up on a render).");

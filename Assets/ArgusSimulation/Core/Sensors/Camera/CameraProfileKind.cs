@@ -26,7 +26,7 @@ namespace Argus.Simulation.Core
         private const string K3 = "distortion.k3";
         private const string DistortionSource = "distortion.source";
         private const string NoiseSource = "noise.source";
-        private const string ExposureDuration = "exposure_duration_s";
+        internal const string ExposureDuration = "exposure_duration_s";
         private const string ExtrinsicsSource = "extrinsics.source";
         private const string ExtrinsicsOrigin = "extrinsics.origin";
         private const string OrientationVerified = "extrinsics.orientation_verified";
@@ -135,7 +135,7 @@ namespace Argus.Simulation.Core
 
             if (!profile.Intrinsics.IsValid)
             {
-                return "parameters[\"intrinsics.*\"]: are not valid intrinsics (see CameraIntrinsics.IsValid)";
+                return FindIntrinsicsProblem(profile.Intrinsics);
             }
 
             if (IsBlank(profile.IntrinsicsSource))
@@ -192,5 +192,34 @@ namespace Argus.Simulation.Core
                 ? null
                 : $"parameters[\"{key}\"]: must be a whole number of pixels";
         }
+
+        // Names the key CameraIntrinsics.IsValid fails on (CORE-22). Non-finite values never get
+        // here: the declared-key check rejects them first.
+        private static string FindIntrinsicsProblem(CameraIntrinsics intrinsics)
+        {
+            if (intrinsics.WidthPixels <= 0)
+            {
+                return MustBePositive(Width);
+            }
+
+            if (intrinsics.HeightPixels <= 0)
+            {
+                return MustBePositive(Height);
+            }
+
+            if (!(intrinsics.FocalLengthXPixels > 0.0))
+            {
+                return MustBePositive(FocalLengthX);
+            }
+
+            if (!(intrinsics.FocalLengthYPixels > 0.0))
+            {
+                return MustBePositive(FocalLengthY);
+            }
+
+            return "parameters[\"intrinsics.*\"]: are not valid intrinsics (see CameraIntrinsics.IsValid)";
+        }
+
+        private static string MustBePositive(string key) => $"parameters[\"{key}\"]: must be > 0";
     }
 }
