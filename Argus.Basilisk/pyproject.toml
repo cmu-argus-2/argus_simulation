@@ -18,7 +18,8 @@ dependencies = [
 [project.optional-dependencies]
 basilisk = ["bsk==2.11.1"]
 test = ["pytest>=7,<9"]
-# scripts/fetch_kernels.py only (coverage check); argus_basilisk never imports spiceypy (D3).
+# scripts/fetch_kernels.py (coverage check) and scripts/check_reference_runs.py (HOST-8, #32);
+# argus_basilisk never imports spiceypy (D3).
 tools = ["spiceypy==8.2.0"]
 
 [tool.pytest.ini_options]

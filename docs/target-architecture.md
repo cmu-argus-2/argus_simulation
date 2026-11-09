@@ -119,7 +119,7 @@ tiles. It is not run data and sits outside D6.
 |---|---|---|---|
 | D1 | The core is headless: `Argus.Simulation.Core` never references Unity. Unity is a client and a renderer. | Runs, SIL and HIL must work without the GUI. | The Core asmdef sets `noEngineReferences`, and `headless/` builds Core with plain `dotnet`. |
 | D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` becomes a follower. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Lockstep SIL runs use Basilisk too, unpaced (DATA-10, #75; §4). |
-| D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. |
+| D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. One exception (HOST-8, #32): the offline checker `Argus.Basilisk/scripts/check_reference_runs.py` and its tests read the same pinned, SHA-checked set through spiceypy to verify Basilisk's output; the service, Core and the host never load a second SPICE. |
 | D4 | Environment data travels inside `SimulationState` as `EnvironmentState` (Sun vector, J2000 ↔ ITRF93 orientation, eclipse). There is no separate environment service. | It is per-step data produced together with the dynamics. | Lighting, camera models and the recorder read it through the state broadcast. |
 | D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. The camera frame is OpenCV's (+x image right, +y image down, +z out of the lens; pixel (0, 0) is the centre of the top-left pixel), as in the Argus flight and GNC code, so the DATA-6 mounts are used unchanged (CORE-6); the renderer converts to its own axes. |
 | D6 | One export route for run data: the run recorder, fed by states, all `SensorManager` output, and the gateway's command log. | One dataset format with the same run ID, sequence and timestamps for truth and every sensor. | Decided in DATA-4 (#69) with the navigation owner: dataset v1 replaces the exporter output with no compatibility layer, and UNITY-9 (#63) retires `NavigationEpisodeExporter` once its one Python reader has moved to dataset v1. Until G2, the recorder runs in the process that owns the step loop, `headless/Host` in Basilisk runs and Unity in Unity-driven analytic runs (fed by the temporary sensor bridge); after G2 every run records in the headless core. Layout: `Core/Recording/README.md`. |
@@ -296,8 +296,8 @@ recorder and Unity through `StateProduced`.
 | G1 | No backend applies actuator commands | `SimulationGateway.Step` forwards a per-device `DeviceCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state; `BasiliskEngine` sends it as `StepRequest.commands`. No actuator kind exists yet, so the gateway rejects a command naming any device, and the service returns INVALID_ARGUMENT for one, leaving the empty set (no output). The gateway also rejects non-finite or repeated commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and applies no command. Under D11, commands address actuators by device ID (CORE-20, #112; [device-model.md](device-model.md) §6); actuator kinds follow the sensor work, starting with ideal body torque (CON-2, #34). |
 | G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. `headless/Host` already runs the gateway, `BasiliskEngine`, the P0 sensors and the recorder; the gateway server and the state stream (`StateStreamServer`, `StateStreamClient`, `state_stream.proto`) are placeholders. |
 | G3 | Camera timing in real time | A Cesium render can take longer than a step. Decided (CORE-3 #38): stamp with capture time. `CameraModel` starts each exposure at its slot and publishes the frame on the step its render finishes, with the capture state's sequence and time, in sequence order. An exposure not rendered within the camera's latency limit (simulation time), or whose render fails, is published as `Unavailable`; frames are never dropped silently, marked `Stale`, or black. A step loop that must not outrun the renderer waits until `PendingExposureCount` is 0. With no `EnvironmentState` (analytic runs, D9) the camera still renders and the request records that it has no Sun position; the Sun is never approximated. |
-| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. HOST-5 (#29) ran the full P0 scenario (IMU, magnetometer, six light sensors; kernel set `argus-2026-11-02`) for 600 s: every sensor reports exactly on its period, also with mixed periods of 0.1 to 1.0 s; the IMU is Unavailable at t = 0 and Valid after; and against CSPICE and an independent propagation from the run file's elements (Earth point mass plus the Sun as a third body), the J2000-to-ITRF93 rotation, Sun and Earth rate agree to about 8e-16 relative, the orbit to 14 µm and 5e-8 m/s, and body to J2000 stays the initial attitude to 7e-16. Two runs with the same seed record identical states, frames and commands. |
-| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels, and only the backend-modelled sensors are sent to it (CORE-18). Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). The run file names its profile by a path relative to itself ([device-model.md](device-model.md) §4, HOST-9 #113). |
+| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. HOST-5 (#29) ran the full P0 scenario (IMU, magnetometer, six light sensors; kernel set `argus-2026-11-02`) for 600 s: every sensor reports exactly on its period, also with mixed periods of 0.1 to 1.0 s; the IMU is Unavailable at t = 0 and Valid after; and against CSPICE and an independent propagation from the run file's elements (Earth point mass plus the Sun as a third body), the J2000-to-ITRF93 rotation, Sun and Earth rate agree to about 8e-16 relative, the orbit to 14 µm (a service defect HOST-8 later fixed) and 5e-8 m/s, and body to J2000 stays the initial attitude to 7e-16. Two runs with the same seed record identical states, frames and commands. HOST-8 (#32) checked the Basilisk path against independent references over up to 24 h, and found and fixed one defect: see [G4 results](#g4-results-host-8-32). |
+| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels at run time (D3), and only the backend-modelled sensors are sent to it (CORE-18). Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). The run file names its profile by a path relative to itself ([device-model.md](device-model.md) §4, HOST-9 #113). |
 
 **Not built yet:** the Basilisk service's pacing (BSK-7, #20) and actuators (BSK-8, #21; spacecraft,
 SPICE, eclipse and the P0 sensors with their seeded noise are built, and the Basilisk path is
@@ -321,6 +321,80 @@ for provenance and the offline GPU validation command.
   both poles.
 - Attitude nudges change what the cameras render but not the recorded `BodyToEcef`, so
   exported images can disagree with the exported attitude.
+
+### G4 results: HOST-8 (#32)
+
+HOST-8 checks the Basilisk path (the service, `BasiliskEngine` and the mapper) against independent
+references over up to 24 h:
+- **Cases:** frozen in `headless/Host/runs/reference/`; its README gives each value's source.
+- **Checker:** `Argus.Basilisk/scripts/check_reference_runs.py` compares a recording with its case.
+- **What it shows:** the references use the service's own physics (Earth and the Sun as point
+  masses with bsk 2.11.1's μ, and a torque-free rigid body). So these results show the configured
+  physics is solved and mapped correctly, not that it is realistic.
+- **Tolerances:** the error budgets of the plan on #32 (7 Nov 2026), far below a camera pixel
+  (58″, or 163 m at nadir).
+
+Measured 8 Nov 2026 with HOST-8's service fix: epoch 2026-06-01T12:00Z, kernel set `argus-2026-11-02`, bsk 2.11.1.
+The recordings stamp `66911d4`, the commit before the fix, because the fix wasn't yet committed; at `66911d4` itself,
+R1 at 1 s drifts 1.45 m.
+
+| Case | Checks | Worst over the run | Tolerance |
+|---|---|---|---|
+| R1 orbit, 24 h | orbit integration and the J2000 → ITRF93 mapping | 3.0e-5 m and 3.2e-8 m/s at 0.1 s steps; 5.9e-5 m and 6.4e-8 m/s at 1 s | 1 cm, 10 µm/s |
+| R1e eccentric, 2 h | the element conversion (e = 0.01, generic angles) | 2.5e-6 m, 2.5e-9 m/s | 1 cm, 10 µm/s |
+| all ten | the frame, the Sun's position and the Earth rate, at every step | 2.2e-16 rad; 1.2e-15 and 5.7e-16 relative | 1e-10 |
+| R2 spin, 600 s | attitude conventions: a tilted start spinning at 20.17°/s about +Y | 2.7e-8 rad; ω exact | 1e-6 rad, 1e-6 relative |
+| R2, its IMU | a noise-free IMU on a skewed, offset mount, from step 1 | gyro 5.6e-17 rad/s, accelerometer 4.3e-12 m/s² | 1e-14 rad/s, 1e-9 m/s² |
+| R3 tumble, 600 s | products of inertia and Euler's equations | 4.3e-8 rad, ω 3.4e-8 relative; momentum 3.3e-9, energy 5.4e-10 | 1e-6 each |
+| R5 Sun-pointing, 60 s | a light sensor on a 35° mount, its boresight on the Sun, reading 1361 × (1 AU/d)² W/m² | 2.1e-10 relative | 1e-3, which catches a pointing error above about 2.6°; an ignored or inverted mount is 34° or 68° off |
+| R2-long, 24 h at 20°/s | attitude drift against the step size | 0.88° (identity start) and 2.19° (R2's start) at 1 s steps, or 55 and 136 IMX708 pixels; 0.3″ and 0.8″ at 0.1 s | the start: 1e-6 rad; the drift: measured only |
+
+- **A recording passes only if:**
+  - it is a closed run with nothing dropped;
+  - it uses the case's step, kernel set and backend;
+  - it has one state per step, in order, with UTC stamps at the epoch plus the simulation time
+    and a unit frame quaternion, plus a unit body attitude in the attitude cases (R2, R2-long, R3);
+  - it echoes the run file's configuration and devices by value;
+  - each declared sensor has one frame per state, and no undeclared sensor has any.
+
+  The three 24 h runs at 0.1 s each recorded all 864,001 states with no drops (the recorder queue
+  holds 65,536).
+- **Defect found and fixed in HOST-8.**
+  - **What it was:** Earth's gravity body read its SPICE planet message. Earth is the central body
+    and SPICE's zero base.
+  - **Why it mattered:** bsk 2.11.1 steps the message's orientation linearly inside each step, so
+    the orbit converged at second order. It drifted 1.45 m a day at 1 s steps, and halving the step
+    cut the error 4×. A message with the orientation but no rate leaves the orbit exact.
+  - **The fix:** Earth's gravity body now reads no message (`Argus.Basilisk/README.md`, scenario
+    notes).
+  - **Effect on HOST-5:** its 14 µm orbit figure (G4) was this defect. The 600 s cases here, R2 and
+    R3, gave 1.4e-5 m before the fix, and 3.4e-8 and 3.5e-8 m after.
+- **R4, the analytic fixture (development only, D9).** It starts on Basilisk's orbit at t = 0, in
+  ITRF93 axes frozen at t = 0. It deviates by up to 27.5 m, at 11.6 h:
+
+  | t | total | radial | along-track | cross-track |
+  |---|---|---|---|---|
+  | 0 s | 7e-9 m | | | |
+  | 96 min (one fixture orbit is 96.3 min) | 4.24 m | −0.0001 m | −4.18 m | +0.71 m |
+  | 6 h | 20.8 m | −0.35 m | −4.11 m | +20.38 m |
+  | 24 h | 5.51 m | −0.01 m | −5.46 m | +0.78 m |
+
+  To split it, Basilisk's own J2000 path is mapped through the fixture's Earth instead of ITRF93:
+  - the fixture's Earth model, a constant-rate turn about ITRF93's z axis at t = 0, accounts for up
+    to 31.5 m (at 12.4 h);
+  - its orbit physics (no Sun, the WGS-84 μ, a circular orbit) accounts for up to 9.9 m, with
+    6.8 m along-track at 24 h;
+  - the two partly cancel.
+
+  Only R1 has an R4 counterpart, and its 1 s recording is enough, since R4 compares every 60 s.
+  The fixture has no eccentricity, attitude dynamics or sensors, so R1e, R2, R2-long, R3 and R5
+  have nothing to compare.
+- **Not verified:**
+  - mass and the inertia's scale, to which a torque-free body is blind;
+  - any torque;
+  - J2 and drag, which the service doesn't model;
+  - the eclipse factor, beyond R5's full sunlight;
+  - the recorded body attitude and rate in the zero-rate cases (R1, R1e, R5); R2 and R3 check their mapping.
 
 ## 8. Teammate branches reconciled with these decisions
 

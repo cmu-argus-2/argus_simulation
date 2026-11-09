@@ -80,7 +80,8 @@ orbit, spacecraft and devices. `RunConfigurationFile` reads it into Core
 `argus.sim.v1.RunConfiguration`, without the devices Argus computes. The run ID is not in the
 file; the host gives each run its own.
 
-- **Location:** `headless/Host/runs/`. The build copies every `runs/*.json` next to the
+- **Location:** `headless/Host/runs/`; HOST-8's frozen reference cases are in `runs/reference/`
+  (see its README). The build copies every `runs/*.json` and `runs/reference/*.json` next to the
   host binary.
 - **Format:** JSON whose field names are the Core property names in camelCase, in SI units
   with the unit in the name (`semiMajorAxisMeters`, `samplePeriodSeconds`). Vectors are

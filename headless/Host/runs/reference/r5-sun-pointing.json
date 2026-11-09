@@ -1,0 +1,76 @@
+{
+  "epochUtc": "2026-06-01T12:00:00Z",
+  "fixedStepSeconds": 0.1,
+  "randomSeed": 1,
+  "kernelSetId": "argus-2026-11-02",
+  "initialOrbit": {
+    "semiMajorAxisMeters": 6958137.0,
+    "eccentricity": 0.0,
+    "inclinationDegrees": 97.75,
+    "raanDegrees": 234.06,
+    "argumentOfPeriapsisDegrees": 0.0,
+    "trueAnomalyDegrees": 155.7
+  },
+  "spacecraft": {
+    "massKilograms": 2.6,
+    "inertiaBodyKilogramSquareMeters": [
+      [
+        0.01906,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.01931,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.00824
+      ]
+    ],
+    "initialBodyToJ2000": {
+      "x": -0.5935432348876867,
+      "y": 0.0071149374286999245,
+      "z": 0.2176393298601474,
+      "w": 0.7747831490697717
+    },
+    "initialAngularVelocityBodyRadiansPerSecond": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "devices": [
+    {
+      "deviceId": "light.pz",
+      "kind": "light_sensor",
+      "modelName": "placeholder-face-light-sensor",
+      "frameId": "light_pz",
+      "samplePeriodSeconds": 0.1,
+      "source": "basilisk",
+      "controllerVisible": true,
+      "mount": {
+        "positionBodyMeters": [
+          0.0,
+          0.0,
+          0.05675
+        ],
+        "deviceToBody": {
+          "x": 0.1312387702990996,
+          "y": 0.2624775405981992,
+          "z": -0.0656193851495498,
+          "w": 0.9537169507482269
+        }
+      },
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0
+      }
+    }
+  ]
+}

@@ -798,3 +798,38 @@ def test_ceres_albedo_is_darker_over_open_ocean_and_brighter_over_clouds_than_th
     assert ratio.max() > 1.25
     assert ceres[558] / average[558] < 0.6  # t = 5580 s, open ocean.
     assert ceres[412] / average[412] > 1.25  # t = 4120 s, cloud deck.
+
+
+def orbit_after(step_s, duration_s):
+    """The spacecraft's J2000 position after duration_s of the P0 orbit (no devices), stepped at step_s."""
+    servicer = servicer_module.BasiliskSimulationServicer()
+    server = grpc.server(ThreadPoolExecutor(max_workers=2))
+    service_grpc.add_BasiliskSimulationServiceServicer_to_server(servicer, server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = service_grpc.BasiliskSimulationServiceStub(channel)
+            request = configure_request()
+            step_ns = int(round(step_s * 1e9))
+            request.configuration.fixed_step_ns = step_ns
+            stub.ConfigureRun(request)
+            for n in range(int(round(duration_s / step_s)) + 1):
+                step = service_pb.StepRequest(run_id="p0-default", sequence=n, sim_time_ns=n * step_ns,
+                                              commands=zero_command())
+                if n > 0:
+                    step.command_sequence = n - 1
+                    step.command_time_ns = (n - 1) * step_ns
+                response = stub.Step(step)
+            return np.array(xyz(response.spacecraft.position_bn_inertial_m))
+    finally:
+        server.stop(None)
+
+
+# HOST-8 (#32) found the orbit converging at second order: with the central body (Earth, also SPICE's zero base)
+# reading its planet message, bsk 2.11.1 drifted 1.45 m a day at 1 s steps. RK4 at fourth order moves a 1 h orbit by
+# micrometres when the step halves; the second-order path moved it by centimetres.
+@real_kernels
+def test_halving_the_step_barely_moves_a_one_hour_orbit():
+    moved = np.linalg.norm(orbit_after(1.0, 3600.0) - orbit_after(0.5, 3600.0))
+    assert moved < 1e-4, f"halving the step moved the 1 h orbit by {moved:.3e} m"

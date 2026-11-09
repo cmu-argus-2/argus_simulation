@@ -101,9 +101,15 @@ class Scenario:
         self.spice.UTCCalInit = format_epoch(configuration.epoch_utc)
         self.sim.AddModelToTask(TASK_NAME, self.spice, SPICE_PRIORITY)
 
-        # Gravity bodies in PLANET_NAMES order, each fed by its SPICE planet state; Earth central.
+        # Gravity bodies in PLANET_NAMES order; Earth central. Earth is also SPICE's zero base, so its position and
+        # velocity are zero, and its gravity body reads no planet message. Earth's message also carries the ITRF93
+        # orientation and its rate, and bsk 2.11.1 steps that orientation linearly inside each step, which isn't a
+        # rotation: the point-mass orbit then converges at second order (1.45 m a day at 1 s steps; HOST-8 #32).
+        # The Sun reads its SPICE state.
+        # TODO(basilisk-team): a J2 or spherical-harmonics Earth needs that orientation, and would meet the same error.
         self._gravity_bodies = [
-            _gravity_body(name, self.spice.planetStateOutMsgs[index]) for index, name in enumerate(PLANET_NAMES)]
+            _gravity_body(name, None if index == EARTH_INDEX else self.spice.planetStateOutMsgs[index])
+            for index, name in enumerate(PLANET_NAMES)]
         earth = self._gravity_bodies[EARTH_INDEX]
         earth.isCentralBody = True
 
@@ -276,14 +282,19 @@ def _epoch_msg(timestamp) -> messaging.EpochMsg:
 
 
 def _gravity_body(name: str, planet_state_msg) -> gravityEffector.GravBodyData:
-    """A point-mass gravity body, as simIncludeGravBody.gravBodyFactory.createBody builds it."""
+    """A point-mass gravity body, as simIncludeGravBody.gravBodyFactory.createBody builds it.
+
+    planet_state_msg is None for the central body at SPICE's zero base: its position is zero by construction, and
+    reading the message's orientation costs the orbit two orders of accuracy (see the caller).
+    """
     body = gravityEffector.GravBodyData()
     body.planetName = f"{name}_planet_data"
     body.displayName = name
     body.modelDictionaryKey = ""
     body.mu, body.radEquator = GRAVITY[name]
     body.radiusRatio = 1.0
-    body.planetBodyInMsg.subscribeTo(planet_state_msg)
+    if planet_state_msg is not None:
+        body.planetBodyInMsg.subscribeTo(planet_state_msg)
     return body
 
 
