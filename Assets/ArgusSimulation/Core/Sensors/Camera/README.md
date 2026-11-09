@@ -88,7 +88,7 @@ estimate.
      request, so the renderer supplies only pixels.
    - **Failed, cancelled, or a frame that does not match the request:** `Unavailable`.
    - **Still rendering past `MaximumLatencySeconds` of simulation time:** cancelled and
-     published `Unavailable`. `PositiveInfinity` waits for every render.
+     published `Unavailable`. `PositiveInfinity` never gives up on a render.
 3. Frames are published in sequence order, one per `TrySample`; a later exposure that
    finishes first waits for the earlier one.
 
@@ -101,6 +101,15 @@ A camera never publishes a black or approximated image. With no renderer every e
 `RenderRequest.SunPositionEcefMeters` is `null`, which records that the renderer lit the
 scene its own way.
 
-A step loop that must not outrun the renderer (lockstep runs) waits until
-`PendingExposureCount` is 0 before stepping. The Unity renderer that implements
-`IImageRenderer` lives in `Unity/Cameras/` (UNITY-4, #57).
+An exposure still pending when the run ends or the camera resets is abandoned, not published.
+`TrySample` is a frame's only way out, and neither case samples that run again; `Reset` also
+cancels the render. Frames are published in sequence order, so abandoned exposures are always
+the last ones: a camera's frames in a run directory can stop short of its last slot, but their
+`sequence` has no gaps. The manifest does not count them.
+
+`PendingExposureCount` is a queue depth, not something to wait on. It falls only inside
+`TrySample`, so a step loop that waits for it to reach 0 before stepping never finishes. Core
+has no way to wait for a render yet: `PositiveInfinity` stops a slow render from timing out but
+does not hold the step loop back, so exposures queue up. Lockstep waiting belongs with the
+first renderer. The Unity renderer that implements `IImageRenderer` lives in `Unity/Cameras/`
+(UNITY-4, #57).
