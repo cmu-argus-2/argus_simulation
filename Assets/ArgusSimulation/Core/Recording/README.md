@@ -146,8 +146,9 @@ Commands are per device (D11, [device-model.md](../../../../docs/device-model.md
 `requested`, `applied` and `producing_command` carry `devices`, which maps each commanded
 device ID to its values. The set is complete, so an actuator it leaves out is idle and `{}`
 means no output. `applied` lists every configured actuator, idle ones included (CON-2, #34),
-and a command naming a device that is not a configured actuator, or with other keys than its
-kind's, is `Rejected`. `states.jsonl` gains each device's per-step state as `devices` with the
+and a command naming a device that is not a configured actuator, with other keys than its
+kind's, or, until BSK-8 (#21) applies commands, with other values than the kind's idle ones, is
+`Rejected`. `states.jsonl` gains each device's per-step state as `devices` with the
 first effectors (BSK-8, #21). These fields replaced the three body-frame vectors before HOST-5
 (#29) froze v1, so the schema stays at version 1.
 

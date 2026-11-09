@@ -11,7 +11,8 @@ namespace Argus.Simulation.Core
 
         public static bool IsUnitAxis(Vector3d axis) => axis.IsFinite && Math.Abs(axis.Magnitude - 1.0) <= UnitTolerance;
 
-        // +-(0, 0, 0, 1), for a unit quaternion.
+        // +-(0, 0, 0, 1). Only x, y and z are checked, so this holds only for a unit quaternion:
+        // callers check SensorMount.IsValid first.
         public static bool IsIdentityRotation(Quaterniond rotation) =>
             Math.Abs(rotation.X) <= UnitTolerance &&
             Math.Abs(rotation.Y) <= UnitTolerance &&

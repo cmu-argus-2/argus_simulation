@@ -23,7 +23,11 @@ namespace Argus.Simulation.Core
         DeviceValues IdleValues { get; }
 
         // The first problem with one command's values (an unknown, missing, wrongly typed or
-        // non-finite key), naming the key, or null. Limits are checked by the gateway (CORE-10).
+        // non-finite key, or a value the kind can never take, such as negative thrust), naming
+        // the key, or null. Limits are checked by the gateway (CORE-10).
         string FindCommandProblem(DeviceValues values);
+
+        // Whether valid command values are exactly the idle values: the actuator applies nothing.
+        bool IsIdle(DeviceValues values);
     }
 }

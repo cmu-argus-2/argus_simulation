@@ -221,7 +221,11 @@ def step_command_problems(
         kind = actuators.get(device_id)
         if kind is not None and not first_step:
             before = problems.count
-            values = _check_values(problems, kind, kind.COMMANDS, command.values, f"{command_path}.values", "command key")
+            values_path = f"{command_path}.values"
+            values = _check_values(problems, kind, kind.COMMANDS, command.values, values_path, "command key")
+            if hasattr(kind, "check_command"):
+                kind.check_command(
+                    values, lambda key, reason, value: problems.invalid(f"{values_path}[{json.dumps(key)}]", reason, value))
             # An idle command applies nothing, so it needs no effector. Lifted by BSK-8 (#21), which
             # applies the commands of configured actuators (G1).
             if problems.count == before and values != kind.IDLE:

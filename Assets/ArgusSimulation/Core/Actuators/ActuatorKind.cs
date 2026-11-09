@@ -32,11 +32,31 @@ namespace Argus.Simulation.Core
         public IReadOnlyList<DeviceKey> CommandKeys => _commandKeys.Keys;
         public DeviceValues IdleValues { get; }
 
-        public string FindCommandProblem(DeviceValues values) =>
-            FindKeyProblem("values", _commandKeys, values ?? DeviceValues.Empty);
+        public string FindCommandProblem(DeviceValues values)
+        {
+            values = values ?? DeviceValues.Empty;
+            return FindKeyProblem("values", _commandKeys, values) ?? FindCommandValueProblem(values);
+        }
+
+        public bool IsIdle(DeviceValues values)
+        {
+            foreach (DeviceKey key in _commandKeys.Keys)
+            {
+                if (!values.TryGetValue(key.Name, out DeviceValue value) || !IsSame(value, IdleValues[key.Name]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         public override ISensor CreateSensor(DeviceConfiguration configuration, IImageRenderer imageRenderer) =>
             throw new InvalidOperationException($"Device kind {Name} is an actuator, not a sensor.");
+
+        // A command value the kind can never take whatever its limits, checked after the keys;
+        // null when there is none. Limits are CORE-10's.
+        protected virtual string FindCommandValueProblem(DeviceValues values) => null;
 
         protected override string FindValueProblem(DeviceValues parameters) =>
             ParseLimitPolicy(parameters[LimitPolicyKey].Text) == ActuatorLimitPolicy.Unknown
@@ -66,6 +86,16 @@ namespace Argus.Simulation.Core
         protected const string Positive = "must be > 0";
         protected const string PositiveComponents = "each component must be > 0";
         protected const string UnitAxis = "must have unit length within 1e-6 (ActuatorGeometry.UnitTolerance)";
+
+        private static bool IsSame(DeviceValue value, DeviceValue idle) =>
+            value.Type == idle.Type && value.Type switch
+            {
+                DeviceValueType.Number => value.Number == idle.Number,
+                DeviceValueType.Vector3 => value.Vector3.Equals(idle.Vector3),
+                DeviceValueType.Flag => value.Flag == idle.Flag,
+                DeviceValueType.Text => value.Text == idle.Text,
+                _ => false
+            };
 
         private static ActuatorLimitPolicy ParseLimitPolicy(string text) =>
             text == ClampText ? ActuatorLimitPolicy.Clamp :

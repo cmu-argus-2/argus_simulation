@@ -278,6 +278,15 @@ namespace Argus.Simulation.Core
                 {
                     return $"Device '{device.DeviceId}' command {problem}.";
                 }
+
+                // TODO(G1): no engine applies actuator commands yet. The analytic fixture only
+                // records them, and the service builds no effector until BSK-8 (#21), so it would
+                // return UNIMPLEMENTED and end the run after an Applied record. Refuse instead, so
+                // the log tells the truth and the run continues; BSK-8 lifts this.
+                if (!actuator.IsIdle(device.Values))
+                {
+                    return $"Device '{device.DeviceId}': applying actuator commands is not built yet (BSK-8, #21).";
+                }
             }
 
             return null;

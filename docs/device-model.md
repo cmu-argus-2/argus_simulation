@@ -65,8 +65,10 @@ command carries exactly the kind's command keys, and its idle values are zero:
 | `ideal_body_torque` | `max_torque_body_n_m` (vector3, a bound on each body axis) | none | `torque_body_n_m` (vector3) | `extForceTorque` |
 | `momentum_wheel` | `spin_axis_body`, `spin_inertia_kg_m2`, `max_torque_n_m`, `max_speed_rad_per_s` | `speed_rad_per_s` | `motor_torque_n_m` | `reactionWheelStateEffector` |
 | `magnetic_torquer` | `dipole_axis_body`, `max_dipole_a_m2` | none | `dipole_a_m2` (signed) | `MtbEffector` |
-| `thruster` | `thrust_direction_body`, `max_thrust_n` | none | `thrust_n`, held over the step | `thrusterDynamicEffector`, on-time `thrust_n / max_thrust_n` of the step |
+| `thruster` | `thrust_direction_body`, `max_thrust_n` | none | `thrust_n` (>= 0), held over the step | `thrusterDynamicEffector`, on-time `thrust_n / max_thrust_n` of the step |
 
+Until BSK-8 (#21) applies commands, the gateway refuses (logs `Rejected`) any command that is not
+the kind's idle values, as the service would, so the run continues and the log tells the truth.
 A spacecraft whose actuators aren't known yet uses one `ideal_body_torque` device; the P0 run
 file lists `torque.body` with placeholder limits until DATA-2 (#68) confirms the actuators.
 

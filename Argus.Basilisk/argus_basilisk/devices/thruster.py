@@ -6,7 +6,7 @@ converting thrust_n to an on-time of thrust_n / max_thrust_n of the step; until 
 builds nothing, so only idle commands are accepted.
 """
 
-from ._common import ACTUATOR, NUMBER, TEXT, VECTOR3, Invalid, limit_policy, positive, unit_axis
+from ._common import ACTUATOR, NUMBER, TEXT, VECTOR3, Invalid, limit_policy, non_negative, positive, unit_axis
 
 KIND = "thruster"
 ROLE = ACTUATOR
@@ -33,3 +33,8 @@ def check(values, invalid: Invalid) -> None:
     unit_axis(values, invalid, "thrust_direction_body")
     positive(values, invalid, "max_thrust_n")
     limit_policy(values, invalid)
+
+
+def check_command(values, invalid: Invalid) -> None:
+    # A thruster only pushes (Core ThrusterKind); above max_thrust_n is a limit (CORE-10, #46).
+    non_negative(values, invalid, "thrust_n")

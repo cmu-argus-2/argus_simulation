@@ -292,6 +292,10 @@ namespace Argus.Simulation.Tests
             Assert.That(new DeviceConfiguration(sampled, torque.Kind, torque.Parameters).IsValid, Is.False);
             Assert.That(new DeviceConfiguration(rotated, torque.Kind, torque.Parameters).IsValid, Is.False);
 
+            Assert.That(
+                ThrusterKind.Instance.FindCommandProblem(new DeviceValues.Builder().Add(ThrusterKind.ThrustKey, -0.01).Build()),
+                Is.EqualTo("values[\"thrust_n\"]: must be >= 0"));
+
             DeviceConfiguration sameIdAsSensor = IdealBodyTorque("mag.main");
             Assert.That(sameIdAsSensor.IsValid, Is.True);
             Assert.That(Run(Magnetometer(), sameIdAsSensor).IsValid, Is.False);

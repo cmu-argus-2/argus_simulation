@@ -11,7 +11,8 @@ module defines:
   as for every sensor kind so far;
 - OUTPUTS (sensors): each key and type of its BasiliskDeviceSample.output;
 - COMMANDS and IDLE (actuators): each command key and its type, and the values the actuator runs
-  in a step whose command leaves it out (no output);
+  in a step whose command leaves it out (no output); check_command(values, invalid) (optional),
+  a command value the kind can never take, reported as check() reports;
 - check(values, invalid): its range checks. values maps each parameter key that has its declared
   type and is finite to its Python value (a float, a str, or a tuple of components); a problem is
   reported as invalid(key, reason, value);

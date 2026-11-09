@@ -40,6 +40,11 @@ namespace Argus.Simulation.Core
 
         protected override bool IsValid(ThrusterProfile profile) => profile.IsValid;
 
+        // A thruster only pushes, so a negative thrust is never valid; above max_thrust_n is a limit
+        // (CORE-10, #46).
+        protected override string FindCommandValueProblem(DeviceValues values) =>
+            values.Number(ThrustKey) < 0.0 ? $"values[\"{ThrustKey}\"]: must be >= 0" : null;
+
         protected override string FindProfileProblem(ThrusterProfile profile) => FirstProblem(
             (ActuatorGeometry.IsUnitAxis(profile.ThrustDirectionBody), ThrustDirection, UnitAxis),
             (ActuatorGeometry.IsPositive(profile.MaxThrustNewtons), MaxThrust, Positive));

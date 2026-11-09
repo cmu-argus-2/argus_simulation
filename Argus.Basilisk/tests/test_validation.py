@@ -544,6 +544,16 @@ def test_idle_step_command_is_valid_and_any_other_is_unimplemented():
     assert error.value.details.startswith("commands.commands[0]: applying actuator commands is not built yet")
 
 
+def test_negative_thrust_is_invalid():
+    thruster = {"thruster.px": KINDS["thruster"]}
+    commands = commands_pb2.DeviceCommandSet()
+    commands.commands.add(device_id="thruster.px").values["thrust_n"].number = -0.01
+    with pytest.raises(ValidationError) as error:
+        validate_step_command(commands, actuators=thruster)
+    assert error.value.code == "INVALID_ARGUMENT"
+    assert error.value.details.startswith('commands.commands[0].values["thrust_n"]: must be finite and >= 0')
+
+
 def test_malformed_step_commands_are_invalid():
     unnamed = torque_command(device_id="")
     repeated = torque_command()
