@@ -33,7 +33,8 @@ namespace Argus.Simulation.Unity
 
         [Header("Offline imagery pack")]
         [Tooltip("Read the base and observation layers from a pack made by " +
-            "Argus.Imagery/download_gibs_pack.py. Falls back to streaming when the pack is missing.")]
+            "Argus.Imagery/download_gibs_pack.py. Falls back to streaming when the pack is missing; " +
+            "Play mode logs why.")]
         [SerializeField] private bool useImageryPack;
         [Tooltip("Pack root. Empty uses ImageryPacks/ in the project root.")]
         [SerializeField] private string imageryPackDirectory = "";
@@ -322,10 +323,9 @@ namespace Argus.Simulation.Unity
 
             if (problem != null)
             {
-                Debug.LogWarning(
+                WarnPackFallback(
                     $"Imagery pack {directory} {problem}. Streaming {packLayer} from NASA GIBS instead. " +
-                    "See Argus.Imagery/README.md.",
-                    this);
+                    "See Argus.Imagery/README.md.");
                 return null;
             }
 
@@ -335,8 +335,17 @@ namespace Argus.Simulation.Unity
             }
             catch (ArgumentException exception)
             {
-                Debug.LogWarning($"Imagery pack {directory}: {exception.Message}", this);
+                WarnPackFallback($"Imagery pack {directory}: {exception.Message}");
                 return null;
+            }
+        }
+
+        // Edit mode reapplies the settings on every domain reload, so only Play mode warns.
+        private void WarnPackFallback(string message)
+        {
+            if (Application.isPlaying)
+            {
+                Debug.LogWarning(message, this);
             }
         }
 
