@@ -42,7 +42,7 @@ namespace Argus.Simulation.Core
 
             if (!(maximumLatencySeconds > 0.0))
             {
-                throw new ArgumentOutOfRangeException(nameof(maximumLatencySeconds), "Must be > 0 (infinity waits for every render).");
+                throw new ArgumentOutOfRangeException(nameof(maximumLatencySeconds), "Must be > 0 (infinity never gives up on a render).");
             }
 
             Intrinsics = intrinsics;
@@ -55,7 +55,7 @@ namespace Argus.Simulation.Core
         public double ExposureDurationSeconds { get; }
 
         // How far simulation time may pass an exposure before it is given up as Unavailable.
-        // PositiveInfinity waits for every render, for runs whose step loop waits for the camera.
+        // PositiveInfinity never gives up on a render, but it does not hold the step loop back.
         public double MaximumLatencySeconds { get; }
 
         // Exposures started but not yet published. This is a queue depth, not something to wait on:

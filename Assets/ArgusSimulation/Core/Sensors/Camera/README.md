@@ -88,7 +88,7 @@ estimate.
      request, so the renderer supplies only pixels.
    - **Failed, cancelled, or a frame that does not match the request:** `Unavailable`.
    - **Still rendering past `MaximumLatencySeconds` of simulation time:** cancelled and
-     published `Unavailable`. `PositiveInfinity` waits for every render.
+     published `Unavailable`. `PositiveInfinity` never gives up on a render.
 3. Frames are published in sequence order, one per `TrySample`; a later exposure that
    finishes first waits for the earlier one.
 
