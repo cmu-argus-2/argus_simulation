@@ -76,12 +76,16 @@ namespace Argus.Simulation.Core
                 throw new ArgumentException("A valid scenario is required.", nameof(scenario));
             }
 
+            // Sensors first, so a factory that disagrees with its device is refused like an invalid
+            // scenario: before the engine is configured (for Basilisk, a call to the service) and with
+            // the run in progress left running (CORE-22).
+            SensorManager sensors = BuildSensors(run);
             _isRunning = false;
             _hasStartedRun = false;
             Failure = null;
             _engine.Initialize(run);
             _scenario = run;
-            _sensors = BuildSensors(run);
+            _sensors = sensors;
             _controllerVisibleSensorIds = ControllerVisibleSensorIds(run);
 
             if (!_engine.TryReset(out SimulationState state) || !IsExpectedState(state, 0, 0.0, null))
@@ -438,12 +442,73 @@ namespace Argus.Simulation.Core
             {
                 if (IsSensor(device))
                 {
-                    sensors.Register(_sensorFactory(device));
+                    ISensor sensor = _sensorFactory(device);
+                    if (sensor == null)
+                    {
+                        throw new ArgumentException($"The sensor factory built no sensor for device '{device.Definition.SensorId}'.");
+                    }
+
+                    string differs = DifferingPart(sensor.Definition, device.Definition);
+                    if (differs != null)
+                    {
+                        throw new ArgumentException(
+                            $"The sensor built for device '{device.Definition.SensorId}' must keep its device's " +
+                            $"{differs}; it has another.");
+                    }
+
+                    sensors.Register(sensor);
                 }
             }
 
             sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             return sensors;
+        }
+
+        // The manifest lists each device as configured, while its frames carry the built sensor's
+        // ID, frame and source, on that sensor's period, and a camera places its frames by that
+        // sensor's mount; so those must agree (CORE-22). The model name and controller visibility
+        // are recorded and enforced from the configuration alone, so a stand-in model may differ.
+        private static string DifferingPart(SensorDefinition built, SensorDefinition configured)
+        {
+            if (!string.Equals(built.SensorId, configured.SensorId, StringComparison.Ordinal))
+            {
+                return "ID";
+            }
+
+            if (!string.Equals(built.FrameId, configured.FrameId, StringComparison.Ordinal))
+            {
+                return "frame ID";
+            }
+
+            if (built.SamplePeriodSeconds != configured.SamplePeriodSeconds)
+            {
+                return "sample period";
+            }
+
+            if (!string.Equals(built.Source, configured.Source, StringComparison.Ordinal))
+            {
+                return "source";
+            }
+
+            // An invalid built mount (a zero, infinite or far off-unit quaternion) is refused first:
+            // the rotation comparison scales with it and would accept it.
+            if (!built.Mount.IsValid ||
+                !built.Mount.PositionBodyMeters.Equals(configured.Mount.PositionBodyMeters) ||
+                !IsSameRotation(built.Mount.SensorToBody, configured.Mount.SensorToBody))
+            {
+                return "mount";
+            }
+
+            return null;
+        }
+
+        // q and -q are one rotation, and a valid mount may be up to 1e-6 off unit length
+        // (Quaterniond.IsUnit), so two quaternions are the same rotation when their normalised dot
+        // product is +1 or -1. The margin allows about 3 µrad (CORE-22).
+        private static bool IsSameRotation(Quaterniond a, Quaterniond b)
+        {
+            double dot = a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W;
+            return Math.Abs(dot) >= (1.0 - 1e-12) * a.Magnitude * b.Magnitude;
         }
 
         private static SensorDefinition[] SensorDefinitions(SensorManager sensors)

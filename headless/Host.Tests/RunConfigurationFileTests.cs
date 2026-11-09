@@ -188,7 +188,9 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("wrong type", "devices[0].mount.positionBodyMeters: must be an array of 3 numbers")]
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
-        [TestCase("invalid camera intrinsics", "devices[{new}].parameters[\"intrinsics.*\"]: are not valid intrinsics")]
+        [TestCase("invalid camera intrinsics", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
+        [TestCase("exposure longer than the period", "devices[{new}].parameters[\"exposure_duration_s\"]: must not exceed samplePeriodSeconds (1.5 s > 1 s)")]
+        [TestCase("invalid intrinsics and a long exposure", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
         [TestCase("fractional pixel count", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
         [TestCase("period off the step grid", "devices[{new}].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
         [TestCase("controller-visible camera", "devices[{new}].controllerVisible: must be false")]
@@ -201,7 +203,7 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("profile ID reused, other intrinsics", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
         [TestCase("profile ID reused, other distortion source", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in distortion")]
         [TestCase("coefficients as an array", "devices[{new}].parameters.distortion.coefficients: is not a camera parameter")]
-        [TestCase("invalid nadir camera intrinsics", "devices[{new}].parameters[\"intrinsics.*\"]: are not valid intrinsics")]
+        [TestCase("invalid nadir camera intrinsics", "devices[{new}].parameters[\"intrinsics.focal_length_y_px\"]: must be > 0")]
         [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
         [TestCase("nadir camera with the body cameras' profile ID", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
@@ -263,6 +265,17 @@ namespace Argus.Simulation.Host.Tests
                     JsonObject camera = CameraNode("cam.test");
                     camera["parameters"]["intrinsics"]["width_px"] = 0;
                     devices.Add(camera);
+                    break;
+                case "exposure longer than the period":
+                    JsonObject longExposure = CameraNode("cam.test");
+                    longExposure["parameters"]["exposure_duration_s"] = 1.5;
+                    devices.Add(longExposure);
+                    break;
+                case "invalid intrinsics and a long exposure":
+                    JsonObject both = CameraNode("cam.test");
+                    both["parameters"]["intrinsics"]["width_px"] = 0;
+                    both["parameters"]["exposure_duration_s"] = 1.5;
+                    devices.Add(both);
                     break;
                 case "fractional pixel count":
                     JsonObject fractional = CameraNode("cam.test");
@@ -339,6 +352,39 @@ namespace Argus.Simulation.Host.Tests
             RunConfigurationException error = Assert.Throws<RunConfigurationException>(
                 () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
             Assert.That(error.Message, Does.StartWith(expectedMessage));
+        }
+
+        // Which side models a device belongs to its kind and is not configured per device
+        // (docs/device-model.md §1), so the run file has no source field: the host sets it from the
+        // kind (CORE-22).
+        [Test]
+        public void ADevicesSourceComesFromItsKind()
+        {
+            JsonObject root = P0();
+            foreach (JsonNode device in root["devices"].AsArray())
+            {
+                Assert.That(device.AsObject().ContainsKey("source"), Is.False, "p0-default.json still sets a device's source");
+            }
+
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            Assert.That(configuration.Devices, Is.Not.Empty);
+            foreach (DeviceConfiguration device in configuration.Devices)
+            {
+                Assert.That(device.Definition.Source, Is.EqualTo(device.IsBackendModelled ? "basilisk" : "argus"), device.Definition.SensorId);
+            }
+        }
+
+        // An old file that still sets source is told why it no longer can (CORE-22).
+        [Test]
+        public void SourceIsNoLongerARunFileField()
+        {
+            JsonObject root = P0();
+            root["devices"][0]["source"] = "basilisk";
+
+            RunConfigurationException error = Assert.Throws<RunConfigurationException>(
+                () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
+            Assert.That(error.Message, Is.EqualTo("devices[0].source: is no longer a run-file field; the device's kind sets it (device-model §1)"));
         }
 
         [Test]
@@ -421,7 +467,6 @@ namespace Argus.Simulation.Host.Tests
             ["modelName"] = "arducam-imx708",
             ["frameId"] = deviceId.Replace('.', '_'),
             ["samplePeriodSeconds"] = 1.0,
-            ["source"] = "argus",
             ["controllerVisible"] = false,
             ["mount"] = new JsonObject
             {

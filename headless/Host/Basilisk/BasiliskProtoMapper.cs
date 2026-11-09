@@ -43,12 +43,9 @@ namespace Argus.Simulation.Host
             };
 
             // Only backend-modelled devices go to Basilisk; Argus computes the rest (D10, CORE-18).
-            foreach (DeviceConfiguration device in configuration.Devices)
+            foreach (DeviceConfiguration device in configuration.BackendDevices)
             {
-                if (device.IsBackendModelled)
-                {
-                    message.Devices.Add(ToProto(device));
-                }
+                message.Devices.Add(ToProto(device));
             }
 
             return message;

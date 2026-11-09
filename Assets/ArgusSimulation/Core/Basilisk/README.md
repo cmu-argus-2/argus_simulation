@@ -26,12 +26,14 @@ so Core never references Protobuf or gRPC.
 - `SpacecraftState` is Earth-fixed and tagged `Itrf93`:
   `r_E = q_EN (r_BN_N − r_Earth)`, `v_E = q_EN (v_BN_N − v_Earth) − ω × r_E`,
   `BodyToEcef = q_EN * q_NB`. The body rate passes through.
-- Sensor samples become a `SensorMeasurementSet` (D10). Each backend-modelled sensor
-  (`IDeviceKind.IsBackendModelled`) must report exactly on the steps its period divides, at
-  the step time, with exactly its kind's output keys; the kind
-  (`IBackendSensorKind.ReadOutput`) reads them into its measurement type, and an empty map is
-  Unavailable. Sensors Argus computes never reach
-  Basilisk (CORE-18), so a sample naming one is rejected as an unknown sensor.
+- Sensor samples become a `SensorMeasurementSet` (D10). The mapper is given the run's
+  `SimulationConfiguration.BackendSensors`, worked out once per run, and rejects a list that
+  holds any other device: one that isn't `DeviceConfiguration.IsBackendSensor`, a
+  Basilisk-modelled `IBackendSensorKind` (CORE-22). Each sensor must report
+  exactly on the steps its period divides, at the step time, with exactly its kind's output
+  keys; the kind (`IBackendSensorKind.ReadOutput`) reads them into its measurement type, and
+  an empty map is Unavailable. Sensors Argus computes never reach Basilisk (CORE-18), so a
+  sample naming one is rejected as an unknown sensor.
 - Every inconsistent input throws; nothing is repaired or approximated.
 
 ## Rules

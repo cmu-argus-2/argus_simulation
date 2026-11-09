@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -77,18 +78,30 @@ namespace Argus.Simulation.Tests
             Assert.That(Run(px, Imu(0.1), Camera(0.1, sensorId: "cam.py", profile: TestCameras.Profile(raspberryPiLens, 0.0005))).IsValid, Is.False, "another device between them");
         }
 
+        // The devices the backend models are worked out once, when the configuration is built, in
+        // configuration order (CORE-22). Cameras, which Argus computes, are in neither list.
+        [Test]
+        public void BackendListsHoldTheBasiliskModelledDevicesInOrder()
+        {
+            DeviceConfiguration magnetometer = MagnetometerKind.Instance.Configure(
+                new SensorDefinition("mag.main", "test-magnetometer", "mag_main", 0.1, "basilisk", SensorMount.Identity),
+                new MagnetometerProfile(0.0, new Vector3d(0.0, 0.0, 0.0), 1.0, 1.3e-3));
+            SimulationConfiguration run = Run(Camera(1.0), Imu(0.1), Camera(1.0, sensorId: "cam.py"), magnetometer);
+
+            Assert.That(run.BackendDevices.Select(device => device.Definition.SensorId), Is.EqualTo(new[] { "imu.main", "mag.main" }));
+            Assert.That(run.BackendSensors.Select(device => device.Definition.SensorId), Is.EqualTo(new[] { "imu.main", "mag.main" }));
+            Assert.That(default(SimulationConfiguration).BackendDevices, Is.Empty);
+            Assert.That(default(SimulationConfiguration).BackendSensors, Is.Empty);
+        }
+
         private static SimulationConfiguration Run(params DeviceConfiguration[] devices) =>
             new SimulationConfiguration("run-1", Epoch, 0.1, devices: devices);
 
         private static DeviceConfiguration Imu(double samplePeriodSeconds, bool isControllerVisible = true)
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             return ImuKind.Instance.Configure(
                 new SensorDefinition("imu.main", "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity, isControllerVisible),
-                new ImuProfile(
-                    new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
-                    new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
+                TestImu.Profile());
         }
 
         private static DeviceConfiguration Camera(

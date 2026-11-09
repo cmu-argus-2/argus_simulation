@@ -36,6 +36,21 @@ namespace Argus.Simulation.Tests
                 "camera position");
         }
 
+        // A camera built directly in code meets the exposure rule too (CORE-22): one camera can't
+        // start an exposure before its last one ends. Equal is continuous exposure.
+        [Test]
+        public void ACameraModelRejectsAnExposureLongerThanItsPeriod()
+        {
+            SensorDefinition body = new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, DeviceSource.Argus, SensorMount.Identity, isControllerVisible: false);
+            SensorDefinition nadir = new SensorDefinition("cam.nadir_gt", "unity-gt-rig", "cam_nadir_gt", 1.0, DeviceSource.Argus, SensorMount.Identity, isControllerVisible: false);
+
+            Assert.DoesNotThrow(() => new BodyCameraModel(CameraKind.Instance.Configure(body, TestCameras.Profile(TestCameras.Imx708Intrinsics, 1.0)), null));
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => new BodyCameraModel(CameraKind.Instance.Configure(body, TestCameras.Profile(TestCameras.Imx708Intrinsics, 1.5)), null));
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => new NadirGroundTruthCameraModel(NadirGroundTruthCameraKind.Instance.Configure(nadir, TestCameras.Profile(TestCameras.NadirIntrinsics, 1.5)), null));
+        }
+
         // #42 acceptance: the intrinsics built from the profile match the datasheet. The Arducam IMX708
         // has 4608 x 2592 pixels and a 66 degree horizontal field of view, so fx = 2304 / tan(33 deg),
         // with square pixels and the flight config's principal point (W / 2, H / 2) (DATA-6 #71). The

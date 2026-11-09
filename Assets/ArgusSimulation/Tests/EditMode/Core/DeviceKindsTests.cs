@@ -97,7 +97,7 @@ namespace Argus.Simulation.Tests
                 exposureDurationSeconds);
             foreach (CameraProfileKind kind in CameraKinds)
             {
-                DeviceConfiguration camera = kind.Configure(Definition("cam.px"), profile);
+                DeviceConfiguration camera = kind.Configure(Definition("cam.px", DeviceSource.Argus), profile);
 
                 Assert.That(camera.Kind, Is.EqualTo(kind.Name));
                 Assert.That(camera.IsValid, Is.EqualTo(isValid), kind.Name);
@@ -150,7 +150,7 @@ namespace Argus.Simulation.Tests
                 CameraProfile.NoNoise,
                 0.002,
                 new CameraExtrinsicsProvenance("cad-2026", "geometric-centre", isOrientationVerified: true));
-            DeviceConfiguration camera = CameraKind.Instance.Configure(Definition("cam.px"), profile);
+            DeviceConfiguration camera = CameraKind.Instance.Configure(Definition("cam.px", DeviceSource.Argus), profile);
             Assert.That(camera.IsValid, Is.True, camera.FindProblem());
             Assert.That(CameraKind.Instance.Profile(camera), Is.EqualTo(profile));
             Assert.That(camera.Parameters["profile_id"].Text, Is.EqualTo("imx708-cal-1"));
@@ -163,7 +163,7 @@ namespace Argus.Simulation.Tests
             // Each coefficient lands under its own name. Non-zero distortion stays invalid until a
             // renderer applies it (UNITY-4), so it is checked on the parameters, not read back.
             DeviceConfiguration distorted = CameraKind.Instance.Configure(
-                Definition("cam.px"),
+                Definition("cam.px", DeviceSource.Argus),
                 new CameraProfile(
                     profile.ProfileId, profile.Intrinsics, profile.IntrinsicsSource, profile.IsCalibrated,
                     new CameraDistortion(CameraDistortion.BrownConrady5, 1e-3, 2e-3, 3e-3, 4e-3, 5e-3, "calibration"),
@@ -180,7 +180,10 @@ namespace Argus.Simulation.Tests
         [TestCase("profile_id", "IMX708", "parameters[\"profile_id\"]: must match [a-z0-9][a-z0-9._-]*")]
         [TestCase("profile_id", "", "parameters[\"profile_id\"]: must match [a-z0-9][a-z0-9._-]*")]
         [TestCase("intrinsics.source", " ", "parameters[\"intrinsics.source\"]: must not be blank")]
-        [TestCase("intrinsics.focal_length_x_px", 0.0, "parameters[\"intrinsics.*\"]: are not valid intrinsics")]
+        [TestCase("intrinsics.width_px", 0.0, "parameters[\"intrinsics.width_px\"]: must be > 0")]
+        [TestCase("intrinsics.height_px", 0.0, "parameters[\"intrinsics.height_px\"]: must be > 0")]
+        [TestCase("intrinsics.focal_length_x_px", 0.0, "parameters[\"intrinsics.focal_length_x_px\"]: must be > 0")]
+        [TestCase("intrinsics.focal_length_y_px", -1.0, "parameters[\"intrinsics.focal_length_y_px\"]: must be > 0")]
         [TestCase("distortion.model", "kannala-brandt", "parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
         [TestCase("distortion.k1", 1e-3, "parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion (UNITY-4 #57)")]
         [TestCase("distortion.p2", -1e-3, "parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion (UNITY-4 #57)")]
@@ -192,7 +195,7 @@ namespace Argus.Simulation.Tests
         [TestCase("extrinsics.origin", "", "parameters[\"extrinsics.origin\"]: must not be blank")]
         public void InvalidCameraProfileNamesTheKey(string key, object value, string expectedProblem)
         {
-            DeviceValues valid = TestCameras.Configuration(Definition("cam.px")).Parameters;
+            DeviceValues valid = TestCameras.Configuration(Definition("cam.px", DeviceSource.Argus)).Parameters;
             DeviceValue changed = value is string text ? DeviceValue.FromText(text) : DeviceValue.FromNumber((double)value);
 
             foreach (CameraProfileKind kind in CameraKinds)
@@ -208,31 +211,7 @@ namespace Argus.Simulation.Tests
         [Test]
         public void EverySensorKindBuildsACameraModelExactlyWhenItIsACameraKind()
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            DeviceConfiguration[] samples =
-            {
-                ImuKind.Instance.Configure(
-                    Definition("imu.main"),
-                    new ImuProfile(
-                        new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
-                        new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3))),
-                Magnetometer(),
-                LightSensorKind.Instance.Configure(Definition("light.px"), new LightSensorProfile(1.0, 1.0, 0.0, 0.0, 1500.0)),
-                TestCameras.Configuration(Definition("cam.px")),
-                TestCameras.NadirConfiguration(Definition("cam.nadir_gt")),
-                IdealBodyTorque("torque.body"),
-                MomentumWheelKind.Instance.Configure(
-                    ActuatorDefinition("wheel.x"),
-                    new MomentumWheelProfile(new Vector3d(1.0, 0.0, 0.0), 1e-5, 1e-3, 600.0, ActuatorLimitPolicy.Clamp),
-                    0.0),
-                MagneticTorquerKind.Instance.Configure(
-                    ActuatorDefinition("mtq.x"),
-                    new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.2, ActuatorLimitPolicy.Reject)),
-                ThrusterKind.Instance.Configure(
-                    ActuatorDefinition("thruster.px"),
-                    new ThrusterProfile(new Vector3d(-1.0, 0.0, 0.0), 0.01, ActuatorLimitPolicy.Reject))
-            };
+            DeviceConfiguration[] samples = RegistrySamples();
 
             Assert.That(samples.Select(sample => sample.Kind), Is.EquivalentTo(DeviceKinds.All.Select(kind => kind.Name)));
             foreach (DeviceConfiguration sample in samples)
@@ -250,6 +229,114 @@ namespace Argus.Simulation.Tests
 
             DeviceConfiguration camera = samples[3];
             Assert.That(((ICameraKind)camera.KindDefinition).Profile(camera), Is.EqualTo(TestCameras.Imx708Profile()));
+        }
+
+        // Which side models a device belongs to its kind, not to the device (D10,
+        // docs/device-model.md §1), so a configured device's source must be its kind's (CORE-22).
+        // Every registered kind is covered through its registry sample.
+        [Test]
+        public void ADevicesSourceIsItsKindsModeller()
+        {
+            foreach (DeviceConfiguration sample in RegistrySamples())
+            {
+                bool basilisk = sample.KindDefinition.IsBackendModelled;
+                string expected = basilisk ? "basilisk" : "argus";
+                string expectedProblem =
+                    $"source: must be \"{expected}\", because {sample.Kind} is {(basilisk ? "Basilisk-modelled" : "Argus-computed")} (D10)";
+
+                Assert.That(DeviceSource.For(sample.KindDefinition), Is.EqualTo(expected), sample.Kind);
+                Assert.That(WithSource(sample, expected).FindProblem(), Is.Null, sample.Kind);
+                foreach (string wrong in new[] { basilisk ? "argus" : "basilisk", "simulation", "test" })
+                {
+                    DeviceConfiguration mislabelled = WithSource(sample, wrong);
+                    Assert.That(mislabelled.FindProblem(), Is.EqualTo(expectedProblem), sample.Kind + " labelled " + wrong);
+                    Assert.That(mislabelled.IsValid, Is.False, sample.Kind + " labelled " + wrong);
+                }
+            }
+        }
+
+        // Configure sets that source from the kind, whatever the definition carries, so code that
+        // builds a device needn't know it (CORE-22 review). A device built with the constructor is
+        // still checked, as above.
+        [TestCase("test")]
+        [TestCase("simulation")]
+        [TestCase(DeviceSource.Argus)]
+        public void ConfigureSetsTheSourceFromTheKind(string given)
+        {
+            DeviceConfiguration imu = ImuKind.Instance.Configure(Definition("imu.main", given), TestImu.Profile());
+            DeviceConfiguration camera = TestCameras.Configuration(Definition("cam.px", given));
+
+            Assert.That(imu.Definition.Source, Is.EqualTo(DeviceSource.Basilisk));
+            Assert.That(imu.IsValid, Is.True);
+            Assert.That(camera.Definition.Source, Is.EqualTo(DeviceSource.Argus));
+            Assert.That(camera.IsValid, Is.True);
+        }
+
+        // MapMeasurements reads the output of every sensor the backend models, so a Basilisk-modelled
+        // sensor kind must say how (IBackendSensorKind). Otherwise it would be sent to the service
+        // and its samples rejected as unknown (CORE-22).
+        [Test]
+        public void EveryBasiliskModelledSensorKindReadsBackendOutput()
+        {
+            foreach (IDeviceKind kind in DeviceKinds.All)
+            {
+                if (kind.IsBackendModelled && kind.Role == DeviceRole.Sensor)
+                {
+                    Assert.That(kind, Is.InstanceOf<IBackendSensorKind>(), kind.Name);
+                }
+            }
+        }
+
+        // One camera can't start an exposure before its last one ends, so an exposure longer than
+        // the sample period is invalid; equal is continuous exposure (CORE-22). Both camera kinds.
+        [TestCase(1.0, true)]
+        [TestCase(1.5, false)]
+        public void ACameraMayNotExposeLongerThanItsSamplePeriod(double exposureSeconds, bool isValid)
+        {
+            foreach (CameraProfileKind kind in CameraKinds)
+            {
+                DeviceConfiguration camera = kind.Configure(
+                    new SensorDefinition("cam.px", "test-model", "cam_px", 1.0, DeviceSource.Argus, SensorMount.Identity, isControllerVisible: false),
+                    TestCameras.Profile(TestCameras.Imx708Intrinsics, exposureSeconds));
+
+                Assert.That(camera.IsValid, Is.EqualTo(isValid), kind.Name);
+                if (!isValid)
+                {
+                    Assert.That(
+                        camera.FindProblem(),
+                        Is.EqualTo("parameters[\"exposure_duration_s\"]: must not exceed samplePeriodSeconds (1.5 s > 1 s): one camera can't start an exposure before the last one ends"),
+                        kind.Name);
+                }
+            }
+        }
+
+        // The message is the same on every machine: a German locale would write "1,5 s" (CORE-22
+        // review).
+        [Test]
+        [SetCulture("de-DE")]
+        public void TheExposureErrorIsTheSameInEveryLocale()
+        {
+            DeviceConfiguration camera = CameraKind.Instance.Configure(
+                new SensorDefinition("cam.px", "test-model", "cam_px", 1.0, DeviceSource.Argus, SensorMount.Identity, isControllerVisible: false),
+                TestCameras.Profile(TestCameras.Imx708Intrinsics, 1.5));
+
+            Assert.That(camera.FindProblem(), Does.Contain("(1.5 s > 1 s)"));
+        }
+
+        // The kind's own parameter checks run before the exposure check, which reads the camera
+        // profile and would otherwise throw on invalid intrinsics (CORE-22 design review).
+        [Test]
+        public void AnInvalidCameraProfileIsReportedBeforeItsExposure()
+        {
+            foreach (CameraProfileKind kind in CameraKinds)
+            {
+                DeviceConfiguration camera = kind.Configure(
+                    new SensorDefinition("cam.px", "test-model", "cam_px", 1.0, DeviceSource.Argus, SensorMount.Identity, isControllerVisible: false),
+                    TestCameras.Profile(new CameraIntrinsics(0, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 1.5));
+
+                Assert.That(camera.FindProblem(), Is.EqualTo("parameters[\"intrinsics.width_px\"]: must be > 0"), kind.Name);
+                Assert.That(camera.IsValid, Is.False, kind.Name);
+            }
         }
 
         // Both camera kinds share CameraProfileKind's keys and checks.
@@ -324,7 +411,7 @@ namespace Argus.Simulation.Tests
                 new MagnetometerProfile(0.0, new Vector3d(0.0, 0.0, 0.0), 1.0, 1.3e-3));
 
         private static string Problem(string kind, DeviceValues parameters) =>
-            new DeviceConfiguration(Definition("mag.main"), kind, parameters).FindProblem();
+            new DeviceConfiguration(Definition("mag.main", SourceOf(kind)), kind, parameters).FindProblem();
 
         private static DeviceValues With(DeviceValues values, string key, DeviceValue value)
         {
@@ -348,12 +435,53 @@ namespace Argus.Simulation.Tests
             return builder.Build();
         }
 
-        private static SensorDefinition Definition(string sensorId) =>
-            new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, "test", SensorMount.Identity);
+        private static SensorDefinition Definition(string sensorId, string source = DeviceSource.Basilisk) =>
+            new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, source, SensorMount.Identity);
+
+        // A kind's own source, or Basilisk's for a name the registry doesn't know.
+        private static string SourceOf(string kind) =>
+            DeviceKinds.Find(kind) is IDeviceKind registered ? DeviceSource.For(registered) : DeviceSource.Basilisk;
+
+        private static DeviceConfiguration WithSource(DeviceConfiguration device, string source)
+        {
+            SensorDefinition definition = device.Definition;
+            return new DeviceConfiguration(
+                new SensorDefinition(
+                    definition.SensorId,
+                    definition.ModelName,
+                    definition.FrameId,
+                    definition.SamplePeriodSeconds,
+                    source,
+                    definition.Mount,
+                    definition.IsControllerVisible),
+                device.Kind,
+                device.Parameters,
+                device.InitialState);
+        }
+
+        private static DeviceConfiguration[] RegistrySamples() => new[]
+        {
+            ImuKind.Instance.Configure(Definition("imu.main"), TestImu.Profile()),
+            Magnetometer(),
+            LightSensorKind.Instance.Configure(Definition("light.px"), new LightSensorProfile(1.0, 1.0, 0.0, 0.0, 1500.0)),
+            TestCameras.Configuration(Definition("cam.px", DeviceSource.Argus)),
+            TestCameras.NadirConfiguration(Definition("cam.nadir_gt", DeviceSource.Argus)),
+            IdealBodyTorque("torque.body"),
+            MomentumWheelKind.Instance.Configure(
+                ActuatorDefinition("wheel.x"),
+                new MomentumWheelProfile(new Vector3d(1.0, 0.0, 0.0), 1e-5, 1e-3, 600.0, ActuatorLimitPolicy.Clamp),
+                0.0),
+            MagneticTorquerKind.Instance.Configure(
+                ActuatorDefinition("mtq.x"),
+                new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.2, ActuatorLimitPolicy.Reject)),
+            ThrusterKind.Instance.Configure(
+                ActuatorDefinition("thruster.px"),
+                new ThrusterProfile(new Vector3d(-1.0, 0.0, 0.0), 0.01, ActuatorLimitPolicy.Reject))
+        };
 
         // An actuator has no sample period and publishes no frames (docs/device-model.md §1).
         private static SensorDefinition ActuatorDefinition(string deviceId) =>
-            new SensorDefinition(deviceId, "test-model", deviceId.Replace('.', '_'), 0.0, "test", SensorMount.Identity, isControllerVisible: false);
+            new SensorDefinition(deviceId, "test-model", deviceId.Replace('.', '_'), 0.0, DeviceSource.Basilisk, SensorMount.Identity, isControllerVisible: false);
 
         private static DeviceConfiguration IdealBodyTorque(string deviceId) => IdealBodyTorqueKind.Instance.Configure(
             ActuatorDefinition(deviceId),

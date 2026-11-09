@@ -32,13 +32,17 @@ namespace Argus.Simulation.Core
         {
         }
 
-        // A wheel configuration starting at initialSpeedRadiansPerSecond.
-        public DeviceConfiguration Configure(SensorDefinition definition, MomentumWheelProfile profile, double initialSpeedRadiansPerSecond) =>
-            new DeviceConfiguration(
-                definition,
-                Name,
-                ToParameters(profile),
+        // A wheel configuration starting at initialSpeedRadiansPerSecond. The base Configure sets the
+        // kind's source (DeviceSource, CORE-22); this adds the initial state.
+        public DeviceConfiguration Configure(SensorDefinition definition, MomentumWheelProfile profile, double initialSpeedRadiansPerSecond)
+        {
+            DeviceConfiguration configuration = Configure(definition, profile);
+            return new DeviceConfiguration(
+                configuration.Definition,
+                configuration.Kind,
+                configuration.Parameters,
                 new DeviceValues.Builder().Add(SpeedKey, initialSpeedRadiansPerSecond).Build());
+        }
 
         protected override MomentumWheelProfile Parse(DeviceValues parameters) => new MomentumWheelProfile(
             parameters.Vector3(SpinAxis),
