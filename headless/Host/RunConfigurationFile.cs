@@ -45,7 +45,7 @@ namespace Argus.Simulation.Host
             using (document)
             {
                 JsonElement root = document.RootElement;
-                Fields(root, "", "epochUtc", "fixedStepSeconds", "randomSeed", "kernelSetId", "initialOrbit", "spacecraft", "sensors");
+                Fields(root, "", "epochUtc", "fixedStepSeconds", "randomSeed", "kernelSetId", "initialOrbit", "spacecraft", "devices");
 
                 DateTimeOffset epochUtc = Epoch(root, "epochUtc");
                 double fixedStepSeconds = Number(root, "fixedStepSeconds", "");
@@ -60,7 +60,7 @@ namespace Argus.Simulation.Host
 
                 ClassicalOrbitElements orbit = Orbit(Field(root, "initialOrbit", ""), "initialOrbit");
                 SpacecraftConfiguration spacecraft = Spacecraft(Field(root, "spacecraft", ""), "spacecraft");
-                SensorConfiguration[] sensors = Sensors(Field(root, "sensors", ""), "sensors");
+                DeviceConfiguration[] devices = Devices(Field(root, "devices", ""), "devices", runId, epochUtc, fixedStepSeconds);
 
                 SimulationConfiguration configuration = new SimulationConfiguration(
                     runId,
@@ -70,7 +70,7 @@ namespace Argus.Simulation.Host
                     randomSeed: randomSeed,
                     kernelSetId: kernelSetId,
                     spacecraft: spacecraft,
-                    sensors: sensors);
+                    devices: devices);
                 Check(configuration.IsValid, "", "is not a valid run configuration");
                 return configuration;
             }
@@ -116,150 +116,248 @@ namespace Argus.Simulation.Host
             return spacecraft;
         }
 
-        private static SensorConfiguration[] Sensors(JsonElement element, string path)
+        private static DeviceConfiguration[] Devices(
+            JsonElement element,
+            string path,
+            string runId,
+            DateTimeOffset epochUtc,
+            double fixedStepSeconds)
         {
             if (element.ValueKind != JsonValueKind.Array)
             {
                 throw Error(path, "must be an array");
             }
 
-            SensorConfiguration[] sensors = new SensorConfiguration[element.GetArrayLength()];
-            HashSet<string> sensorIds = new HashSet<string>(StringComparer.Ordinal);
+            DeviceConfiguration[] devices = new DeviceConfiguration[element.GetArrayLength()];
+            HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, DeviceConfiguration> cameraByProfileId = new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
             int index = 0;
-            foreach (JsonElement sensor in element.EnumerateArray())
+            foreach (JsonElement device in element.EnumerateArray())
             {
-                string sensorPath = $"{path}[{index}]";
-                sensors[index] = Sensor(sensor, sensorPath);
-                Check(sensorIds.Add(sensors[index].Definition.SensorId), Join(sensorPath, "sensorId"), "duplicates another sensor's ID");
+                string devicePath = $"{path}[{index}]";
+                devices[index] = Device(device, devicePath);
+                // Device() has checked everything else IsValid checks for one device, so only the
+                // period can fail here.
+                Check(
+                    new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, devices: new[] { devices[index] }).IsValid,
+                    Join(devicePath, "samplePeriodSeconds"),
+                    "must be a whole multiple of fixedStepSeconds");
+                Check(deviceIds.Add(devices[index].Definition.SensorId), Join(devicePath, "deviceId"), "duplicates another device's ID");
+                if (devices[index].KindDefinition is ICameraKind camera)
+                {
+                    // A profile ID names one parameter set (CameraProfile.IsSameParameterSetAs, CORE-6).
+                    CameraProfile profile = camera.Profile(devices[index]);
+                    if (cameraByProfileId.TryGetValue(profile.ProfileId, out DeviceConfiguration first))
+                    {
+                        CameraProfile firstProfile = ((ICameraKind)first.KindDefinition).Profile(first);
+                        Check(
+                            profile.IsSameParameterSetAs(firstProfile),
+                            $"{devicePath}.parameters[\"profile_id\"]",
+                            $"names another parameter set than {first.Definition.SensorId}: it differs in {DifferingParts(profile, firstProfile)}");
+                    }
+                    else
+                    {
+                        cameraByProfileId.Add(profile.ProfileId, devices[index]);
+                    }
+                }
+
                 index++;
             }
 
-            return sensors;
+            return devices;
         }
 
-        // One sensor: the SensorDefinition fields plus exactly one profile, named by its kind.
-        private static SensorConfiguration Sensor(JsonElement element, string path)
+        // Which parts of a camera's parameter set differ, in the file's groups, for the profile_id error.
+        // CameraProfile.IsSameParameterSetAs is the rule; keep the two in step.
+        private static string DifferingParts(CameraProfile profile, CameraProfile first)
+        {
+            List<string> parts = new List<string>();
+            if (!profile.Intrinsics.Equals(first.Intrinsics) ||
+                !string.Equals(profile.IntrinsicsSource, first.IntrinsicsSource, StringComparison.Ordinal) ||
+                profile.IsCalibrated != first.IsCalibrated)
+            {
+                parts.Add("intrinsics");
+            }
+
+            if (!profile.Distortion.Equals(first.Distortion))
+            {
+                parts.Add("distortion");
+            }
+
+            if (!string.Equals(profile.NoiseSource, first.NoiseSource, StringComparison.Ordinal))
+            {
+                parts.Add("noise");
+            }
+
+            // Falls back to the whole set if a versioned field is missing above.
+            return parts.Count == 0 ? "its parameter set" : string.Join(" and ", parts);
+        }
+
+        // One device: the common fields, its registered kind and that kind's parameters
+        // (docs/device-model.md §1). The kind declares each parameter's type, so values are read as
+        // that type and never guessed from their JSON shape.
+        private static DeviceConfiguration Device(JsonElement element, string path)
         {
             Fields(
                 element,
                 path,
-                new[] { "sensorId", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount" },
-                new[] { "imu", "magnetometer", "lightSensor" });
+                new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount", "parameters" },
+                Array.Empty<string>(),
+                new[] { "initialState" });
+
+            string kindName = Text(element, "kind", path);
+            IDeviceKind kind = DeviceKinds.Find(kindName);
+            Check(kind != null, Join(path, "kind"), $"'{kindName}' is not a registered device kind ({DeviceKinds.Names})");
 
             JsonElement mount = Field(element, "mount", path);
             string mountPath = Join(path, "mount");
-            Fields(mount, mountPath, "positionBodyMeters", "sensorToBody");
+            Fields(mount, mountPath, "positionBodyMeters", "deviceToBody");
             SensorMount sensorMount = new SensorMount(
                 Vector(mount, "positionBodyMeters", mountPath),
-                Quaternion(mount, "sensorToBody", mountPath));
+                Quaternion(mount, "deviceToBody", mountPath));
             Check(sensorMount.IsValid, mountPath, "needs a finite position and a unit quaternion");
 
             SensorDefinition definition = new SensorDefinition(
-                Text(element, "sensorId", path),
+                Text(element, "deviceId", path),
                 Text(element, "modelName", path),
                 Text(element, "frameId", path),
                 Number(element, "samplePeriodSeconds", path),
                 Text(element, "source", path),
                 sensorMount,
                 Boolean(element, "controllerVisible", path));
-            Check(definition.IsValid, path, "needs non-blank sensorId, modelName, frameId and source, and samplePeriodSeconds > 0");
+            Check(definition.IsValid, path, "needs non-blank deviceId, modelName, frameId and source, and samplePeriodSeconds > 0");
 
-            SensorConfiguration configuration;
-            string profilePath;
-            if (element.TryGetProperty("imu", out JsonElement imu))
+            DeviceValues parameters = ReadValues(
+                Field(element, "parameters", path), Join(path, "parameters"), kind.ParameterKeys, $"{kind.Name} parameter");
+            // Optional: a kind with no state (every kind so far) needs none.
+            DeviceValues initialState = element.TryGetProperty("initialState", out JsonElement state)
+                ? ReadValues(state, Join(path, "initialState"), kind.InitialStateKeys, $"{kind.Name} initial-state key")
+                : DeviceValues.Empty;
+
+            DeviceConfiguration configuration = new DeviceConfiguration(definition, kindName, parameters, initialState);
+            // The kind's problem starts with the field it names: parameters["noise_std_tesla"], ...
+            string problem = configuration.FindProblem();
+            if (problem != null)
             {
-                profilePath = Join(path, "imu");
-                Fields(imu, profilePath, "gyroscope", "accelerometer");
-                configuration = SensorConfiguration.ForImu(
-                    definition,
-                    new ImuProfile(
-                        Gyroscope(Field(imu, "gyroscope", profilePath), Join(profilePath, "gyroscope")),
-                        Accelerometer(Field(imu, "accelerometer", profilePath), Join(profilePath, "accelerometer"))));
-            }
-            else if (element.TryGetProperty("magnetometer", out JsonElement magnetometer))
-            {
-                profilePath = Join(path, "magnetometer");
-                Fields(magnetometer, profilePath, "noiseStdTesla", "constantBiasSensorTesla", "scaleFactor", "rangeTesla");
-                configuration = SensorConfiguration.ForMagnetometer(
-                    definition,
-                    new MagnetometerProfile(
-                        Number(magnetometer, "noiseStdTesla", profilePath),
-                        Vector(magnetometer, "constantBiasSensorTesla", profilePath),
-                        Number(magnetometer, "scaleFactor", profilePath),
-                        Number(magnetometer, "rangeTesla", profilePath)));
-            }
-            else
-            {
-                JsonElement light = Field(element, "lightSensor", path);
-                profilePath = Join(path, "lightSensor");
-                Fields(
-                    light,
-                    profilePath,
-                    "fieldOfViewHalfAngleRadians",
-                    "scaleFactor",
-                    "noiseStdWattsPerSquareMeter",
-                    "biasWattsPerSquareMeter",
-                    "saturationWattsPerSquareMeter");
-                configuration = SensorConfiguration.ForLightSensor(
-                    definition,
-                    new LightSensorProfile(
-                        Number(light, "fieldOfViewHalfAngleRadians", profilePath),
-                        Number(light, "scaleFactor", profilePath),
-                        Number(light, "noiseStdWattsPerSquareMeter", profilePath),
-                        Number(light, "biasWattsPerSquareMeter", profilePath),
-                        Number(light, "saturationWattsPerSquareMeter", profilePath)));
+                throw new RunConfigurationException($"{path}.{problem}");
             }
 
-            Check(configuration.IsValid, profilePath, "is not a valid profile (see the Core profile's IsValid)");
+            Check(
+                !definition.IsControllerVisible || kind.MayBeControllerVisible,
+                Join(path, "controllerVisible"),
+                $"must be false, because {kindName} frames carry truth a controller may not see (D7)");
             return configuration;
         }
 
-        private static GyroscopeProfile Gyroscope(JsonElement element, string path)
+        // Reads an object of declared keys, typed as the kind declares them. A key's group
+        // (gyroscope.*) may be written as a nested object, which flattens with ".", but each key is
+        // given once: as a dotted key or inside its group, not both.
+        private static DeviceValues ReadValues(JsonElement element, string path, IReadOnlyList<DeviceKey> keys, string keyKind)
         {
-            Fields(
-                element,
-                path,
-                "noiseDensityRadiansPerSecondPerRootHertz",
-                "biasRandomWalkRadiansPerSecondPerRootSecond",
-                "biasRandomWalkBoundRadiansPerSecond",
-                "constantBiasSensorRadiansPerSecond",
-                "scaleFactorPerAxis",
-                "rangeRadiansPerSecond",
-                "resolutionRadiansPerSecond");
-            GyroscopeProfile profile = new GyroscopeProfile(
-                Number(element, "noiseDensityRadiansPerSecondPerRootHertz", path),
-                Number(element, "biasRandomWalkRadiansPerSecondPerRootSecond", path),
-                Number(element, "biasRandomWalkBoundRadiansPerSecond", path),
-                Vector(element, "constantBiasSensorRadiansPerSecond", path),
-                Vector(element, "scaleFactorPerAxis", path),
-                Number(element, "rangeRadiansPerSecond", path),
-                Number(element, "resolutionRadiansPerSecond", path));
-            Check(profile.IsValid, path, "is not a valid gyroscope profile (see GyroscopeProfile.IsValid)");
-            return profile;
+            Dictionary<string, string> givenAt = new Dictionary<string, string>(StringComparer.Ordinal);
+            DeviceValues.Builder values = new DeviceValues.Builder();
+            ReadValues(element, path, "", keys, keyKind, values, givenAt);
+            return values.Build();
         }
 
-        private static AccelerometerProfile Accelerometer(JsonElement element, string path)
+        private static void ReadValues(
+            JsonElement element,
+            string path,
+            string prefix,
+            IReadOnlyList<DeviceKey> keys,
+            string keyKind,
+            DeviceValues.Builder values,
+            Dictionary<string, string> givenAt)
         {
-            Fields(
-                element,
-                path,
-                "noiseDensityMetersPerSecondSquaredPerRootHertz",
-                "biasRandomWalkMetersPerSecondSquaredPerRootSecond",
-                "biasRandomWalkBoundMetersPerSecondSquared",
-                "constantBiasSensorMetersPerSecondSquared",
-                "scaleFactorPerAxis",
-                "rangeMetersPerSecondSquared",
-                "resolutionMetersPerSecondSquared");
-            AccelerometerProfile profile = new AccelerometerProfile(
-                Number(element, "noiseDensityMetersPerSecondSquaredPerRootHertz", path),
-                Number(element, "biasRandomWalkMetersPerSecondSquaredPerRootSecond", path),
-                Number(element, "biasRandomWalkBoundMetersPerSecondSquared", path),
-                Vector(element, "constantBiasSensorMetersPerSecondSquared", path),
-                Vector(element, "scaleFactorPerAxis", path),
-                Number(element, "rangeMetersPerSecondSquared", path),
-                Number(element, "resolutionMetersPerSecondSquared", path));
-            Check(profile.IsValid, path, "is not a valid accelerometer profile (see AccelerometerProfile.IsValid)");
-            return profile;
+            if (element.ValueKind != JsonValueKind.Object)
+            {
+                throw Error(path, "must be an object");
+            }
+
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                string key = prefix + property.Name;
+                // A dotted key is quoted, so it reads apart from the same key inside its group.
+                string valuePath = property.Name.Contains(".")
+                    ? $"{path}[\"{property.Name}\"]"
+                    : Join(path, property.Name);
+                DeviceValueType? type = DeclaredType(keys, key);
+                if (type.HasValue)
+                {
+                    if (givenAt.TryGetValue(key, out string firstPath))
+                    {
+                        throw Error(valuePath, $"repeats {firstPath}");
+                    }
+
+                    givenAt.Add(key, valuePath);
+                    values.Add(key, Value(property.Value, valuePath, type.Value));
+                }
+                else if (IsGroup(keys, key))
+                {
+                    ReadValues(property.Value, valuePath, key + ".", keys, keyKind, values, givenAt);
+                }
+                else
+                {
+                    throw Error(valuePath, $"is not a {keyKind}");
+                }
+            }
+        }
+
+        private static DeviceValueType? DeclaredType(IReadOnlyList<DeviceKey> keys, string key)
+        {
+            foreach (DeviceKey declared in keys)
+            {
+                if (declared.Name == key)
+                {
+                    return declared.Type;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsGroup(IReadOnlyList<DeviceKey> keys, string key)
+        {
+            foreach (DeviceKey declared in keys)
+            {
+                if (declared.Name.StartsWith(key + ".", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static DeviceValue Value(JsonElement element, string path, DeviceValueType type)
+        {
+            switch (type)
+            {
+                case DeviceValueType.Number:
+                    return DeviceValue.FromNumber(Number(element, path));
+                case DeviceValueType.Vector3:
+                    return DeviceValue.FromVector3(Vector(element, path));
+                case DeviceValueType.Quaternion:
+                    return DeviceValue.FromQuaternion(Quaternion(element, path));
+                case DeviceValueType.Matrix3:
+                    return DeviceValue.FromMatrix3(Matrix(element, path));
+                case DeviceValueType.Flag:
+                    if (element.ValueKind != JsonValueKind.True && element.ValueKind != JsonValueKind.False)
+                    {
+                        throw Error(path, "must be true or false");
+                    }
+
+                    return DeviceValue.FromFlag(element.GetBoolean());
+                case DeviceValueType.Text:
+                    if (element.ValueKind != JsonValueKind.String)
+                    {
+                        throw Error(path, "must be a string");
+                    }
+
+                    return DeviceValue.FromText(element.GetString());
+                default:
+                    throw Error(path, $"has a declared type {type} the run file cannot read");
+            }
         }
 
         // An object with exactly these fields.
@@ -267,8 +365,11 @@ namespace Argus.Simulation.Host
             Fields(element, path, required, Array.Empty<string>());
 
         // An object with every required field, exactly one of the oneOf fields when any are listed,
-        // and nothing else.
-        private static void Fields(JsonElement element, string path, string[] required, string[] oneOf)
+        // any of the optional fields, and nothing else.
+        private static void Fields(JsonElement element, string path, string[] required, string[] oneOf) =>
+            Fields(element, path, required, oneOf, Array.Empty<string>());
+
+        private static void Fields(JsonElement element, string path, string[] required, string[] oneOf, string[] optional)
         {
             if (element.ValueKind != JsonValueKind.Object)
             {
@@ -287,7 +388,7 @@ namespace Argus.Simulation.Host
                 {
                     oneOfCount++;
                 }
-                else if (Array.IndexOf(required, property.Name) < 0)
+                else if (Array.IndexOf(required, property.Name) < 0 && Array.IndexOf(optional, property.Name) < 0)
                 {
                     throw Error(Join(path, property.Name), "is not a known field");
                 }
@@ -390,10 +491,11 @@ namespace Argus.Simulation.Host
         }
 
         // { "x", "y", "z", "w" }, named so the scalar's position is never ambiguous.
-        private static Quaterniond Quaternion(JsonElement element, string name, string path)
+        private static Quaterniond Quaternion(JsonElement element, string name, string path) =>
+            Quaternion(Field(element, name, path), Join(path, name));
+
+        private static Quaterniond Quaternion(JsonElement value, string quaternionPath)
         {
-            JsonElement value = Field(element, name, path);
-            string quaternionPath = Join(path, name);
             Fields(value, quaternionPath, "x", "y", "z", "w");
             return new Quaterniond(
                 Number(value, "x", quaternionPath),
@@ -403,10 +505,11 @@ namespace Argus.Simulation.Host
         }
 
         // Three rows, each [x, y, z].
-        private static Matrix3d Matrix(JsonElement element, string name, string path)
+        private static Matrix3d Matrix(JsonElement element, string name, string path) =>
+            Matrix(Field(element, name, path), Join(path, name));
+
+        private static Matrix3d Matrix(JsonElement value, string matrixPath)
         {
-            JsonElement value = Field(element, name, path);
-            string matrixPath = Join(path, name);
             if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 3)
             {
                 throw Error(matrixPath, "must be an array of 3 rows");

@@ -1,6 +1,9 @@
 namespace Argus.Simulation.Core
 {
     // Pinhole calibration in pixel units. Distortion remains part of the camera model/profile.
+    // Pixels follow OpenCV: u runs right along a row and v down a column, and (0, 0) is the centre
+    // of the top-left pixel, so the geometric image centre is ((W - 1) / 2, (H - 1) / 2). A pixel
+    // (u, v) looks along the camera-frame ray ((u - cx) / fx, (v - cy) / fy, 1); see RenderRequest.
     public readonly struct CameraIntrinsics
     {
         public CameraIntrinsics(

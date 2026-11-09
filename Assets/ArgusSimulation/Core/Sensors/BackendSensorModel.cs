@@ -12,19 +12,19 @@ namespace Argus.Simulation.Core
         private long _nextSequence;
         private string _runId;
 
-        protected BackendSensorModel(SensorConfiguration configuration, SensorKind expectedKind)
+        protected BackendSensorModel(DeviceConfiguration configuration, IDeviceKind expectedKind)
         {
-            if (!configuration.IsValid || configuration.Kind != expectedKind)
+            if (!configuration.IsValid || configuration.Kind != expectedKind.Name)
             {
                 throw new ArgumentException(
-                    $"A valid {expectedKind} sensor configuration is required.",
+                    $"A valid {expectedKind.Name} device configuration is required.",
                     nameof(configuration));
             }
 
             Configuration = configuration;
         }
 
-        public SensorConfiguration Configuration { get; }
+        public DeviceConfiguration Configuration { get; }
         public SensorDefinition Definition => Configuration.Definition;
 
         public void Reset(SensorResetContext context)

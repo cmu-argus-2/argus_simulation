@@ -17,7 +17,8 @@ namespace Argus.Simulation.Core
             RangeTesla = rangeTesla;
         }
 
-        // Per-sample white noise at the configured sample period: senNoiseStd with AMatrix = 0.
+        // Per-sample white noise at the configured sample period, seeded per sensor by the
+        // Basilisk service (bsk 2.11.1 ignores the magnetometer's RNGSeed).
         public double NoiseStdTesla { get; }
 
         // senBias.

@@ -3,8 +3,8 @@ namespace Argus.Simulation.Core
     // Publishes the Basilisk magnetometer measurements that BasiliskEngine maps into each SimulationState.
     public sealed class MagnetometerSensor : BackendSensorModel<MagnetometerMeasurement>
     {
-        public MagnetometerSensor(SensorConfiguration configuration)
-            : base(configuration, SensorKind.Magnetometer)
+        public MagnetometerSensor(DeviceConfiguration configuration)
+            : base(configuration, MagnetometerKind.Instance)
         {
         }
 

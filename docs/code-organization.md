@@ -20,7 +20,7 @@ Assets/ArgusSimulation/
 │   ├── Recording/                # Run recorder, the single export route (dataset v1)
 │   ├── Runtime/                  # Headless orchestration and gateway
 │   └── Sensors/                  # Standard sensor envelopes and models
-│       └── Camera/               # Camera sensor models (placeholders)
+│       └── Camera/               # Camera sensor models
 │
 ├── Unity/                        # Unity-dependent adapters and presentation
 │   ├── Cameras/                  # Unity camera rigs and render implementation
@@ -59,15 +59,16 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 |---|---|
 | Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `IStepDrivenStateSource` |
 | Rendering interface | `IImageRenderer` |
-| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `ActuatorCommandSet`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
+| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
+| Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorSlot`, `SensorManager`, `SensorFrame<TPayload>` |
-| Implemented sensor models | `IdealBodyRateSensorModel`; camera base `CameraModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
-| P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile`, `SensorConfiguration`, `SensorKind` |
-| Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame` |
+| Implemented sensor models | `IdealBodyRateSensorModel`; camera base `CameraModel` and the Argus-computed `BodyCameraModel` (the Arducam IMX708 is its P0 parameter set) and `NadirGroundTruthCameraModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
+| P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile` |
+| Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame`; camera profiles `CameraProfile`, `CameraDistortion`, `CameraExtrinsicsProvenance` (in `Core/Sensors/Camera`) |
 | Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
 | Unity camera system | `CubeSatCameraRig`, `NadirTilePriority` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
@@ -89,8 +90,8 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 - Put Argus-computed sensor behavior in `Core/Sensors`. Sensors that Basilisk models keep their
   physics and cadence in Basilisk, and their `BackendSensorModel<T>` only publishes the mapped
   measurements (D10). Unity may supply only a rendering or geometry adapter.
-- Put camera calibration and frame formats in `Core/Imaging`; put Unity rasterization in
-  `Unity/Cameras`.
+- Put pinhole intrinsics and frame formats in `Core/Imaging`, camera profiles (calibration values and their
+  provenance) in `Core/Sensors/Camera`, and Unity rasterization in `Unity/Cameras`.
 - Put C# gRPC and Protobuf code in `headless/Host`, with generated code `Access=Internal`; the
   planned exceptions are the Unity ends of `argus/stream/v1` (`StateStreamClient`, G2) and
   `argus/render/v1` (D5, G3). Core never references Google.Protobuf or Grpc, and
@@ -117,9 +118,7 @@ says what to build, and its tag says why.
 Core/Sensors/
 ├── GnssSensor.cs, SunSensor.cs, StarTrackerSensor.cs     # Upcoming sensors (TODO(sensors))
 ├── PowerTelemetrySensor.cs, ThermalSensor.cs
-├── RadioLinkSensor.cs, RadiationSensor.cs
-└── Camera/ArducamImx708CameraModel.cs                   # TODO(D5)
-    Camera/NadirGroundTruthCameraModel.cs                # TODO(D5, D7)
+└── RadioLinkSensor.cs, RadiationSensor.cs
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)

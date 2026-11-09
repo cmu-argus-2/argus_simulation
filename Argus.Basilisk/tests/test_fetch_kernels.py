@@ -150,7 +150,7 @@ def test_invalid_manifest_fetches_nothing(kernel_set, damage):
 
 KERNEL_SETS = sorted(path.stem for path in (ROOT / "kernel_sets").glob("*.json"))
 # headless/Host/runs/p0-default.json
-P0_KERNEL_SET = "argus-2026-10-20"
+P0_KERNEL_SET = "argus-2026-11-02"
 
 
 @pytest.mark.parametrize("kernel_set_id", KERNEL_SETS)

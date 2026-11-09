@@ -21,9 +21,10 @@ namespace Argus.Simulation.Core
         public const string SchemaVersion = "argus-dataset/1";
         public const string RecorderVersion = "0.1.0";
         public const string OverflowPolicy = "drop-newest";
-        // TODO(#99): bound the queue by bytes as well as items before camera frames arrive. 65,536
-        // queued ~1 MB images is ~64 GB, and ImageFrame.Data is queued by reference, so a renderer
-        // that reuses its readback buffer would change frames already queued.
+        // TODO(#99): bound the queue by bytes as well as items before a renderer supplies camera pixels
+        // (UNITY-4). One full-resolution P0 frame (4608 x 2592 Rgb8) is 35.8 MB, so 65,536 queued frames
+        // would be ~2.3 TB. ImageFrame.Data is also queued by reference, so a renderer that reuses its
+        // readback buffer would change frames already queued.
         public const int DefaultCapacity = 65536;
 
         private const string StatesFile = "states.jsonl";
@@ -794,14 +795,41 @@ namespace Argus.Simulation.Core
                 WriteSpacecraft(json, run.Spacecraft);
                 json.Key("analytic_orbit");
                 WriteAnalyticOrbit(json, _begin.AnalyticOrbit);
-                json.EndObject().Key("sensors").BeginArray();
+                json.EndObject().Key("devices").BeginArray();
+                // Every sensor that publishes frames, then the configured devices that publish none
+                // (actuators, from CON-2), so the manifest lists the whole spacecraft.
                 foreach (SensorDefinition sensor in _begin.Sensors)
                 {
-                    WriteSensor(json, sensor, run.Sensors);
+                    WriteDevice(json, sensor, run.Devices);
                 }
 
-                // Camera models arrive with CORE-6 (#42) and CORE-8 (#44).
-                json.EndArray().Key("cameras").BeginArray().EndArray().Key("files").BeginObject();
+                foreach (DeviceConfiguration device in run.Devices)
+                {
+                    if (device.KindDefinition?.Role != DeviceRole.Sensor)
+                    {
+                        WriteDevice(json, device.Definition, run.Devices);
+                    }
+                }
+
+                // Every camera device that publishes, in device order, by sensor ID and profile ID
+                // (ICameraKind, CORE-6). Its values are its devices entry's parameters, so each has one
+                // spelling in the manifest (docs/device-model.md §3).
+                json.EndArray().Key("cameras").BeginArray();
+                foreach (SensorDefinition sensor in _begin.Sensors)
+                {
+                    foreach (DeviceConfiguration device in run.Devices)
+                    {
+                        if (device.Definition.SensorId == sensor.SensorId && device.KindDefinition is ICameraKind camera)
+                        {
+                            json.BeginObject()
+                                .Key("sensor_id").Value(sensor.SensorId)
+                                .Key("profile_id").Value(camera.Profile(device).ProfileId)
+                                .EndObject();
+                        }
+                    }
+                }
+
+                json.EndArray().Key("files").BeginObject();
                 if (complete)
                 {
                     json.Key(StatesFile).BeginObject().Key("lines").Value(_stateLines).EndObject()
@@ -832,9 +860,10 @@ namespace Argus.Simulation.Core
                 }
             }
 
-            // An ActuatorCommandSet, as in producing_command and commands.jsonl; a rejected command's
-            // non-finite values are written as null.
-            private static void WriteCommand(DatasetJsonWriter json, ActuatorCommandSet? command)
+            // A DeviceCommandSet, as in producing_command and commands.jsonl: devices maps each
+            // commanded device ID to its values (docs/device-model.md §6). A rejected command's
+            // non-finite values are written as null; a device it repeats keeps its first values.
+            private static void WriteCommand(DatasetJsonWriter json, DeviceCommandSet? command)
             {
                 if (!command.HasValue)
                 {
@@ -842,14 +871,22 @@ namespace Argus.Simulation.Core
                     return;
                 }
 
-                ActuatorCommandSet value = command.Value;
+                DeviceCommandSet value = command.Value;
                 json.BeginObject()
                     .Key("sequence").Value(value.Sequence)
                     .Key("apply_at_simulation_time_s").Value(value.ApplyAtSimulationTimeSeconds)
-                    .Key("reaction_wheel_torque_body_n_m").Value(value.ReactionWheelTorqueBodyNewtonMeters)
-                    .Key("magnetorquer_dipole_body_a_m2").Value(value.MagnetorquerDipoleBodyAmpereSquareMeters)
-                    .Key("thruster_force_body_n").Value(value.ThrusterForceBodyNewtons)
-                    .EndObject();
+                    .Key("devices").BeginObject();
+                HashSet<string> written = new HashSet<string>(StringComparer.Ordinal);
+                foreach (DeviceCommand device in value.Commands)
+                {
+                    if (device.DeviceId != null && written.Add(device.DeviceId))
+                    {
+                        json.Key(device.DeviceId);
+                        WriteDeviceValues(json, device.Values);
+                    }
+                }
+
+                json.EndObject().EndObject();
             }
 
             private static void WriteInitialOrbit(DatasetJsonWriter json, ClassicalOrbitElements? orbit)
@@ -932,13 +969,13 @@ namespace Argus.Simulation.Core
                     .Key("cy_px").Value(intrinsics.PrincipalPointYPixels)
                     .EndObject();
 
-            private static void WriteSensor(
+            private static void WriteDevice(
                 DatasetJsonWriter json,
                 SensorDefinition sensor,
-                IReadOnlyList<SensorConfiguration> configurations)
+                IReadOnlyList<DeviceConfiguration> configurations)
             {
-                SensorConfiguration? configuration = null;
-                foreach (SensorConfiguration candidate in configurations)
+                DeviceConfiguration? configuration = null;
+                foreach (DeviceConfiguration candidate in configurations)
                 {
                     if (candidate.Definition.SensorId == sensor.SensorId)
                     {
@@ -950,73 +987,69 @@ namespace Argus.Simulation.Core
                 // controller visibility from it; otherwise the model's own (an ideal sensor).
                 SensorDefinition definition = configuration.HasValue ? configuration.Value.Definition : sensor;
                 json.BeginObject()
-                    .Key("sensor_id").Value(definition.SensorId)
+                    .Key("device_id").Value(definition.SensorId)
                     .Key("model_name").Value(definition.ModelName)
                     .Key("frame_id").Value(definition.FrameId)
                     .Key("sample_period_s").Value(definition.SamplePeriodSeconds)
                     .Key("source").Value(definition.Source)
                     .Key("mount").BeginObject()
                         .Key("position_body_m").Value(definition.Mount.PositionBodyMeters)
-                        .Key("sensor_to_body_xyzw").Value(definition.Mount.SensorToBody)
+                        .Key("device_to_body_xyzw").Value(definition.Mount.SensorToBody)
                         .EndObject()
                     .Key("controller_visible").Value(definition.IsControllerVisible);
 
                 if (!configuration.HasValue)
                 {
-                    json.Key("kind").Null().Key("profile").Null().EndObject();
+                    json.Key("kind").Null().Key("parameters").Null().Key("initial_state").Null().EndObject();
                     return;
                 }
 
-                SensorConfiguration found = configuration.Value;
-                json.Key("kind").Value(found.Kind.ToString()).Key("profile");
-                switch (found.Kind)
+                DeviceConfiguration found = configuration.Value;
+                json.Key("kind").Value(found.Kind).Key("parameters");
+                WriteDeviceValues(json, found.Parameters);
+                json.Key("initial_state");
+                WriteDeviceValues(json, found.InitialState);
+                json.EndObject();
+            }
+
+            // Ordinal key order, each value in its type's JSON form (docs/device-model.md §3): a
+            // quaternion is {"x", "y", "z", "w"}, since its key carries no component order.
+            private static void WriteDeviceValues(DatasetJsonWriter json, DeviceValues values)
+            {
+                json.BeginObject();
+                foreach (KeyValuePair<string, DeviceValue> entry in values)
                 {
-                    case SensorKind.Imu:
-                        GyroscopeProfile gyroscope = found.ImuProfile.Gyroscope;
-                        AccelerometerProfile accelerometer = found.ImuProfile.Accelerometer;
-                        json.BeginObject()
-                            .Key("gyroscope").BeginObject()
-                                .Key("noise_density_rad_s_per_rt_hz").Value(gyroscope.NoiseDensityRadiansPerSecondPerRootHertz)
-                                .Key("bias_random_walk_rad_s_per_rt_s").Value(gyroscope.BiasRandomWalkRadiansPerSecondPerRootSecond)
-                                .Key("bias_random_walk_bound_rad_s").Value(gyroscope.BiasRandomWalkBoundRadiansPerSecond)
-                                .Key("constant_bias_sensor_rad_s").Value(gyroscope.ConstantBiasSensorRadiansPerSecond)
-                                .Key("scale_factor_per_axis").Value(gyroscope.ScaleFactorPerAxis)
-                                .Key("range_rad_s").Value(gyroscope.RangeRadiansPerSecond)
-                                .Key("resolution_rad_s").Value(gyroscope.ResolutionRadiansPerSecond)
-                                .EndObject()
-                            .Key("accelerometer").BeginObject()
-                                .Key("noise_density_m_s2_per_rt_hz").Value(accelerometer.NoiseDensityMetersPerSecondSquaredPerRootHertz)
-                                .Key("bias_random_walk_m_s2_per_rt_s").Value(accelerometer.BiasRandomWalkMetersPerSecondSquaredPerRootSecond)
-                                .Key("bias_random_walk_bound_m_s2").Value(accelerometer.BiasRandomWalkBoundMetersPerSecondSquared)
-                                .Key("constant_bias_sensor_m_s2").Value(accelerometer.ConstantBiasSensorMetersPerSecondSquared)
-                                .Key("scale_factor_per_axis").Value(accelerometer.ScaleFactorPerAxis)
-                                .Key("range_m_s2").Value(accelerometer.RangeMetersPerSecondSquared)
-                                .Key("resolution_m_s2").Value(accelerometer.ResolutionMetersPerSecondSquared)
-                                .EndObject()
-                            .EndObject();
-                        break;
-                    case SensorKind.Magnetometer:
-                        MagnetometerProfile magnetometer = found.MagnetometerProfile;
-                        json.BeginObject()
-                            .Key("noise_std_t").Value(magnetometer.NoiseStdTesla)
-                            .Key("constant_bias_sensor_t").Value(magnetometer.ConstantBiasSensorTesla)
-                            .Key("scale_factor").Value(magnetometer.ScaleFactor)
-                            .Key("range_t").Value(magnetometer.RangeTesla)
-                            .EndObject();
-                        break;
-                    case SensorKind.LightSensor:
-                        LightSensorProfile light = found.LightSensorProfile;
-                        json.BeginObject()
-                            .Key("field_of_view_half_angle_rad").Value(light.FieldOfViewHalfAngleRadians)
-                            .Key("scale_factor").Value(light.ScaleFactor)
-                            .Key("noise_std_w_m2").Value(light.NoiseStdWattsPerSquareMeter)
-                            .Key("bias_w_m2").Value(light.BiasWattsPerSquareMeter)
-                            .Key("saturation_w_m2").Value(light.SaturationWattsPerSquareMeter)
-                            .EndObject();
-                        break;
-                    default:
-                        json.Null();
-                        break;
+                    json.Key(entry.Key);
+                    DeviceValue value = entry.Value;
+                    switch (value.Type)
+                    {
+                        case DeviceValueType.Number:
+                            json.Value(value.Number);
+                            break;
+                        case DeviceValueType.Vector3:
+                            json.Value(value.Vector3);
+                            break;
+                        case DeviceValueType.Quaternion:
+                            json.BeginObject()
+                                .Key("x").Value(value.Quaternion.X)
+                                .Key("y").Value(value.Quaternion.Y)
+                                .Key("z").Value(value.Quaternion.Z)
+                                .Key("w").Value(value.Quaternion.W)
+                                .EndObject();
+                            break;
+                        case DeviceValueType.Matrix3:
+                            json.Value(value.Matrix3);
+                            break;
+                        case DeviceValueType.Flag:
+                            json.Value(value.Flag);
+                            break;
+                        case DeviceValueType.Text:
+                            json.Value(value.Text);
+                            break;
+                        default:
+                            json.Null();
+                            break;
+                    }
                 }
 
                 json.EndObject();

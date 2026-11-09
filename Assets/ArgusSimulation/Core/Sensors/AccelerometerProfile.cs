@@ -40,7 +40,8 @@ namespace Argus.Simulation.Core
         // senTransMax, symmetric on every axis.
         public double RangeMetersPerSecondSquared { get; }
 
-        // First argument of setLSBs; 0 means no quantisation.
+        // First argument of setLSBs; 0 means no quantisation. Basilisk truncates toward zero, as for
+        // the gyroscope.
         public double ResolutionMetersPerSecondSquared { get; }
 
         public bool IsValid =>

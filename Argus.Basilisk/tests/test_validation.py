@@ -9,8 +9,8 @@ import sys
 import pytest
 
 from argus_basilisk.contracts import service_pb
+from argus_basilisk.devices import KINDS
 from argus_basilisk.validation import (
-    SUPPORTED_SENSOR_KINDS,
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
@@ -22,11 +22,9 @@ from argus_basilisk.validation import (
     validate_configure_run,
     validate_step_command,
 )
-from argus.sim.v1 import commands_pb2, run_configuration_pb2, sensors_pb2
+from argus.sim.v1 import commands_pb2, devices_pb2, run_configuration_pb2
 
-ALL_KINDS = frozenset({"imu", "magnetometer", "light_sensor"})
-
-# coverage_utc of kernel_sets/argus-2026-10-20.json, the P0 kernel set.
+# coverage_utc of kernel_sets/argus-2026-11-02.json, the P0 kernel set.
 COVERAGE = UtcWindow(
     start=datetime(1962, 1, 20, tzinfo=timezone.utc),
     end=datetime(2026, 8, 6, tzinfo=timezone.utc),
@@ -71,23 +69,31 @@ def set_quaternion(message, values):
     message.x, message.y, message.z, message.w = values
 
 
-def definition(sensor_id, position=(0.0, 0.0, 0.0), sensor_to_body=(0.0, 0.0, 0.0, 1.0)):
-    result = sensors_pb2.SensorDefinition(sensor_id=sensor_id, sample_period_ns=100_000_000)
+def set_parameter(device, key, value):
+    """A number, or a vector3 given as an (x, y, z) tuple."""
+    if isinstance(value, tuple):
+        set_vector(device.parameters[key].vector3, value)
+    else:
+        device.parameters[key].number = value
+
+
+def device(device_id, kind, parameters, position=(0.0, 0.0, 0.0), device_to_body=(0.0, 0.0, 0.0, 1.0)):
+    result = devices_pb2.DeviceConfiguration(device_id=device_id, kind=kind, sample_period_ns=100_000_000)
     set_vector(result.mount.position_body_m, position)
-    set_quaternion(result.mount.sensor_to_body, sensor_to_body)
+    set_quaternion(result.mount.device_to_body, device_to_body)
+    for key, value in parameters.items():
+        set_parameter(result, key, value)
     return result
 
 
-def light_sensor(sensor_id, position, sensor_x, sensor_y, sensor_z):
-    sensor = sensors_pb2.SensorConfiguration(
-        definition=definition(sensor_id, position, from_basis(sensor_x, sensor_y, sensor_z)))
-    profile = sensor.light_sensor
-    profile.field_of_view_half_angle_rad = math.pi / 2.0
-    profile.scale_factor = 1.0
-    profile.noise_std_w_per_m2 = 0.0
-    profile.bias_w_per_m2 = 0.0
-    profile.saturation_w_per_m2 = 2000.0
-    return sensor
+def light_sensor(device_id, position, sensor_x, sensor_y, sensor_z):
+    return device(device_id, "light_sensor", {
+        "field_of_view_half_angle_rad": math.pi / 2.0,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 0.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 2000.0,
+    }, position, from_basis(sensor_x, sensor_y, sensor_z))
 
 
 def p0_default_request():
@@ -96,7 +102,7 @@ def p0_default_request():
         run_id="p0-default",
         fixed_step_ns=100_000_000,
         random_seed=1,
-        kernel_set_id="argus-2026-10-20",
+        kernel_set_id="argus-2026-11-02",
     )
     configuration.epoch_utc.FromDatetime(datetime(2025, 1, 15, tzinfo=timezone.utc))
 
@@ -113,27 +119,30 @@ def p0_default_request():
     set_quaternion(spacecraft.initial_body_to_j2000, (0.0, 0.0, 0.0, 1.0))
     set_vector(spacecraft.initial_angular_velocity_body_rad_per_s, (0.0, 0.0, 0.0))
 
-    imu = sensors_pb2.SensorConfiguration(definition=definition("imu.main"))
-    gyroscope = imu.imu.gyroscope
-    gyroscope.noise_density_rad_per_s_per_sqrt_hz = 1.2e-4
-    set_vector(gyroscope.constant_bias_sensor_rad_per_s, (0.0, 0.0, 0.0))
-    set_vector(gyroscope.scale_factor_per_axis, (1.0, 1.0, 1.0))
-    gyroscope.range_rad_per_s = 4.363
-    gyroscope.resolution_rad_per_s = 1.33e-4
-    accelerometer = imu.imu.accelerometer
-    accelerometer.noise_density_m_per_s2_per_sqrt_hz = 1.8e-3
-    set_vector(accelerometer.constant_bias_sensor_m_per_s2, (0.0, 0.0, 0.0))
-    set_vector(accelerometer.scale_factor_per_axis, (1.0, 1.0, 1.0))
-    accelerometer.range_m_per_s2 = 19.61
-    accelerometer.resolution_m_per_s2 = 6.0e-4
+    imu = device("imu.main", "imu", {
+        "gyroscope.noise_density_rad_per_s_per_sqrt_hz": 1.2e-4,
+        "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s": 0.0,
+        "gyroscope.bias_random_walk_bound_rad_per_s": 0.0,
+        "gyroscope.constant_bias_sensor_rad_per_s": (0.0, 0.0, 0.0),
+        "gyroscope.scale_factor_per_axis": (1.0, 1.0, 1.0),
+        "gyroscope.range_rad_per_s": 4.363,
+        "gyroscope.resolution_rad_per_s": 1.33e-4,
+        "accelerometer.noise_density_m_per_s2_per_sqrt_hz": 1.8e-3,
+        "accelerometer.bias_random_walk_m_per_s2_per_sqrt_s": 0.0,
+        "accelerometer.bias_random_walk_bound_m_per_s2": 0.0,
+        "accelerometer.constant_bias_sensor_m_per_s2": (0.0, 0.0, 0.0),
+        "accelerometer.scale_factor_per_axis": (1.0, 1.0, 1.0),
+        "accelerometer.range_m_per_s2": 19.61,
+        "accelerometer.resolution_m_per_s2": 6.0e-4,
+    })
+    magnetometer = device("mag.main", "magnetometer", {
+        "noise_std_tesla": 0.0,
+        "constant_bias_sensor_tesla": (0.0, 0.0, 0.0),
+        "scale_factor": 1.0,
+        "range_tesla": 1.3e-3,
+    })
 
-    magnetometer = sensors_pb2.SensorConfiguration(definition=definition("mag.main"))
-    magnetometer.magnetometer.noise_std_tesla = 0.0
-    set_vector(magnetometer.magnetometer.constant_bias_sensor_tesla, (0.0, 0.0, 0.0))
-    magnetometer.magnetometer.scale_factor = 1.0
-    magnetometer.magnetometer.range_tesla = 1.3e-3
-
-    configuration.sensors.extend([
+    configuration.devices.extend([
         imu,
         magnetometer,
         light_sensor("light.px", (0.05, 0.0, 0.0), Y, Z, X),
@@ -146,25 +155,29 @@ def p0_default_request():
     return service_pb.ConfigureRunRequest(configuration=configuration, real_time_factor=0.0)
 
 
-def problems_of(request, kinds=ALL_KINDS):
-    return configure_run_problems(request, coverage_utc=COVERAGE, supported_sensor_kinds=kinds)
+def problems_of(request):
+    return configure_run_problems(request, coverage_utc=COVERAGE)
 
 
-def only_problem(request, kinds=ALL_KINDS):
-    problems = problems_of(request, kinds)
+def only_problem(request):
+    problems = problems_of(request)
     assert len(problems) == 1, problems
     return problems[0]
 
 
-def test_service_builds_every_p0_sensor_kind():
+def parameter(request, index, key):
+    return request.configuration.devices[index].parameters[key]
+
+
+def test_registry_holds_every_p0_sensor_kind():
     # The IMU (BSK-4), the magnetometer (BSK-5) and the light sensors (BSK-6) complete the P0 set.
-    assert SUPPORTED_SENSOR_KINDS == ALL_KINDS
-    assert configure_run_problems(p0_default_request(), coverage_utc=COVERAGE) == []
+    assert sorted(KINDS) == ["imu", "light_sensor", "magnetometer"]
+    assert all(kind.KIND == name for name, kind in KINDS.items())
 
 
-def test_p0_default_passes_once_every_kind_is_built():
+def test_p0_default_passes():
     assert problems_of(p0_default_request()) == []
-    validate_configure_run(p0_default_request(), coverage_utc=COVERAGE, supported_sensor_kinds=ALL_KINDS)
+    validate_configure_run(p0_default_request(), coverage_utc=COVERAGE)
 
 
 def test_kernel_coverage_dataclass_is_accepted():
@@ -175,7 +188,7 @@ def test_kernel_coverage_dataclass_is_accepted():
         end = COVERAGE.end
         reconstructed_end = datetime(2026, 8, 6, tzinfo=timezone.utc)
 
-    assert configure_run_problems(p0_default_request(), coverage_utc=Coverage(), supported_sensor_kinds=ALL_KINDS) == []
+    assert configure_run_problems(p0_default_request(), coverage_utc=Coverage()) == []
 
 
 INVALID_CASES = [
@@ -226,45 +239,69 @@ INVALID_CASES = [
      "configuration.epoch_utc: required field is not set"),
     ("no inertia row", lambda r: r.configuration.spacecraft.inertia_body_kg_m2.ClearField("row1"),
      "configuration.spacecraft.inertia_body_kg_m2.row1: required field is not set"),
-    ("no profile", lambda r: r.configuration.sensors[0].ClearField("imu"),
-     "configuration.sensors[0].profile: required field is not set"),
-    ("no mount", lambda r: r.configuration.sensors[0].definition.ClearField("mount"),
-     "configuration.sensors[0].definition.mount: required field is not set"),
-    ("no accelerometer", lambda r: r.configuration.sensors[0].imu.ClearField("accelerometer"),
-     "configuration.sensors[0].imu.accelerometer: required field is not set"),
-    ("no gyro scale", lambda r: r.configuration.sensors[0].imu.gyroscope.ClearField("scale_factor_per_axis"),
-     "configuration.sensors[0].imu.gyroscope.scale_factor_per_axis: required field is not set"),
-    # Sensor definitions.
-    ("duplicate sensor id", lambda r: setattr(r.configuration.sensors[3].definition, "sensor_id", "light.px"),
-     "configuration.sensors[3].definition.sensor_id: duplicates configuration.sensors[2]"),
-    ("blank sensor id", lambda r: setattr(r.configuration.sensors[1].definition, "sensor_id", ""),
-     "configuration.sensors[1].definition.sensor_id: must not be blank"),
-    ("zero sample period", lambda r: setattr(r.configuration.sensors[0].definition, "sample_period_ns", 0),
-     "configuration.sensors[0].definition.sample_period_ns: must be > 0"),
-    ("period off the step grid", lambda r: setattr(r.configuration.sensors[0].definition, "sample_period_ns", 150_000_000),
-     "configuration.sensors[0].definition.sample_period_ns: must be a multiple of fixed_step_ns"),
-    ("non-unit mount", lambda r: set_quaternion(r.configuration.sensors[2].definition.mount.sensor_to_body, (0, 0, 0, 0)),
-     "configuration.sensors[2].definition.mount.sensor_to_body"),
-    # Profiles (Core *Profile.IsValid).
-    ("zero gyro scale", lambda r: setattr(r.configuration.sensors[0].imu.gyroscope.scale_factor_per_axis, "y", 0.0),
-     "configuration.sensors[0].imu.gyroscope.scale_factor_per_axis"),
-    ("resolution not below range", lambda r: setattr(r.configuration.sensors[0].imu.accelerometer, "resolution_m_per_s2", 19.61),
-     "configuration.sensors[0].imu.accelerometer.resolution_m_per_s2"),
-    ("negative magnetometer noise", lambda r: setattr(r.configuration.sensors[1].magnetometer, "noise_std_tesla", -1e-9),
-     "configuration.sensors[1].magnetometer.noise_std_tesla"),
-    ("zero magnetometer range", lambda r: setattr(r.configuration.sensors[1].magnetometer, "range_tesla", 0.0),
-     "configuration.sensors[1].magnetometer.range_tesla"),
-    ("zero light saturation", lambda r: setattr(r.configuration.sensors[4].light_sensor, "saturation_w_per_m2", 0.0),
-     "configuration.sensors[4].light_sensor.saturation_w_per_m2"),
+    ("no mount", lambda r: r.configuration.devices[0].ClearField("mount"),
+     "configuration.devices[0].mount: required field is not set"),
+    ("no mount position", lambda r: r.configuration.devices[0].mount.ClearField("position_body_m"),
+     "configuration.devices[0].mount.position_body_m: required field is not set"),
+    # Devices.
+    ("duplicate device id", lambda r: setattr(r.configuration.devices[3], "device_id", "light.px"),
+     "configuration.devices[3].device_id: duplicates configuration.devices[2]"),
+    ("blank device id", lambda r: setattr(r.configuration.devices[1], "device_id", ""),
+     "configuration.devices[1].device_id: must not be blank"),
+    ("zero sample period", lambda r: setattr(r.configuration.devices[0], "sample_period_ns", 0),
+     "configuration.devices[0].sample_period_ns: must be > 0"),
+    ("period off the step grid", lambda r: setattr(r.configuration.devices[0], "sample_period_ns", 150_000_000),
+     "configuration.devices[0].sample_period_ns: must be a multiple of fixed_step_ns"),
+    ("non-unit mount", lambda r: set_quaternion(r.configuration.devices[2].mount.device_to_body, (0, 0, 0, 0)),
+     "configuration.devices[2].mount.device_to_body"),
+    ("unknown kind", lambda r: setattr(r.configuration.devices[1], "kind", "star_tracker"),
+     "configuration.devices[1].kind: must be a registered kind (imu, light_sensor, magnetometer), got 'star_tracker'"),
+    ("empty kind", lambda r: setattr(r.configuration.devices[0], "kind", ""),
+     "configuration.devices[0].kind: must be a registered kind (imu, light_sensor, magnetometer), got ''"),
+    ("initial state", lambda r: setattr(r.configuration.devices[0].initial_state["speed_rad_per_s"], "number", 1.0),
+     "configuration.devices[0].initial_state[\"speed_rad_per_s\"]: unknown initial-state key for kind 'imu', got 1.0"),
+    # Parameter maps (the kind's declarations).
+    ("unknown key", lambda r: setattr(parameter(r, 1, "noise_density_tesla"), "number", 1e-9),
+     'configuration.devices[1].parameters["noise_density_tesla"]: unknown parameter for kind \'magnetometer\', got 1e-09'),
+    ("missing key", lambda r: r.configuration.devices[0].parameters.pop("gyroscope.range_rad_per_s"),
+     'configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not set'),
+    ("number given as a vector3", lambda r: set_vector(parameter(r, 1, "range_tesla").vector3, (1.0, 1.0, 1.0)),
+     'configuration.devices[1].parameters["range_tesla"]: must be a number, got \'vector3\''),
+    ("vector3 given as a number", lambda r: setattr(parameter(r, 0, "gyroscope.scale_factor_per_axis"), "number", 1.0),
+     'configuration.devices[0].parameters["gyroscope.scale_factor_per_axis"]: must be a vector3, got \'number\''),
+    ("value with no case", lambda r: parameter(r, 4, "scale_factor").Clear(),
+     'configuration.devices[4].parameters["scale_factor"]: must be a number, got \'no value\''),
+    ("NaN number", lambda r: setattr(parameter(r, 4, "bias_w_per_m2"), "number", math.nan),
+     'configuration.devices[4].parameters["bias_w_per_m2"]: must be finite, got nan'),
+    ("infinite vector component", lambda r: setattr(parameter(r, 1, "constant_bias_sensor_tesla").vector3, "z", math.inf),
+     'configuration.devices[1].parameters["constant_bias_sensor_tesla"]: must be finite, got (0.0, 0.0, inf)'),
+    # Kind range checks (Core *Profile.IsValid).
+    ("zero gyro scale", lambda r: setattr(parameter(r, 0, "gyroscope.scale_factor_per_axis").vector3, "y", 0.0),
+     'configuration.devices[0].parameters["gyroscope.scale_factor_per_axis"]: each component must be finite and > 0'),
+    ("resolution not below range",
+     lambda r: setattr(parameter(r, 0, "accelerometer.resolution_m_per_s2"), "number", 19.61),
+     'configuration.devices[0].parameters["accelerometer.resolution_m_per_s2"]: '
+     'must be < accelerometer.range_m_per_s2 (19.61)'),
+    ("negative magnetometer noise", lambda r: setattr(parameter(r, 1, "noise_std_tesla"), "number", -1e-9),
+     'configuration.devices[1].parameters["noise_std_tesla"]: must be finite and >= 0, got -1e-09'),
+    ("zero magnetometer range", lambda r: setattr(parameter(r, 1, "range_tesla"), "number", 0.0),
+     'configuration.devices[1].parameters["range_tesla"]: must be finite and > 0'),
+    ("zero light saturation", lambda r: setattr(parameter(r, 4, "saturation_w_per_m2"), "number", 0.0),
+     'configuration.devices[4].parameters["saturation_w_per_m2"]: must be finite and > 0'),
     # bsk 2.11.1 limits.
-    ("gyro noise and random walk", lambda r: setattr(r.configuration.sensors[0].imu.gyroscope, "bias_random_walk_rad_per_s_per_sqrt_s", 1e-6),
-     "configuration.sensors[0].imu.gyroscope.bias_random_walk_rad_per_s_per_sqrt_s: bsk 2.11.1 cannot combine"),
-    ("accel noise and random walk", lambda r: setattr(r.configuration.sensors[0].imu.accelerometer, "bias_random_walk_m_per_s2_per_sqrt_s", 1e-5),
-     "configuration.sensors[0].imu.accelerometer.bias_random_walk_m_per_s2_per_sqrt_s: bsk 2.11.1 cannot combine"),
-    ("walk bound without random walk", lambda r: setattr(r.configuration.sensors[0].imu.gyroscope, "bias_random_walk_bound_rad_per_s", 1e-3),
-     "configuration.sensors[0].imu.gyroscope.bias_random_walk_bound_rad_per_s: needs"),
-    ("light half-angle above pi/2", lambda r: setattr(r.configuration.sensors[2].light_sensor, "field_of_view_half_angle_rad", math.pi / 2.0 + 1e-9),
-     "configuration.sensors[2].light_sensor.field_of_view_half_angle_rad: must be in (0, pi/2]"),
+    ("gyro noise and random walk",
+     lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"), "number", 1e-6),
+     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: bsk 2.11.1 cannot combine'),
+    ("accel noise and random walk",
+     lambda r: setattr(parameter(r, 0, "accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"), "number", 1e-5),
+     'configuration.devices[0].parameters["accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"]: '
+     'bsk 2.11.1 cannot combine'),
+    ("walk bound without random walk",
+     lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_bound_rad_per_s"), "number", 1e-3),
+     'configuration.devices[0].parameters["gyroscope.bias_random_walk_bound_rad_per_s"]: needs'),
+    ("light half-angle above pi/2",
+     lambda r: setattr(parameter(r, 2, "field_of_view_half_angle_rad"), "number", math.pi / 2.0 + 1e-9),
+     'configuration.devices[2].parameters["field_of_view_half_angle_rad"]: must be in (0, pi/2]'),
 ]
 
 
@@ -293,34 +330,53 @@ def test_missing_configuration():
 
 def test_random_walk_alone_with_bound_is_valid():
     request = p0_default_request()
-    gyroscope = request.configuration.sensors[0].imu.gyroscope
-    gyroscope.noise_density_rad_per_s_per_sqrt_hz = 0.0
-    gyroscope.bias_random_walk_rad_per_s_per_sqrt_s = 1e-6
-    gyroscope.bias_random_walk_bound_rad_per_s = 1e-3
+    imu = request.configuration.devices[0]
+    set_parameter(imu, "gyroscope.noise_density_rad_per_s_per_sqrt_hz", 0.0)
+    set_parameter(imu, "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s", 1e-6)
+    set_parameter(imu, "gyroscope.bias_random_walk_bound_rad_per_s", 1e-3)
     assert problems_of(request) == []
 
 
 def test_sample_period_multiple_of_the_step_is_valid():
     request = p0_default_request()
-    request.configuration.sensors[0].definition.sample_period_ns = 300_000_000
+    request.configuration.devices[0].sample_period_ns = 300_000_000
     assert problems_of(request) == []
 
 
-def test_magnetometer_noise_is_unimplemented():
+def test_magnetometer_noise_is_valid():
     request = p0_default_request()
-    request.configuration.sensors[1].magnetometer.noise_std_tesla = 1e-7
-    problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("configuration.sensors[1].magnetometer.noise_std_tesla")
+    set_parameter(request.configuration.devices[1], "noise_std_tesla", 1e-7)
+    assert problems_of(request) == []
 
 
-def test_light_sensor_noise_is_unimplemented():
-    # bsk 2.11.1 cannot make coarseSunSensor noise white from Python (README §9).
+def test_light_sensor_noise_is_valid():
     request = p0_default_request()
-    request.configuration.sensors[2].light_sensor.noise_std_w_per_m2 = 1.0
+    set_parameter(request.configuration.devices[2], "noise_std_w_per_m2", 1.0)
+    assert problems_of(request) == []
+
+
+def test_device_problems_are_collected_with_their_keys():
+    """Every problem of every device is reported, in device and declaration order."""
+    request = p0_default_request()
+    request.configuration.devices[0].parameters.pop("gyroscope.range_rad_per_s")
+    set_parameter(request.configuration.devices[0], "gyroscope.extra", 1.0)
+    set_parameter(request.configuration.devices[1], "scale_factor", (1.0, 1.0, 1.0))
+    set_parameter(request.configuration.devices[5], "saturation_w_per_m2", -1.0)
+    details = [problem.details.split(":")[0] for problem in problems_of(request)]
+    assert details == [
+        'configuration.devices[0].parameters["gyroscope.extra"]',
+        'configuration.devices[0].parameters["gyroscope.range_rad_per_s"]',
+        'configuration.devices[1].parameters["scale_factor"]',
+        'configuration.devices[5].parameters["saturation_w_per_m2"]',
+    ]
+
+
+def test_an_unknown_kind_skips_the_parameter_checks():
+    request = p0_default_request()
+    request.configuration.devices[1].kind = "star_tracker"
+    request.configuration.devices[1].parameters.pop("range_tesla")
     problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("configuration.sensors[2].light_sensor.noise_std_w_per_m2")
+    assert problem.details.startswith("configuration.devices[1].kind")
 
 
 def test_pacing_is_unimplemented():
@@ -340,7 +396,7 @@ def test_invalid_argument_outranks_unimplemented_and_out_of_range():
     codes = [problem.code for problem in problems_of(request)]
     assert codes == ["INVALID_ARGUMENT", "UNIMPLEMENTED", "OUT_OF_RANGE"]
     with pytest.raises(ValidationError) as error:
-        validate_configure_run(request, coverage_utc=COVERAGE, supported_sensor_kinds=ALL_KINDS)
+        validate_configure_run(request, coverage_utc=COVERAGE)
     assert error.value.code == "INVALID_ARGUMENT"
     assert "configuration.spacecraft.mass_kg" in error.value.details
 
@@ -351,7 +407,7 @@ def test_invalid_argument_outranks_unimplemented_and_out_of_range():
 ])
 def test_epoch_outside_kernel_coverage_is_out_of_range(epoch):
     request = p0_default_request()
-    request.configuration.sensors.pop(1)  # no magnetometer: only kernel coverage applies
+    request.configuration.devices.pop(1)  # no magnetometer: only kernel coverage applies
     request.configuration.epoch_utc.FromDatetime(epoch)
     problems = problems_of(request)
     assert [problem.code for problem in problems] == ["OUT_OF_RANGE"]
@@ -361,7 +417,7 @@ def test_epoch_outside_kernel_coverage_is_out_of_range(epoch):
 
 def test_coverage_end_is_inclusive_to_the_nanosecond():
     request = p0_default_request()
-    request.configuration.sensors.pop(1)  # no magnetometer: only kernel coverage applies
+    request.configuration.devices.pop(1)  # no magnetometer: only kernel coverage applies
     request.configuration.epoch_utc.FromDatetime(COVERAGE.end)
     assert problems_of(request) == []
 
@@ -376,7 +432,7 @@ def test_wmm_window_applies_only_with_a_magnetometer():
     assert problem.code == "OUT_OF_RANGE"
     assert "WMM2025 validity" in problem.details
 
-    request.configuration.sensors.pop(1)
+    request.configuration.devices.pop(1)
     assert problems_of(request) == []
 
 
@@ -405,43 +461,56 @@ def _timestamp(value):
 
 
 def zero_command():
-    command = commands_pb2.ActuatorCommand()
-    for name in ("reaction_wheel_torque_body_n_m", "magnetorquer_dipole_body_a_m2", "thruster_force_body_n"):
-        set_vector(getattr(command, name), (0.0, 0.0, 0.0))
-    return command
+    """The empty DeviceCommandSet: no output (docs/device-model.md §6)."""
+    return commands_pb2.DeviceCommandSet()
 
 
-def test_zero_step_command_is_valid():
+def torque_command(device_id="torque.body", x=1e-4):
+    commands = commands_pb2.DeviceCommandSet()
+    command = commands.commands.add(device_id=device_id)
+    set_vector(command.values["torque_body_n_m"].vector3, (x, 0.0, 0.0))
+    return commands
+
+
+def test_empty_step_command_is_valid():
     validate_step_command(zero_command())
 
 
-def test_step_command_needs_every_vector():
-    command = zero_command()
-    command.ClearField("thruster_force_body_n")
+def test_step_command_for_a_device_that_is_not_a_configured_actuator_is_invalid():
+    # P0 configures sensors only, and no actuator kind exists yet (CON-2), so no ID is valid.
     with pytest.raises(ValidationError) as error:
-        validate_step_command(command)
+        validate_step_command(torque_command("imu.main"))
     assert error.value.code == "INVALID_ARGUMENT"
-    assert error.value.details == "command.thruster_force_body_n: required field is not set"
+    assert error.value.details.startswith("commands.commands[0].device_id: is not an actuator this run configures")
 
 
-def test_non_finite_step_command_is_invalid():
-    command = zero_command()
-    command.magnetorquer_dipole_body_a_m2.z = math.nan
-    problems = step_command_problems(command)
-    assert [problem.code for problem in problems] == ["INVALID_ARGUMENT"]
-
-
-def test_non_zero_step_command_is_unimplemented():
-    command = zero_command()
-    command.reaction_wheel_torque_body_n_m.x = 1e-4
+def test_step_command_for_a_configured_actuator_is_unimplemented():
     with pytest.raises(ValidationError) as error:
-        validate_step_command(command)
+        validate_step_command(torque_command(), actuator_ids=frozenset({"torque.body"}))
     assert error.value.code == "UNIMPLEMENTED"
-    assert error.value.details.startswith("command.reaction_wheel_torque_body_n_m")
+    assert error.value.details.startswith("commands.commands[0]: applying actuator commands is not built yet")
+
+
+def test_malformed_step_commands_are_invalid():
+    unnamed = torque_command(device_id="")
+    repeated = torque_command()
+    repeated.commands.add().CopyFrom(repeated.commands[0])
+    non_finite = torque_command(x=math.nan)
+    unset = torque_command()
+    unset.commands[0].values["torque_body_n_m"].ClearField("vector3")
+    actuators = frozenset({"torque.body"})
+    assert step_command_problems(unnamed, actuator_ids=actuators)[0].details == (
+        "commands.commands[0].device_id: required field is not set")
+    assert step_command_problems(repeated, actuator_ids=actuators)[0].details.startswith(
+        "commands.commands[1].device_id: repeats commands[0]")
+    assert step_command_problems(non_finite, actuator_ids=actuators)[0].details.startswith(
+        'commands.commands[0].values["torque_body_n_m"]: must be finite')
+    assert step_command_problems(unset, actuator_ids=actuators)[0].details == (
+        'commands.commands[0].values["torque_body_n_m"]: required field is not set')
 
 
 def step(sequence, command_sequence=None, command_time_ns=None):
-    request = service_pb.StepRequest(sequence=sequence, sim_time_ns=sequence * 100_000_000, command=zero_command())
+    request = service_pb.StepRequest(sequence=sequence, sim_time_ns=sequence * 100_000_000, commands=zero_command())
     if command_sequence is not None:
         request.command_sequence = command_sequence
     if command_time_ns is not None:
@@ -466,18 +535,24 @@ def test_step_command_timing_and_zero_step_zero():
     assert step_request_problems(step(0), 100_000_000) == []
     assert step_request_problems(step(3, 2, 200_000_000), 100_000_000) == []
 
+    actuators = frozenset({"torque.body"})
     first = step(0)
-    first.command.thruster_force_body_n.x = 1.0
-    assert [problem.code for problem in step_request_problems(first, 100_000_000)] == ["INVALID_ARGUMENT"]
+    first.commands.CopyFrom(torque_command())
+    assert [problem.code for problem in step_request_problems(first, 100_000_000, actuators)] == ["INVALID_ARGUMENT"]
 
     later = step(3, 2, 200_000_000)
-    later.command.thruster_force_body_n.x = 1.0
-    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == ["UNIMPLEMENTED"]
+    later.commands.CopyFrom(torque_command())
+    assert [problem.code for problem in step_request_problems(later, 100_000_000, actuators)] == ["UNIMPLEMENTED"]
+    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == ["INVALID_ARGUMENT"]
 
-    # A command for the wrong step outranks the non-zero command it carries.
+    # A command for the wrong step outranks the actuator command it carries.
     later.command_sequence = 3
-    assert [problem.code for problem in step_request_problems(later, 100_000_000)] == [
+    assert [problem.code for problem in step_request_problems(later, 100_000_000, actuators)] == [
         "INVALID_ARGUMENT", "UNIMPLEMENTED"]
+
+    unset = step(3, 2, 200_000_000)
+    unset.ClearField("commands")
+    assert step_request_problems(unset, 100_000_000)[0].details == "commands: required field is not set"
 
 
 def test_validation_never_imports_basilisk():
