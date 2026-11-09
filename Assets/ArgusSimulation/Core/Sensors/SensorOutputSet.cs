@@ -41,7 +41,8 @@ namespace Argus.Simulation.Core
                 {
                     if (_frames[index] == null ||
                         !_frames[index].HasValidEnvelope ||
-                        _frames[index].RunId != RunId)
+                        _frames[index].RunId != RunId ||
+                        _frames[index].StateSequence > SpacecraftSequence)
                     {
                         return false;
                     }

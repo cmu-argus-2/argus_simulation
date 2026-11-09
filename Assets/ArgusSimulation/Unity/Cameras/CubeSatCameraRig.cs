@@ -174,18 +174,22 @@ namespace Argus.Simulation.Unity
 
             _groundTruthAnchor.positionGlobeFixed =
                 _spacecraftAnchor.positionGlobeFixed;
+            _groundTruthAnchor.rotationEastUpNorth = NorthUpNadirEastUpNorth();
+            _groundTruthAnchor.Sync();
+        }
 
-            // Cesium East-Up-North: look along local -Up with image-up set to
-            // North. This remains independent of CubeSat pitch, yaw, and roll.
+        // Cesium East-Up-North: look along local -Up with image-up set to
+        // North. This remains independent of CubeSat pitch, yaw, and roll.
+        internal static quaternion NorthUpNadirEastUpNorth()
+        {
             Quaternion northUpNadir = Quaternion.LookRotation(
                 Vector3.down,
                 Vector3.forward);
-            _groundTruthAnchor.rotationEastUpNorth = new quaternion(
+            return new quaternion(
                 northUpNadir.x,
                 northUpNadir.y,
                 northUpNadir.z,
                 northUpNadir.w);
-            _groundTruthAnchor.Sync();
         }
 
         private static int VisibleWorldLayers()

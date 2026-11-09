@@ -9,7 +9,7 @@ package argus.basilisk.v1;
 
 import "argus/sim/v1/commands.proto";
 import "argus/sim/v1/run_configuration.proto";
-import "argus/sim/v1/sensors.proto";
+import "argus/sim/v1/devices.proto";
 import "argus/sim/v1/types.proto";
 
 option csharp_namespace = "Argus.Contracts.Basilisk.V1";
@@ -25,8 +25,11 @@ service BasiliskSimulationService {
   // sequence 0, and frames repeat bit for bit.
   rpc Reset(ResetRequest) returns (ResetResponse);
   // ISimulationEngine.TryStep. Advances to t_n = sequence x fixed_step_ns (Step(0) runs the t = 0
-  // pass) and returns the state there; the request command applies over [t_n, t_n+1). With
-  // real_time_factor > 0, clockSynch paces it.
+  // pass) and returns the state there. The request carries command n-1, which acts over
+  // [t_n-1, t_n): the service writes it before running, and checks command_sequence and
+  // command_time_ns so a command sent in the wrong request is rejected, never applied a step
+  // off. Step(0) carries the empty command set and neither field. With real_time_factor > 0,
+  // clockSynch paces it.
   rpc Step(StepRequest) returns (StepResponse);
 }
 
@@ -43,8 +46,11 @@ message ConfigureRunResponse {
   string kernel_set_id = 2;
   // Echo.
   uint64 fixed_step_ns = 3;
-  // Every requested sensor, in request order.
-  repeated string configured_sensor_ids = 4;
+  // repeated string configured_sensor_ids, replaced by configured_device_ids (CORE-19).
+  reserved 4;
+  reserved "configured_sensor_ids";
+  // Every requested device, in request order.
+  repeated string configured_device_ids = 7;
   // Basilisk.__version__.
   string basilisk_version = 5;
   // Read back from spiceInterface.planetFrames; must be "ITRF93".
@@ -66,8 +72,19 @@ message StepRequest {
   uint64 sequence = 2;
   // n x fixed_step_ns.
   uint64 sim_time_ns = 3;
-  // Applies over [t_n, t_n+1); non-zero is UNIMPLEMENTED until G1.
-  argus.sim.v1.ActuatorCommand command = 4;
+  // argus.sim.v1.ActuatorCommand command, replaced by commands (CORE-20).
+  reserved 4;
+  reserved "command";
+  // Command n-1: acts over [t_n-1, t_n). The empty set in Step(0). Required: unset is
+  // INVALID_ARGUMENT, so a client that forgets it is never taken to send no output.
+  argus.sim.v1.DeviceCommandSet commands = 8;
+  // n - 1, the sequence the command was computed for (Core DeviceCommandSet.Sequence).
+  // Required for n > 0 and unset in Step(0), which follows no command; optional because 0 is
+  // a valid value.
+  optional uint64 command_sequence = 5;
+  // (n - 1) x fixed_step_ns, when the command starts acting (Core
+  // DeviceCommandSet.ApplyAtSimulationTimeSeconds). Required for n > 0, unset in Step(0).
+  optional uint64 command_time_ns = 6;
 }
 
 message StepResponse {
@@ -87,8 +104,11 @@ message StepResponse {
   // 0 umbra. Required; optional only so that an unset value is detectable instead of reading as
   // umbra.
   optional double spacecraft_shadow_factor = 7;
-  // One per sensor whose period divides sim_time_ns.
-  repeated BasiliskSensorSample sensor_samples = 8;
+  // repeated BasiliskSensorSample sensor_samples, replaced by device_samples (CORE-19).
+  reserved 8;
+  reserved "sensor_samples";
+  // One per sensor device whose period divides sim_time_ns.
+  repeated BasiliskDeviceSample device_samples = 10;
   // clockSynch.clockOutMsg.overrunCounter since ConfigureRun or Reset; 0 when unpaced.
   uint64 pacing_overrun_count = 9;
 }
@@ -128,14 +148,12 @@ message BasiliskPlanetState {
   bool orientation_computed = 6;
 }
 
-// An unset measurement means the sensor ran without data (imuSensor's first update): Unavailable.
-message BasiliskSensorSample {
-  string sensor_id = 1;
+// One sensor device's output at a step. An empty output means the sensor ran without data
+// (imuSensor's first update) and maps to Unavailable.
+message BasiliskDeviceSample {
+  string device_id = 1;
   // timeWritten() of a reader subscribed to the sensor's outMsg; equals sim_time_ns.
   uint64 sample_time_ns = 2;
-  oneof measurement {
-    argus.sim.v1.ImuMeasurement imu = 10;
-    argus.sim.v1.MagnetometerMeasurement magnetometer = 11;
-    argus.sim.v1.LightSensorMeasurement light_sensor = 12;
-  }
+  // The kind's output keys (Argus.Basilisk/README.md §9), e.g. irradiance_w_per_m2.
+  map<string, argus.sim.v1.DeviceValue> output = 3;
 }

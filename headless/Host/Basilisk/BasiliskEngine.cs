@@ -25,6 +25,7 @@ namespace Argus.Simulation.Host
 
         private SimulationConfiguration _configuration;
         private long _fixedStepNanoseconds;
+        private bool _hasStepped;
 
         // realTimeFactor 0 runs unpaced; above 0 the service paces Step with clockSynch.
         public BasiliskEngine(Uri serviceAddress, double realTimeFactor, CancellationToken cancellation)
@@ -78,9 +79,13 @@ namespace Argus.Simulation.Host
                     nameof(configuration));
             }
 
-            foreach (SensorConfiguration sensor in configuration.Sensors)
+            // SimulationConfiguration.IsValid already requires whole steps for every sensor; Basilisk
+            // also needs its own sensors' periods in exact nanoseconds. Argus-computed sensors schedule
+            // themselves in SensorModel (CORE-18).
+            foreach (DeviceConfiguration sensor in configuration.Devices)
             {
-                if (BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
+                if (sensor.IsBackendModelled &&
+                    BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
                 {
                     throw new ArgumentException(
                         $"Sensor '{sensor.Definition.SensorId}' period is not a multiple of the fixed step.",
@@ -101,7 +106,7 @@ namespace Argus.Simulation.Host
             Expect(response.RunId == configuration.RunId, "ConfigureRun", "run_id");
             Expect(response.KernelSetId == configuration.KernelSetId, "ConfigureRun", "kernel_set_id");
             Expect(response.FixedStepNs == (ulong)fixedStepNanoseconds, "ConfigureRun", "fixed_step_ns");
-            Expect(HasSensorsInOrder(response.ConfiguredSensorIds, configuration.Sensors), "ConfigureRun", "configured_sensor_ids");
+            Expect(HasSensorsInOrder(response.ConfiguredDeviceIds, configuration.Devices), "ConfigureRun", "configured_device_ids");
             Expect(response.SpiceEarthFrame == "ITRF93", "ConfigureRun", "spice_earth_frame");
             Expect(!string.IsNullOrWhiteSpace(response.BasiliskVersion), "ConfigureRun", "basilisk_version");
 
@@ -109,22 +114,35 @@ namespace Argus.Simulation.Host
             _fixedStepNanoseconds = fixedStepNanoseconds;
             BasiliskVersion = response.BasiliskVersion;
             PacingOverrunCount = 0;
+            _hasStepped = false;
             IsInitialized = true;
         }
 
-        public void Reset()
+        // ConfigureRun leaves the service READY; after any step, Reset rebuilds it first. The
+        // gateway always calls Initialize before TryReset, so it never needs the Reset RPC; a
+        // direct engine user that reruns without Initialize does (ISimulationEngine.TryReset). Then
+        // Step(0) runs the t = 0 pass with a zero command, since a Step(n) command acts over
+        // [t_n-1, t_n) (target-architecture §4).
+        public bool TryReset(out SimulationState state)
         {
             if (!IsInitialized)
             {
                 throw new InvalidOperationException("BasiliskEngine has not been initialized.");
             }
 
-            PbBasilisk.ResetRequest request = new PbBasilisk.ResetRequest { RunId = _configuration.RunId };
-            PbBasilisk.ResetResponse response = Call("Reset", options => _client.Reset(request, options), ResetDeadline);
-            Expect(response.RunId == _configuration.RunId, "Reset", "run_id");
-            PacingOverrunCount = 0;
+            if (_hasStepped)
+            {
+                PbBasilisk.ResetRequest request = new PbBasilisk.ResetRequest { RunId = _configuration.RunId };
+                PbBasilisk.ResetResponse response = Call("Reset", options => _client.Reset(request, options), ResetDeadline);
+                Expect(response.RunId == _configuration.RunId, "Reset", "run_id");
+                PacingOverrunCount = 0;
+            }
+
+            state = CallStep(0, DeviceCommandSet.None(0, 0.0), appliedCommands: null);
+            return true;
         }
 
+        // Command k travels in Step(k + 1), whose command acts over [t_k, t_k+1).
         public bool TryStep(SimulationStepInput input, out SimulationState state)
         {
             state = default;
@@ -133,21 +151,37 @@ namespace Argus.Simulation.Host
                 return false;
             }
 
-            long simulationTimeNanoseconds = checked(input.Sequence * _fixedStepNanoseconds);
-            if (!SimulationTime.AreSame(BasiliskTime.ToSeconds(simulationTimeNanoseconds), input.SimulationTimeSeconds))
+            long commandTimeNanoseconds = checked(input.Sequence * _fixedStepNanoseconds);
+            if (!SimulationTime.AreSame(BasiliskTime.ToSeconds(commandTimeNanoseconds), input.SimulationTimeSeconds))
             {
                 throw new InvalidOperationException(
-                    $"Step {input.Sequence} at {input.SimulationTimeSeconds:R} s is off the {_fixedStepNanoseconds} ns grid.");
+                    $"Command {input.Sequence} at {input.SimulationTimeSeconds:R} s is off the {_fixedStepNanoseconds} ns grid.");
             }
 
+            state = CallStep(checked(input.Sequence + 1), input.Commands, input.Commands);
+            return true;
+        }
+
+        private SimulationState CallStep(long sequence, DeviceCommandSet command, DeviceCommandSet? appliedCommands)
+        {
+            _hasStepped = true;
             PbBasilisk.StepRequest request = new PbBasilisk.StepRequest
             {
                 RunId = _configuration.RunId,
-                Sequence = (ulong)input.Sequence,
-                SimTimeNs = (ulong)simulationTimeNanoseconds,
-                // TODO(G1): the service rejects non-zero commands until Basilisk actuators exist.
-                Command = BasiliskProtoMapper.ToProto(input.Commands)
+                Sequence = (ulong)sequence,
+                SimTimeNs = (ulong)checked(sequence * _fixedStepNanoseconds),
+                // TODO(G1): the gateway rejects a command naming any device until actuator kinds
+                // exist (CON-2), so only the empty set reaches the service before BSK-8 applies them.
+                Commands = BasiliskProtoMapper.ToProto(command)
             };
+            // Step(n) carries command n-1 and names its step, so the service rejects a command sent
+            // in the wrong request; Step(0) follows no command and names none.
+            if (appliedCommands.HasValue)
+            {
+                request.CommandSequence = checked((ulong)appliedCommands.Value.Sequence);
+                request.CommandTimeNs = CommandTimeNanoseconds(appliedCommands.Value.Sequence, _fixedStepNanoseconds);
+            }
+
             PbBasilisk.StepResponse response = Call("Step", options => _client.Step(request, options), StepDeadline());
             Expect(response.RunId == _configuration.RunId, "Step", "run_id");
             Expect(response.Sequence == request.Sequence, "Step", "sequence");
@@ -156,26 +190,32 @@ namespace Argus.Simulation.Host
             BasiliskStepState step = BasiliskProtoMapper.ToStepState(response);
             EnvironmentState environment = BasiliskStateMapper.MapEnvironment(step);
             SpacecraftState spacecraft = BasiliskStateMapper.MapSpacecraft(
-                input.Sequence,
+                sequence,
                 _configuration.EpochUtc,
                 step,
                 environment);
-            SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Sensors);
-            state = new SimulationState(
+            SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Devices);
+            SimulationState state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
                 spacecraft,
-                input.Commands,
+                appliedCommands,
                 environment: environment,
                 sensorMeasurements: measurements);
             PacingOverrunCount = response.PacingOverrunCount;
             if (!state.IsValid)
             {
-                throw new InvalidOperationException($"Basilisk step {input.Sequence} mapped to an invalid state.");
+                throw new InvalidOperationException($"Basilisk step {sequence} mapped to an invalid state.");
             }
 
-            return true;
+            return state;
         }
+
+        // t_k in exact nanoseconds. TryStep has checked that the command's time is on this grid;
+        // converting its seconds back to nanoseconds instead fails once k x step picks up rounding
+        // (8192.300000000001 s at k = 81923 with a 0.1 s step).
+        internal static ulong CommandTimeNanoseconds(long commandSequence, long fixedStepNanoseconds) =>
+            checked((ulong)(commandSequence * fixedStepNanoseconds));
 
         public void Dispose()
         {
@@ -199,6 +239,12 @@ namespace Argus.Simulation.Host
             {
                 return call(new CallOptions(deadline: DateTime.UtcNow + deadline, cancellationToken: _cancellation));
             }
+            catch (RpcException exception) when (_cancellation.IsCancellationRequested)
+            {
+                // Cancellation, not a backend failure: the gateway ends the run Stopped and lets it
+                // through, and the host exits as cancelled.
+                throw new OperationCanceledException($"Basilisk {rpc} was cancelled.", exception, _cancellation);
+            }
             catch (RpcException exception)
             {
                 throw new InvalidOperationException(
@@ -207,22 +253,29 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<SensorConfiguration> sensors)
+        // The service echoes every requested sensor in request order. The echo must be exactly the
+        // configuration's backend-modelled sensors, in order; checking it against the configuration
+        // rather than the request also catches a mapper that drops one (CORE-18).
+        internal static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<DeviceConfiguration> sensors)
         {
-            if (configuredIds.Count != sensors.Count)
+            int next = 0;
+            foreach (DeviceConfiguration sensor in sensors)
             {
-                return false;
-            }
+                if (!sensor.IsBackendModelled)
+                {
+                    continue;
+                }
 
-            for (int i = 0; i < sensors.Count; i++)
-            {
-                if (!string.Equals(configuredIds[i], sensors[i].Definition.SensorId, StringComparison.Ordinal))
+                if (next == configuredIds.Count ||
+                    !string.Equals(configuredIds[next], sensor.Definition.SensorId, StringComparison.Ordinal))
                 {
                     return false;
                 }
+
+                next++;
             }
 
-            return true;
+            return next == configuredIds.Count;
         }
 
         private static void Expect(bool condition, string rpc, string field)

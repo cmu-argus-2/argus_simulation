@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Argus.Simulation.Core;
+using Google.Protobuf.Collections;
 using Google.Protobuf.WellKnownTypes;
 using PbBasilisk = Argus.Contracts.Basilisk.V1;
 using PbSim = Argus.Contracts.Sim.V1;
@@ -41,20 +42,30 @@ namespace Argus.Simulation.Host
                 }
             };
 
-            foreach (SensorConfiguration sensor in configuration.Sensors)
+            // Only backend-modelled devices go to Basilisk; Argus computes the rest (D10, CORE-18).
+            foreach (DeviceConfiguration device in configuration.Devices)
             {
-                message.Sensors.Add(ToProto(sensor));
+                if (device.IsBackendModelled)
+                {
+                    message.Devices.Add(ToProto(device));
+                }
             }
 
             return message;
         }
 
-        public static PbSim.ActuatorCommand ToProto(ActuatorCommandSet commands) => new PbSim.ActuatorCommand
+        public static PbSim.DeviceCommandSet ToProto(DeviceCommandSet commands)
         {
-            ReactionWheelTorqueBodyNM = ToProto(commands.ReactionWheelTorqueBodyNewtonMeters),
-            MagnetorquerDipoleBodyAM2 = ToProto(commands.MagnetorquerDipoleBodyAmpereSquareMeters),
-            ThrusterForceBodyN = ToProto(commands.ThrusterForceBodyNewtons)
-        };
+            PbSim.DeviceCommandSet message = new PbSim.DeviceCommandSet();
+            foreach (DeviceCommand command in commands.Commands)
+            {
+                PbSim.DeviceCommand device = new PbSim.DeviceCommand { DeviceId = command.DeviceId };
+                AddAll(device.Values, command.Values);
+                message.Commands.Add(device);
+            }
+
+            return message;
+        }
 
         public static BasiliskStepState ToStepState(PbBasilisk.StepResponse response)
         {
@@ -71,10 +82,14 @@ namespace Argus.Simulation.Host
                 new Mrp(sigma.X, sigma.Y, sigma.Z),
                 FromProto(spacecraft.OmegaBnBodyRadPerS, "spacecraft.omega_bn_body_rad_per_s"));
 
-            List<BasiliskSensorSample> samples = new List<BasiliskSensorSample>(response.SensorSamples.Count);
-            for (int i = 0; i < response.SensorSamples.Count; i++)
+            List<BasiliskSensorSample> samples = new List<BasiliskSensorSample>(response.DeviceSamples.Count);
+            for (int i = 0; i < response.DeviceSamples.Count; i++)
             {
-                samples.Add(FromProto(response.SensorSamples[i], $"sensor_samples[{i}]"));
+                PbBasilisk.BasiliskDeviceSample sample = response.DeviceSamples[i];
+                samples.Add(new BasiliskSensorSample(
+                    sample.DeviceId,
+                    checked((long)sample.SampleTimeNs),
+                    FromProto(sample.Output, $"device_samples[{i}].output")));
             }
 
             return new BasiliskStepState(
@@ -86,80 +101,43 @@ namespace Argus.Simulation.Host
                 samples);
         }
 
-        private static PbSim.SensorConfiguration ToProto(SensorConfiguration sensor)
+        private static PbSim.DeviceConfiguration ToProto(DeviceConfiguration device)
         {
-            SensorDefinition definition = sensor.Definition;
-            PbSim.SensorConfiguration message = new PbSim.SensorConfiguration
+            SensorDefinition definition = device.Definition;
+            PbSim.DeviceConfiguration message = new PbSim.DeviceConfiguration
             {
-                Definition = new PbSim.SensorDefinition
+                DeviceId = definition.SensorId,
+                Kind = device.Kind,
+                SamplePeriodNs = checked((ulong)BasiliskTime.ToNanoseconds(definition.SamplePeriodSeconds)),
+                ControllerVisible = definition.IsControllerVisible,
+                Mount = new PbSim.DeviceMount
                 {
-                    SensorId = definition.SensorId,
-                    SamplePeriodNs = checked((ulong)BasiliskTime.ToNanoseconds(definition.SamplePeriodSeconds)),
-                    Mount = new PbSim.SensorMount
-                    {
-                        PositionBodyM = ToProto(definition.Mount.PositionBodyMeters),
-                        SensorToBody = ToProto(definition.Mount.SensorToBody)
-                    }
+                    PositionBodyM = ToProto(definition.Mount.PositionBodyMeters),
+                    DeviceToBody = ToProto(definition.Mount.SensorToBody)
                 }
             };
-
-            switch (sensor.Kind)
-            {
-                case SensorKind.Imu:
-                    message.Imu = new PbSim.ImuProfile
-                    {
-                        Gyroscope = ToProto(sensor.ImuProfile.Gyroscope),
-                        Accelerometer = ToProto(sensor.ImuProfile.Accelerometer)
-                    };
-                    break;
-                case SensorKind.Magnetometer:
-                    MagnetometerProfile magnetometer = sensor.MagnetometerProfile;
-                    message.Magnetometer = new PbSim.MagnetometerProfile
-                    {
-                        NoiseStdTesla = magnetometer.NoiseStdTesla,
-                        ConstantBiasSensorTesla = ToProto(magnetometer.ConstantBiasSensorTesla),
-                        ScaleFactor = magnetometer.ScaleFactor,
-                        RangeTesla = magnetometer.RangeTesla
-                    };
-                    break;
-                case SensorKind.LightSensor:
-                    LightSensorProfile light = sensor.LightSensorProfile;
-                    message.LightSensor = new PbSim.LightSensorProfile
-                    {
-                        FieldOfViewHalfAngleRad = light.FieldOfViewHalfAngleRadians,
-                        ScaleFactor = light.ScaleFactor,
-                        NoiseStdWPerM2 = light.NoiseStdWattsPerSquareMeter,
-                        BiasWPerM2 = light.BiasWattsPerSquareMeter,
-                        SaturationWPerM2 = light.SaturationWattsPerSquareMeter
-                    };
-                    break;
-                default:
-                    throw new ArgumentException($"Unsupported sensor kind {sensor.Kind}.", nameof(sensor));
-            }
-
+            AddAll(message.Parameters, device.Parameters);
+            AddAll(message.InitialState, device.InitialState);
             return message;
         }
 
-        private static PbSim.GyroscopeProfile ToProto(GyroscopeProfile profile) => new PbSim.GyroscopeProfile
+        private static void AddAll(MapField<string, PbSim.DeviceValue> map, DeviceValues values)
         {
-            NoiseDensityRadPerSPerSqrtHz = profile.NoiseDensityRadiansPerSecondPerRootHertz,
-            BiasRandomWalkRadPerSPerSqrtS = profile.BiasRandomWalkRadiansPerSecondPerRootSecond,
-            BiasRandomWalkBoundRadPerS = profile.BiasRandomWalkBoundRadiansPerSecond,
-            ConstantBiasSensorRadPerS = ToProto(profile.ConstantBiasSensorRadiansPerSecond),
-            ScaleFactorPerAxis = ToProto(profile.ScaleFactorPerAxis),
-            RangeRadPerS = profile.RangeRadiansPerSecond,
-            ResolutionRadPerS = profile.ResolutionRadiansPerSecond
-        };
+            foreach (KeyValuePair<string, DeviceValue> entry in values)
+            {
+                map.Add(entry.Key, ToProto(entry.Value));
+            }
+        }
 
-        private static PbSim.AccelerometerProfile ToProto(AccelerometerProfile profile) => new PbSim.AccelerometerProfile
+        private static PbSim.DeviceValue ToProto(DeviceValue value) => value.Type switch
         {
-            NoiseDensityMPerS2PerSqrtHz = profile.NoiseDensityMetersPerSecondSquaredPerRootHertz,
-            BiasRandomWalkMPerS2PerSqrtS = profile.BiasRandomWalkMetersPerSecondSquaredPerRootSecond,
-            BiasRandomWalkBoundMPerS2 = profile.BiasRandomWalkBoundMetersPerSecondSquared,
-            ConstantBiasSensorMPerS2 = ToProto(profile.ConstantBiasSensorMetersPerSecondSquared),
-            ScaleFactorPerAxis = ToProto(profile.ScaleFactorPerAxis),
-            RangeMPerS2 = profile.RangeMetersPerSecondSquared,
-            ResolutionMPerS2 = profile.ResolutionMetersPerSecondSquared
+            DeviceValueType.Number => new PbSim.DeviceValue { Number = value.Number },
+            DeviceValueType.Vector3 => new PbSim.DeviceValue { Vector3 = ToProto(value.Vector3) },
+            DeviceValueType.Quaternion => new PbSim.DeviceValue { Quaternion = ToProto(value.Quaternion) },
+            DeviceValueType.Matrix3 => new PbSim.DeviceValue { Matrix3 = ToProto(value.Matrix3) },
+            DeviceValueType.Flag => new PbSim.DeviceValue { Flag = value.Flag },
+            DeviceValueType.Text => new PbSim.DeviceValue { Text = value.Text },
+            _ => throw new ArgumentException($"Device value type {value.Type} has no wire form.", nameof(value))
         };
 
         private static PbSim.Vector3 ToProto(Vector3d value) =>
@@ -191,30 +169,39 @@ namespace Argus.Simulation.Host
                 planet.OrientationComputed);
         }
 
-        // An unset measurement means the sensor ran without data; the mapper reports it Unavailable.
-        private static BasiliskSensorSample FromProto(PbBasilisk.BasiliskSensorSample sample, string path)
+        // An empty map means the sensor ran without data; the mapper reports it Unavailable. The
+        // kind checks the keys and types when it reads the map (BasiliskStateMapper).
+        private static DeviceValues FromProto(MapField<string, PbSim.DeviceValue> map, string path)
         {
-            object measurement;
-            switch (sample.MeasurementCase)
+            DeviceValues.Builder values = new DeviceValues.Builder();
+            foreach (KeyValuePair<string, PbSim.DeviceValue> entry in map)
             {
-                case PbBasilisk.BasiliskSensorSample.MeasurementOneofCase.Imu:
-                    measurement = new ImuMeasurement(
-                        FromProto(sample.Imu.AngularVelocitySensorRadPerS, path + ".imu.angular_velocity_sensor_rad_per_s"),
-                        FromProto(sample.Imu.SpecificForceSensorMPerS2, path + ".imu.specific_force_sensor_m_per_s2"));
-                    break;
-                case PbBasilisk.BasiliskSensorSample.MeasurementOneofCase.Magnetometer:
-                    measurement = new MagnetometerMeasurement(
-                        FromProto(sample.Magnetometer.MagneticFieldSensorTesla, path + ".magnetometer.magnetic_field_sensor_tesla"));
-                    break;
-                case PbBasilisk.BasiliskSensorSample.MeasurementOneofCase.LightSensor:
-                    measurement = new LightSensorMeasurement(sample.LightSensor.IrradianceWPerM2);
-                    break;
-                default:
-                    measurement = null;
-                    break;
+                values.Add(entry.Key, FromProto(entry.Value, $"{path}[\"{entry.Key}\"]"));
             }
 
-            return new BasiliskSensorSample(sample.SensorId, checked((long)sample.SampleTimeNs), measurement);
+            return values.Build();
+        }
+
+        private static DeviceValue FromProto(PbSim.DeviceValue value, string path)
+        {
+            switch (value?.ValueCase ?? PbSim.DeviceValue.ValueOneofCase.None)
+            {
+                case PbSim.DeviceValue.ValueOneofCase.Number:
+                    return DeviceValue.FromNumber(value.Number);
+                case PbSim.DeviceValue.ValueOneofCase.Vector3:
+                    return DeviceValue.FromVector3(FromProto(value.Vector3, path + ".vector3"));
+                case PbSim.DeviceValue.ValueOneofCase.Quaternion:
+                    PbSim.Quaternion quaternion = value.Quaternion;
+                    return DeviceValue.FromQuaternion(new Quaterniond(quaternion.X, quaternion.Y, quaternion.Z, quaternion.W));
+                case PbSim.DeviceValue.ValueOneofCase.Matrix3:
+                    return DeviceValue.FromMatrix3(FromProto(value.Matrix3, path + ".matrix3"));
+                case PbSim.DeviceValue.ValueOneofCase.Flag:
+                    return DeviceValue.FromFlag(value.Flag);
+                case PbSim.DeviceValue.ValueOneofCase.Text:
+                    return DeviceValue.FromText(value.Text);
+                default:
+                    throw Unset(path);
+            }
         }
 
         private static Vector3d FromProto(PbSim.Vector3 value, string path) =>

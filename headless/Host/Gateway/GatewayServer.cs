@@ -4,8 +4,9 @@ namespace Argus.Simulation.Host
     // TODO(D7, G1): the controller link for HIL flight computers (Argus.Hardware) and other
     // external controllers over argus/gateway/v1. Observations out (controller-visible sensor frames
     // only, never truth), commands in; command validation against actuator limits, authority,
-    // heartbeat and failsafe; every command also goes to the recorder's command log (D6). Add a
-    // GrpcServices="Server" item for this schema in the host csproj.
+    // heartbeat and failsafe. Pass every received command to SimulationGateway.Step, malformed ones
+    // included, so it reaches the command log (CommandLogged) and the recorder's commands.jsonl (D6).
+    // Add a GrpcServices="Server" item for this schema in the host csproj.
     internal sealed class GatewayServer
     {
     }

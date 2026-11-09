@@ -216,7 +216,7 @@ namespace Argus.Simulation.Unity
             CompleteCapture(resumeSimulation, finalStatus);
         }
 
-        private static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
+        internal static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
         {
             float progress = 100f;
             bool foundEnabledTileset = false;

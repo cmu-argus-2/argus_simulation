@@ -45,7 +45,7 @@ namespace Argus.Simulation.Tests
             Assert.That(invalidFrame.Sequence, Is.EqualTo(2));
         }
 
-        private static SensorConfiguration ImuConfiguration()
+        private static DeviceConfiguration ImuConfiguration()
         {
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
@@ -59,7 +59,7 @@ namespace Argus.Simulation.Tests
                 0.1,
                 "basilisk",
                 SensorMount.Identity);
-            return SensorConfiguration.ForImu(definition, profile);
+            return ImuKind.Instance.Configure(definition, profile);
         }
 
         private static SensorMeasurementSet Measurements(ImuMeasurement measurement) =>
@@ -81,7 +81,7 @@ namespace Argus.Simulation.Tests
                 "run-1",
                 "test-backend",
                 state,
-                ActuatorCommandSet.None(sequence, time),
+                appliedCommands: null,
                 sensorMeasurements: measurements);
             return new SensorSampleContext("run-1", simulationState);
         }

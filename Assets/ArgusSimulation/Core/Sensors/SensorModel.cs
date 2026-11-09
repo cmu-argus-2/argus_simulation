@@ -56,37 +56,45 @@ namespace Argus.Simulation.Core
             }
 
             double sampleTime = context.Spacecraft.SimulationTimeSeconds;
-            if (sampleTime + TimeToleranceSeconds < _nextSampleTimeSeconds)
+            if (sampleTime + TimeToleranceSeconds >= _nextSampleTimeSeconds)
             {
-                frame = null;
-                return false;
+                SensorSlot slot = new SensorSlot(
+                    _nextSequence,
+                    context.Spacecraft.Sequence,
+                    sampleTime,
+                    context.Spacecraft.TimestampUtc);
+
+                _nextSequence++;
+                // Anchor every deadline to simulation time zero instead of accumulating rounding
+                // error. If a step crosses several deadlines, emit only for the supplied state and
+                // advance to the next future slot; intermediate states are not available to measure.
+                do
+                {
+                    _nextSampleIndex++;
+                    _nextSampleTimeSeconds = _nextSampleIndex * Definition.SamplePeriodSeconds;
+                }
+                while (_nextSampleTimeSeconds <= sampleTime + TimeToleranceSeconds);
+
+                if (!TryDefer(context, slot))
+                {
+                    SensorFrameStatus status = Measure(context, out TPayload payload);
+                    frame = CreateFrame(slot, status, payload);
+                    return true;
+                }
             }
 
-            SensorFrameStatus status = Measure(context, out TPayload payload);
-            SensorFrame<TPayload> typedFrame = new SensorFrame<TPayload>(
-                _runId,
-                Definition.SensorId,
-                Definition.FrameId,
-                _nextSequence,
-                sampleTime,
-                context.Spacecraft.TimestampUtc,
-                status,
-                Definition.Source,
-                payload);
-
-            _nextSequence++;
-            // Anchor every deadline to simulation time zero instead of accumulating rounding
-            // error. If a step crosses several deadlines, emit only for the supplied state and
-            // advance to the next future slot; intermediate states are not available to measure.
-            do
+            if (TryCompleteDeferred(
+                    context,
+                    out SensorSlot completed,
+                    out SensorFrameStatus completedStatus,
+                    out TPayload completedPayload))
             {
-                _nextSampleIndex++;
-                _nextSampleTimeSeconds = _nextSampleIndex * Definition.SamplePeriodSeconds;
+                frame = CreateFrame(completed, completedStatus, completedPayload);
+                return true;
             }
-            while (_nextSampleTimeSeconds <= sampleTime + TimeToleranceSeconds);
 
-            frame = typedFrame;
-            return true;
+            frame = null;
+            return false;
         }
 
         protected virtual void OnReset(SensorResetContext context)
@@ -97,5 +105,56 @@ namespace Argus.Simulation.Core
         protected abstract SensorFrameStatus Measure(
             SensorSampleContext context,
             out TPayload payload);
+
+        // A model that cannot measure within TrySample (a camera waiting for a render) returns true
+        // to start the slot now and publish it later through TryCompleteDeferred. The frame keeps
+        // the slot's sequence, state and time, not those of the step it is published in (G3).
+        // A model that defers must publish its slots in sequence order and defer every slot, so
+        // sequences stay increasing in output order.
+        protected virtual bool TryDefer(SensorSampleContext context, SensorSlot slot) => false;
+
+        // Called on every TrySample that did not measure a slot directly; returns at most one
+        // finished slot.
+        protected virtual bool TryCompleteDeferred(
+            SensorSampleContext context,
+            out SensorSlot slot,
+            out SensorFrameStatus status,
+            out TPayload payload)
+        {
+            slot = default;
+            status = default;
+            payload = default;
+            return false;
+        }
+
+        private SensorFrame<TPayload> CreateFrame(SensorSlot slot, SensorFrameStatus status, TPayload payload) =>
+            new SensorFrame<TPayload>(
+                _runId,
+                Definition.SensorId,
+                Definition.FrameId,
+                slot.Sequence,
+                slot.StateSequence,
+                slot.SimulationTimeSeconds,
+                slot.TimestampUtc,
+                status,
+                Definition.Source,
+                payload);
+    }
+
+    // One scheduled sample: the frame's sequence and the state it was taken at.
+    public readonly struct SensorSlot
+    {
+        public SensorSlot(long sequence, long stateSequence, double simulationTimeSeconds, DateTimeOffset timestampUtc)
+        {
+            Sequence = sequence;
+            StateSequence = stateSequence;
+            SimulationTimeSeconds = simulationTimeSeconds;
+            TimestampUtc = timestampUtc;
+        }
+
+        public long Sequence { get; }
+        public long StateSequence { get; }
+        public double SimulationTimeSeconds { get; }
+        public DateTimeOffset TimestampUtc { get; }
     }
 }

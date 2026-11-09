@@ -46,6 +46,9 @@ namespace Argus.Simulation.Core
         public SensorMeasurementSet Measurements =>
             _hasState ? _state.SensorMeasurements : SensorMeasurementSet.Empty;
 
+        // The state's SPICE environment; null in analytic runs (D9) and for a state-only context.
+        public EnvironmentState? Environment => _hasState ? _state.Environment : null;
+
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(RunId) &&
             Spacecraft.IsValid &&

@@ -41,7 +41,8 @@ namespace Argus.Simulation.Core
         // senRotMax, symmetric on every axis.
         public double RangeRadiansPerSecond { get; }
 
-        // Second argument of setLSBs; 0 means no quantisation.
+        // Second argument of setLSBs; 0 means no quantisation. Basilisk truncates toward zero, so a
+        // rate within one LSB of 0 reads 0 (Argus.Basilisk/README.md §9).
         public double ResolutionRadiansPerSecond { get; }
 
         public bool IsValid =>

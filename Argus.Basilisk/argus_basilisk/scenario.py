@@ -1,6 +1,7 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order step 1 (README §12): spacecraft, SPICE and eclipse. Sensors (§9), pacing (§5) and
+Build order steps 1 to 4 (README §12): spacecraft, SPICE, eclipse, and the P0 sensors: the IMU,
+the magnetometer with MagneticFieldWMM, and the light sensors with albedo. Pacing (§5) and
 actuators (G1) are rejected by validation before a Scenario is built.
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
@@ -13,13 +14,14 @@ import math
 import numpy as np
 
 from Basilisk import __version__ as BASILISK_VERSION
-from Basilisk.architecture import astroConstants
+from Basilisk.architecture import astroConstants, messaging
 from Basilisk.architecture.bskLogging import BasiliskError
-from Basilisk.simulation import eclipse, gravityEffector, spacecraft, spiceInterface
+from Basilisk.simulation import albedo, eclipse, gravityEffector, magneticFieldWMM, spacecraft, spiceInterface
 from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
 from .contracts import service_pb, types_pb
+from .devices import build_sensors, light_sensor, magnetometer, of_kind
 from .kernels import KernelSet
 
 __all__ = ["BASILISK_VERSION", "KernelLoadError", "Scenario", "StaleMessageError", "format_epoch"]
@@ -38,14 +40,25 @@ SUN_INDEX = 1
 
 PROCESS_NAME = "dynamics"
 TASK_NAME = "dynamics"
+# §6: the dynamics task runs before every sensor task at the same t_n. One sensor task per
+# distinct sample period, named sensors_<ns>.
+DYNAMICS_TASK_PRIORITY = 200
+SENSOR_TASK_PRIORITY = 100
 # §6 tick order within the task: higher priority runs first.
 SPICE_PRIORITY = 300
 SPACECRAFT_PRIORITY = 200
 ECLIPSE_PRIORITY = 100
+MAGNETIC_FIELD_PRIORITY = 90
+ALBEDO_PRIORITY = 80
+
+# The kernel-set support files MagneticFieldWMM and albedo read (§8, §9).
+WMM_FILE = "WMM2025.COF"
+ALBEDO_FILE = "Earth_ALB_2018_CERES_All_1x1.csv"
 
 
 class KernelLoadError(Exception):
-    """SPICE rejected a verified kernel during InitializeSimulation (FAILED_PRECONDITION)."""
+    """A verified kernel set cannot serve the run (FAILED_PRECONDITION): SPICE rejected a kernel
+    during InitializeSimulation, or a support file the run needs is not in the set."""
 
 
 class StaleMessageError(Exception):
@@ -73,7 +86,7 @@ class Scenario:
         self.fixed_step_ns = configuration.fixed_step_ns
         self.sim = SimulationBaseClass.SimBaseClass()
         process = self.sim.CreateNewProcess(PROCESS_NAME)
-        process.addTask(self.sim.CreateNewTask(TASK_NAME, self.fixed_step_ns))
+        process.addTask(self.sim.CreateNewTask(TASK_NAME, self.fixed_step_ns), DYNAMICS_TASK_PRIORITY)
 
         # SPICE (§8). auto_configure_kernels=False stops bsk 2.11.1 from fetching its default
         # kernels (de430 and others) through pooch when the module is constructed.
@@ -109,6 +122,61 @@ class Scenario:
         self.eclipse.addSpacecraftToModel(self.spacecraft.scStateOutMsg)
         self.sim.AddModelToTask(TASK_NAME, self.eclipse, ECLIPSE_PRIORITY)
 
+        # Magnetic field (§9), built only for a magnetometer: WMM2025 from the kernel set's
+        # verified support file, with the run epoch and the SPICE Earth. Nothing is downloaded.
+        self.magnetic_field = None
+        magnetic_field_msg = None
+        if of_kind(configuration.devices, magnetometer.KIND):
+            wmm_path = kernel_set.support_files.get(WMM_FILE)
+            if wmm_path is None:
+                raise KernelLoadError(
+                    f"kernel set {kernel_set.kernel_set_id!r} has no {WMM_FILE}, which a magnetometer needs")
+            self.magnetic_field = magneticFieldWMM.MagneticFieldWMM()
+            self.magnetic_field.ModelTag = "magneticFieldWMM"
+            self.magnetic_field.configureWMMFile(str(wmm_path))
+            self._epoch_msg = _epoch_msg(configuration.epoch_utc)
+            self.magnetic_field.epochInMsg.subscribeTo(self._epoch_msg)
+            self.magnetic_field.planetPosInMsg.subscribeTo(self.spice.planetStateOutMsgs[EARTH_INDEX])
+            self.magnetic_field.addSpacecraftToModel(self.spacecraft.scStateOutMsg)
+            self.sim.AddModelToTask(TASK_NAME, self.magnetic_field, MAGNETIC_FIELD_PRIORITY)
+            magnetic_field_msg = self.magnetic_field.envOutMsgs[0]
+
+        # Albedo (§9), built only for light sensors: the CERES map from the kernel set's verified
+        # support file, one instrument per light sensor in configuration order, so albOutMsgs[i]
+        # belongs to the i-th light sensor. Nothing is downloaded.
+        self.albedo = None
+        albedo_msgs = {}
+        light_sensors = of_kind(configuration.devices, light_sensor.KIND)
+        if light_sensors:
+            albedo_path = kernel_set.support_files.get(ALBEDO_FILE)
+            if albedo_path is None:
+                raise KernelLoadError(
+                    f"kernel set {kernel_set.kernel_set_id!r} has no {ALBEDO_FILE}, which a light sensor needs")
+            self.albedo = albedo.Albedo()
+            self.albedo.ModelTag = "albedo"
+            self.albedo.spacecraftStateInMsg.subscribeTo(self.spacecraft.scStateOutMsg)
+            self.albedo.sunPositionInMsg.subscribeTo(self.spice.planetStateOutMsgs[SUN_INDEX])
+            self.albedo.addPlanetandAlbedoDataModel(
+                self.spice.planetStateOutMsgs[EARTH_INDEX], str(albedo_path.parent) + "/", albedo_path.name)
+            for device in light_sensors:
+                self.albedo.addInstrumentConfig(*light_sensor.instrument(device))
+            self.sim.AddModelToTask(TASK_NAME, self.albedo, ALBEDO_PRIORITY)
+            albedo_msgs = {
+                device.device_id: self.albedo.albOutMsgs[index] for index, device in enumerate(light_sensors)}
+
+        # Sensor devices (§9), built by their kinds, each on the task for its sample period, after
+        # dynamics.
+        self.sensors = build_sensors(
+            configuration, self.spacecraft.scStateOutMsg, magnetic_field_msg,
+            sun_msg=self.spice.planetStateOutMsgs[SUN_INDEX],
+            eclipse_msg=self.eclipse.eclipseOutMsgs[0],
+            albedo_msgs=albedo_msgs)
+        for period_ns in sorted({sensor.sample_period_ns for sensor in self.sensors}):
+            process.addTask(self.sim.CreateNewTask(f"sensors_{period_ns}", period_ns), SENSOR_TASK_PRIORITY)
+        for sensor in self.sensors:
+            for module in sensor.modules:
+                self.sim.AddModelToTask(f"sensors_{sensor.sample_period_ns}", module)
+
         # Readers subscribed at build time (§6); only readers expose isWritten/timeWritten.
         self.readers = {
             "spacecraft.scStateOutMsg": self.spacecraft.scStateOutMsg.addSubscriber(),
@@ -118,6 +186,10 @@ class Scenario:
                 self.spice.planetStateOutMsgs[SUN_INDEX].addSubscriber(),
             "eclipse.eclipseOutMsgs[0]": self.eclipse.eclipseOutMsgs[0].addSubscriber(),
         }
+        if magnetic_field_msg is not None:
+            self.readers["magneticFieldWMM.envOutMsgs[0]"] = magnetic_field_msg.addSubscriber()
+        for index, message in enumerate(albedo_msgs.values()):
+            self.readers[f"albedo.albOutMsgs[{index}]"] = message.addSubscriber()
 
         try:
             self.sim.InitializeSimulation()
@@ -138,18 +210,18 @@ class Scenario:
             StaleMessageError: a returned message was stale or non-finite.
         """
         t_n = sequence * self.fixed_step_ns
+        # Step 5: for n > 0, write the request's commands (command n-1) into the actuator inputs
+        # before running, so they act over [t_n-1, t_n). It starts with actuators (G1, BSK-8);
+        # until then validation admits only the empty set.
+        # A sensor that has not run before t_n runs without data at t_n (imuSensor's first firing).
+        was_ready = [sensor.ready for sensor in self.sensors]
         self.sim.ConfigureStopTime(t_n)
         self.sim.ExecuteSimulation()
-        # Step 6 (write command n into the actuator inputs) starts with actuators (G1); every
-        # command is zero until then.
 
         if self.sim.TotalSim.CurrentNanos != t_n:
             raise StaleMessageError(f"CurrentSimNanos is {self.sim.TotalSim.CurrentNanos}, not t_n = {t_n}")
         for name, reader in self.readers.items():
-            if not reader.isWritten():
-                raise StaleMessageError(f"{name} was never written (t_n = {t_n} ns)")
-            if reader.timeWritten() != t_n:
-                raise StaleMessageError(f"{name} was written at {reader.timeWritten()} ns, not t_n = {t_n} ns")
+            _check_fresh(name, reader, t_n)
 
         state = self.readers["spacecraft.scStateOutMsg"]()
         earth = self.readers["spiceInterface.planetStateOutMsgs[earth]"]()
@@ -170,8 +242,37 @@ class Scenario:
             # field is the C name shadowFactor (1 sunlit, 0 umbra) and reads without a warning;
             # illuminationFactor is a Python alias that exists only on messaging.EclipseMsgPayload.
             spacecraft_shadow_factor=_finite(shadow.shadowFactor, "eclipseOutMsgs[0].shadowFactor"),
+            device_samples=[
+                self._sample(sensor, ready, t_n)
+                for sensor, ready in zip(self.sensors, was_ready)
+                if t_n % sensor.sample_period_ns == 0
+            ],
             pacing_overrun_count=0,
         )
+
+    def _sample(self, sensor, was_ready: bool, t_n: int) -> service_pb.BasiliskDeviceSample:
+        """The sample of a sensor due at t_n (§7); its output is empty when it ran without data."""
+        for name, reader in sensor.readers.items():
+            _check_fresh(name, reader, t_n)
+        sample = service_pb.BasiliskDeviceSample(device_id=sensor.device_id, sample_time_ns=t_n)
+        if was_ready:
+            for key, value in sensor.output().items():
+                _check_finite_fields(value, f"{sensor.device_id}.{key}")
+                sample.output[key].CopyFrom(value)
+        return sample
+
+
+def _epoch_msg(timestamp) -> messaging.EpochMsg:
+    """The run epoch as an EpochMsg for MagneticFieldWMM (§4: the same epoch as SPICE)."""
+    whole = datetime.fromtimestamp(timestamp.seconds, tz=timezone.utc)
+    payload = messaging.EpochMsgPayload()
+    payload.year = whole.year
+    payload.month = whole.month
+    payload.day = whole.day
+    payload.hours = whole.hour
+    payload.minutes = whole.minute
+    payload.seconds = whole.second + timestamp.nanos / 1e9
+    return messaging.EpochMsg().write(payload)
 
 
 def _gravity_body(name: str, planet_state_msg) -> gravityEffector.GravBodyData:
@@ -213,6 +314,23 @@ def _configure_hub(hub, configuration, mu: float) -> None:
     sigma = rbk.EP2MRP(np.array([quaternion.w, quaternion.x, quaternion.y, quaternion.z]))
     hub.sigma_BNInit = np.asarray(sigma).reshape(3, 1)
     hub.omega_BN_BInit = [[rate.x], [rate.y], [rate.z]]
+
+
+def _check_fresh(name: str, reader, t_n: int) -> None:
+    if not reader.isWritten():
+        raise StaleMessageError(f"{name} was never written (t_n = {t_n} ns)")
+    if reader.timeWritten() != t_n:
+        raise StaleMessageError(f"{name} was written at {reader.timeWritten()} ns, not t_n = {t_n} ns")
+
+
+def _check_finite_fields(message, name: str) -> None:
+    """Every float set in a message is finite; a DeviceValue's text or flag has none to check."""
+    for field, value in message.ListFields():
+        path = f"{name}.{field.name}"
+        if field.message_type is not None:
+            _check_finite_fields(value, path)
+        elif field.type in (field.TYPE_DOUBLE, field.TYPE_FLOAT):
+            _finite(value, path)
 
 
 def _finite(value: float, name: str) -> float:

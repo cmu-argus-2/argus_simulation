@@ -4,7 +4,7 @@ syntax = "proto3";
 package argus.sim.v1;
 
 import "google/protobuf/timestamp.proto";
-import "argus/sim/v1/sensors.proto";
+import "argus/sim/v1/devices.proto";
 import "argus/sim/v1/types.proto";
 
 option csharp_namespace = "Argus.Contracts.Sim.V1";
@@ -24,7 +24,13 @@ message RunConfiguration {
   string kernel_set_id = 6;
   // Required: Basilisk hub defaults (1 kg, identity inertia) are silently wrong.
   SpacecraftConfiguration spacecraft = 7;
-  repeated SensorConfiguration sensors = 8;
+  // The run's backend-modelled sensors, in run-configuration order. Sensors Argus computes, such as
+  // cameras, are left out (D10, CORE-18).
+  // repeated SensorConfiguration sensors, replaced by devices (D11, CORE-19).
+  reserved 8;
+  reserved "sensors";
+  // Backend-modelled devices only, in configuration order (CORE-18).
+  repeated DeviceConfiguration devices = 9;
 }
 
 // Osculating, Earth-centred, at epoch_utc, J2000 axes. Basilisk: elem2rv(mu_earth, oe), angles
