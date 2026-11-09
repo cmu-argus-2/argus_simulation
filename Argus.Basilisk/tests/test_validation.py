@@ -70,9 +70,11 @@ def set_quaternion(message, values):
 
 
 def set_parameter(device, key, value):
-    """A number, or a vector3 given as an (x, y, z) tuple."""
+    """A number, a text value given as a str, or a vector3 given as an (x, y, z) tuple."""
     if isinstance(value, tuple):
         set_vector(device.parameters[key].vector3, value)
+    elif isinstance(value, str):
+        device.parameters[key].text = value
     else:
         device.parameters[key].number = value
 
@@ -83,6 +85,34 @@ def device(device_id, kind, parameters, position=(0.0, 0.0, 0.0), device_to_body
     set_quaternion(result.mount.device_to_body, device_to_body)
     for key, value in parameters.items():
         set_parameter(result, key, value)
+    return result
+
+
+def actuator(device_id, kind, parameters):
+    """An actuator as BasiliskProtoMapper sends it: no period, controller_visible unset, an
+    unrotated mount (docs/device-model.md §1)."""
+    result = device(device_id, kind, parameters)
+    result.sample_period_ns = 0
+    return result
+
+
+def ideal_body_torque(device_id="torque.body"):
+    return actuator(device_id, "ideal_body_torque", {
+        "max_torque_body_n_m": (1e-3, 1e-3, 1e-3),
+        "limit_policy": "clamp",
+    })
+
+
+def momentum_wheel(device_id="wheel.x", spin_axis=(1.0, 0.0, 0.0), speed=0.0):
+    result = actuator(device_id, "momentum_wheel", {
+        "spin_axis_body": spin_axis,
+        "spin_inertia_kg_m2": 1e-5,
+        "max_torque_n_m": 1e-3,
+        "max_speed_rad_per_s": 600.0,
+        "limit_policy": "clamp",
+    })
+    if speed is not None:
+        result.initial_state["speed_rad_per_s"].number = speed
     return result
 
 
@@ -151,6 +181,7 @@ def p0_default_request():
         light_sensor("light.my", (0.0, -0.05, 0.0), neg(Z), X, neg(Y)),
         light_sensor("light.pz", (0.0, 0.0, 0.05675), X, Y, Z),
         light_sensor("light.mz", (0.0, 0.0, -0.05675), X, neg(Y), neg(Z)),
+        ideal_body_torque(),
     ])
     return service_pb.ConfigureRunRequest(configuration=configuration, real_time_factor=0.0)
 
@@ -169,9 +200,11 @@ def parameter(request, index, key):
     return request.configuration.devices[index].parameters[key]
 
 
-def test_registry_holds_every_p0_sensor_kind():
-    # The IMU (BSK-4), the magnetometer (BSK-5) and the light sensors (BSK-6) complete the P0 set.
-    assert sorted(KINDS) == ["imu", "light_sensor", "magnetometer"]
+def test_registry_holds_every_p0_sensor_kind_and_the_actuator_kinds():
+    # The IMU (BSK-4), the magnetometer (BSK-5) and the light sensors (BSK-6) complete the P0
+    # sensors; CON-2 adds the actuator kinds, which BSK-8 builds.
+    assert sorted(KINDS) == [
+        "ideal_body_torque", "imu", "light_sensor", "magnetic_torquer", "magnetometer", "momentum_wheel", "thruster"]
     assert all(kind.KIND == name for name, kind in KINDS.items())
 
 
@@ -255,9 +288,9 @@ INVALID_CASES = [
     ("non-unit mount", lambda r: set_quaternion(r.configuration.devices[2].mount.device_to_body, (0, 0, 0, 0)),
      "configuration.devices[2].mount.device_to_body"),
     ("unknown kind", lambda r: setattr(r.configuration.devices[1], "kind", "star_tracker"),
-     "configuration.devices[1].kind: must be a registered kind (imu, light_sensor, magnetometer), got 'star_tracker'"),
+     "configuration.devices[1].kind: must be a registered kind (ideal_body_torque, imu, light_sensor, magnetic_torquer, magnetometer, momentum_wheel, thruster), got 'star_tracker'"),
     ("empty kind", lambda r: setattr(r.configuration.devices[0], "kind", ""),
-     "configuration.devices[0].kind: must be a registered kind (imu, light_sensor, magnetometer), got ''"),
+     "configuration.devices[0].kind: must be a registered kind (ideal_body_torque, imu, light_sensor, magnetic_torquer, magnetometer, momentum_wheel, thruster), got ''"),
     ("initial state", lambda r: setattr(r.configuration.devices[0].initial_state["speed_rad_per_s"], "number", 1.0),
      "configuration.devices[0].initial_state[\"speed_rad_per_s\"]: unknown initial-state key for kind 'imu', got 1.0"),
     # Parameter maps (the kind's declarations).
@@ -275,6 +308,22 @@ INVALID_CASES = [
      'configuration.devices[4].parameters["bias_w_per_m2"]: must be finite, got nan'),
     ("infinite vector component", lambda r: setattr(parameter(r, 1, "constant_bias_sensor_tesla").vector3, "z", math.inf),
      'configuration.devices[1].parameters["constant_bias_sensor_tesla"]: must be finite, got (0.0, 0.0, inf)'),
+    # Actuators (CON-2): the torque device is devices[8]. No period, no controller_visible, an
+    # unrotated mount, positive limits, a known limit policy and unit axes.
+    ("actuator with a period", lambda r: setattr(r.configuration.devices[8], "sample_period_ns", 100_000_000),
+     "configuration.devices[8].sample_period_ns: must be 0 for an actuator"),
+    ("actuator controller_visible", lambda r: setattr(r.configuration.devices[8], "controller_visible", False),
+     "configuration.devices[8].controller_visible: must be unset for an actuator"),
+    ("rotated actuator mount", lambda r: set_quaternion(r.configuration.devices[8].mount.device_to_body, (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5))),
+     "configuration.devices[8].mount.device_to_body: must be the identity for an actuator"),
+    ("zero torque limit", lambda r: setattr(parameter(r, 8, "max_torque_body_n_m").vector3, "x", 0.0),
+     'configuration.devices[8].parameters["max_torque_body_n_m"]: each component must be finite and > 0'),
+    ("unknown limit policy", lambda r: setattr(parameter(r, 8, "limit_policy"), "text", "saturate"),
+     'configuration.devices[8].parameters["limit_policy"]: must be one of clamp, reject'),
+    ("non-unit wheel axis", lambda r: r.configuration.devices[8].CopyFrom(momentum_wheel(spin_axis=(2.0, 0.0, 0.0))),
+     'configuration.devices[8].parameters["spin_axis_body"]: must have unit length within 1e-06'),
+    ("wheel with no initial speed", lambda r: r.configuration.devices[8].CopyFrom(momentum_wheel(speed=None)),
+     'configuration.devices[8].initial_state["speed_rad_per_s"]: required field is not set'),
     # Kind range checks (Core *Profile.IsValid).
     ("zero gyro scale", lambda r: setattr(parameter(r, 0, "gyroscope.scale_factor_per_axis").vector3, "y", 0.0),
      'configuration.devices[0].parameters["gyroscope.scale_factor_per_axis"]: each component must be finite and > 0'),
@@ -476,19 +525,33 @@ def test_empty_step_command_is_valid():
     validate_step_command(zero_command())
 
 
+ACTUATORS = {"torque.body": KINDS["ideal_body_torque"]}
+
+
 def test_step_command_for_a_device_that_is_not_a_configured_actuator_is_invalid():
-    # P0 configures sensors only, and no actuator kind exists yet (CON-2), so no ID is valid.
     with pytest.raises(ValidationError) as error:
-        validate_step_command(torque_command("imu.main"))
+        validate_step_command(torque_command("imu.main"), actuators=ACTUATORS)
     assert error.value.code == "INVALID_ARGUMENT"
     assert error.value.details.startswith("commands.commands[0].device_id: is not an actuator this run configures")
 
 
-def test_step_command_for_a_configured_actuator_is_unimplemented():
+def test_idle_step_command_is_valid_and_any_other_is_unimplemented():
+    # No effector is built until BSK-8, so only the idle command, which applies nothing, runs.
+    validate_step_command(torque_command(x=0.0), actuators=ACTUATORS)
     with pytest.raises(ValidationError) as error:
-        validate_step_command(torque_command(), actuator_ids=frozenset({"torque.body"}))
+        validate_step_command(torque_command(), actuators=ACTUATORS)
     assert error.value.code == "UNIMPLEMENTED"
     assert error.value.details.startswith("commands.commands[0]: applying actuator commands is not built yet")
+
+
+def test_negative_thrust_is_invalid():
+    thruster = {"thruster.px": KINDS["thruster"]}
+    commands = commands_pb2.DeviceCommandSet()
+    commands.commands.add(device_id="thruster.px").values["thrust_n"].number = -0.01
+    with pytest.raises(ValidationError) as error:
+        validate_step_command(commands, actuators=thruster)
+    assert error.value.code == "INVALID_ARGUMENT"
+    assert error.value.details.startswith('commands.commands[0].values["thrust_n"]: must be finite and >= 0')
 
 
 def test_malformed_step_commands_are_invalid():
@@ -498,15 +561,19 @@ def test_malformed_step_commands_are_invalid():
     non_finite = torque_command(x=math.nan)
     unset = torque_command()
     unset.commands[0].values["torque_body_n_m"].ClearField("vector3")
-    actuators = frozenset({"torque.body"})
-    assert step_command_problems(unnamed, actuator_ids=actuators)[0].details == (
+    unknown = torque_command()
+    unknown.commands[0].values["dipole_a_m2"].number = 0.1
+    actuators = ACTUATORS
+    assert step_command_problems(unnamed, actuators=actuators)[0].details == (
         "commands.commands[0].device_id: required field is not set")
-    assert step_command_problems(repeated, actuator_ids=actuators)[0].details.startswith(
+    assert step_command_problems(repeated, actuators=actuators)[0].details.startswith(
         "commands.commands[1].device_id: repeats commands[0]")
-    assert step_command_problems(non_finite, actuator_ids=actuators)[0].details.startswith(
+    assert step_command_problems(non_finite, actuators=actuators)[0].details.startswith(
         'commands.commands[0].values["torque_body_n_m"]: must be finite')
-    assert step_command_problems(unset, actuator_ids=actuators)[0].details == (
-        'commands.commands[0].values["torque_body_n_m"]: required field is not set')
+    assert step_command_problems(unset, actuators=actuators)[0].details == (
+        'commands.commands[0].values["torque_body_n_m"]: must be a vector3, got \'no value\'')
+    assert step_command_problems(unknown, actuators=actuators)[0].details.startswith(
+        'commands.commands[0].values["dipole_a_m2"]: unknown command key for kind \'ideal_body_torque\'')
 
 
 def step(sequence, command_sequence=None, command_time_ns=None):
@@ -535,7 +602,7 @@ def test_step_command_timing_and_zero_step_zero():
     assert step_request_problems(step(0), 100_000_000) == []
     assert step_request_problems(step(3, 2, 200_000_000), 100_000_000) == []
 
-    actuators = frozenset({"torque.body"})
+    actuators = ACTUATORS
     first = step(0)
     first.commands.CopyFrom(torque_command())
     assert [problem.code for problem in step_request_problems(first, 100_000_000, actuators)] == ["INVALID_ARGUMENT"]

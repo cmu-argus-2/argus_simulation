@@ -15,7 +15,7 @@ from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
 from Basilisk.simulation import coarseSunSensor  # noqa: E402
 
-from argus_basilisk.devices import KINDS, build_sensors, of_kind  # noqa: E402
+from argus_basilisk.devices import KINDS, build_sensors, is_actuator, of_kind  # noqa: E402
 from argus_basilisk.devices.imu import Imu  # noqa: E402
 from argus_basilisk.devices.light_sensor import SOLAR_IRRADIANCE_W_PER_M2, LightSensor, instrument  # noqa: E402
 from argus_basilisk.devices.magnetometer import Magnetometer  # noqa: E402
@@ -46,7 +46,14 @@ def test_each_kind_declares_typed_parameters_and_outputs():
     types = {"number", "vector3", "quaternion", "matrix3", "flag", "text"}
     for name, kind in KINDS.items():
         assert kind.KIND == name
-        assert set(kind.PARAMETERS.values()) <= types and set(kind.OUTPUTS.values()) <= types
+        declared = [kind.PARAMETERS, getattr(kind, "STATE", {})]
+        # A sensor kind declares its outputs; an actuator kind its commands and idle values.
+        if is_actuator(kind):
+            declared.append(kind.COMMANDS)
+            assert set(kind.IDLE) == set(kind.COMMANDS)
+        else:
+            declared.append(kind.OUTPUTS)
+        assert all(set(keys.values()) <= types for keys in declared)
     assert len(KINDS["imu"].PARAMETERS) == 14
     assert all(key.split(".")[0] in ("gyroscope", "accelerometer") for key in KINDS["imu"].PARAMETERS)
 
