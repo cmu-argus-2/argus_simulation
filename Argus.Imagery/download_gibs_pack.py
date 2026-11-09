@@ -18,8 +18,10 @@ manifest.json is written with "complete": true only when every tile succeeded.
 
 import argparse
 import concurrent.futures
+import http.client
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -71,7 +73,8 @@ def iterate_tiles(max_level):
 
 
 def build_url(layer, date, image_format, bbox):
-    # Mirrors NasaGibsUrl.BuildBaseTemplate / BuildTemplate so the pixels are identical.
+    # Mirrors NasaGibsUrl.BuildBaseTemplate / BuildTemplate so the pixels are identical; keep
+    # them in step.
     parts = [
         "SERVICE=WMS", "REQUEST=GetMap", "VERSION=1.1.1",
         f"LAYERS={layer}", "STYLES=default",
@@ -101,15 +104,42 @@ def fetch(url, attempts=5):
                 if not response.headers.get("Content-Type", "").startswith("image/"):
                     raise ValueError(body[:200].decode("utf-8", "replace"))
                 return body
-        except (urllib.error.URLError, TimeoutError, ValueError, ConnectionError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ValueError,
+                ConnectionError):
             if attempt == attempts - 1:
                 raise
             time.sleep(2 ** attempt)
     raise AssertionError("unreachable")
 
 
+def pack_format(date, image_format):
+    return "jpeg" if date == STATIC_DATE else image_format
+
+
+def check_existing_manifest(out_root, layer, date, image_format, max_level):
+    """Return why this run would downgrade a complete pack, or None.
+
+    The run rewrites manifest.json, so a lower --max-level or another --format would make
+    Unity reject a pack whose tiles are all on disk.
+    """
+    manifest_path = out_root / layer / date / "manifest.json"
+    try:
+        existing = json.loads(manifest_path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not existing.get("complete"):
+        return None
+    if existing.get("max_level", -1) > max_level:
+        return (f"{manifest_path} is a complete level-{existing['max_level']} pack; "
+                f"rerun with --max-level {existing['max_level']} or use another --out")
+    if existing.get("format") != pack_format(date, image_format):
+        return (f"{manifest_path} is a complete {existing.get('format')} pack; "
+                f"rerun with --format {existing.get('format')} or use another --out")
+    return None
+
+
 def download_layer(out_root, layer, date, image_format, max_level, workers):
-    extension = "jpg" if date == STATIC_DATE else EXTENSIONS[image_format]
+    extension = EXTENSIONS[pack_format(date, image_format)]
     layer_dir = out_root / layer / date
     total = sum(tile_count(level) for level in range(max_level + 1))
     print(f"\n{layer} {date}: {total:,} tiles -> {layer_dir}")
@@ -157,7 +187,7 @@ def download_layer(out_root, layer, date, image_format, max_level, workers):
     manifest = {
         "layer": layer,
         "date": date,
-        "format": "jpeg" if extension == "jpg" else "png",
+        "format": pack_format(date, image_format),
         "extension": extension,
         "tile_size": TILE_SIZE,
         "root_tiles_x": 2,
@@ -176,6 +206,13 @@ def download_layer(out_root, layer, date, image_format, max_level, workers):
     return complete
 
 
+def positive_int(value):
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
+
+
 def main():
     project_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -187,15 +224,19 @@ def main():
              "jpeg is ~10x smaller but no-data areas turn black")
     parser.add_argument("--max-level", type=int, default=MAX_LEVEL, choices=range(MAX_LEVEL + 1))
     parser.add_argument("--out", type=Path, default=project_root / "ImageryPacks")
-    parser.add_argument("--workers", type=int, default=8, help="parallel requests to GIBS")
+    parser.add_argument("--workers", type=positive_int, default=8, help="parallel requests to GIBS")
     parser.add_argument("--skip-base", action="store_true", help="skip the Blue Marble base layer")
     parser.add_argument("--dry-run", action="store_true", help="print the size estimate and exit")
     args = parser.parse_args()
 
     try:
-        datetime.strptime(args.date, "%Y-%m-%d")
+        # Normalized, because Unity looks the pack up by its zero-padded date folder.
+        args.date = datetime.strptime(args.date, "%Y-%m-%d").strftime("%Y-%m-%d")
     except ValueError:
         parser.error("--date must use YYYY-MM-DD")
+    # Like NasaGibsUrl identifiers, since the layer also names the pack folder.
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", args.layer):
+        parser.error("--layer may contain only letters, numbers, underscores and hyphens")
 
     observation_gb = estimate_bytes(args.format, args.max_level) / 1e9
     base_gb = 0.0 if args.skip_base else estimate_bytes("base", args.max_level) / 1e9
@@ -208,11 +249,18 @@ def main():
     if args.dry_run:
         return 0
 
-    complete = download_layer(
-        args.out, args.layer, args.date, args.format, args.max_level, args.workers)
+    layers = [(args.layer, args.date, args.format)]
     if not args.skip_base:
+        layers.append((BASE_LAYER, STATIC_DATE, "jpeg"))
+    for layer, date, image_format in layers:
+        problem = check_existing_manifest(args.out, layer, date, image_format, args.max_level)
+        if problem:
+            parser.error(problem)
+
+    complete = True
+    for layer, date, image_format in layers:
         complete &= download_layer(
-            args.out, BASE_LAYER, STATIC_DATE, "jpeg", args.max_level, args.workers)
+            args.out, layer, date, image_format, args.max_level, args.workers)
     return 0 if complete else 1
 
 

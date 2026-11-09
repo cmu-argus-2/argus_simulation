@@ -2,8 +2,8 @@
 
 By default the simulator streams NASA GIBS imagery tile by tile while it runs. For tests and
 dataset generation you can instead download the full-resolution imagery once and have Unity
-read it from disk. Runs then give identical pixels every time, work without GIBS, and never
-hit a load timeout.
+read it from disk. The base and observation layers then give identical pixels every time,
+load without GIBS, and never hit a load timeout. Night lights still stream (see below).
 
 This is optional. Interactive use does not need it.
 
@@ -38,6 +38,9 @@ python3 Argus.Imagery/download_gibs_pack.py --date 2025-06-21  # default layer a
   Unity doesn't import it. Use `--out` to put it elsewhere, for example on an external drive.
 - **Interruptions:** if the download stops, rerun the same command and it skips finished
   tiles. `manifest.json` is marked complete only when every tile has succeeded.
+- **Reruns:** the script refuses to rerun into a complete pack with a lower `--max-level` or
+  another `--format`, since the new manifest would make Unity reject it. Use another `--out`
+  instead.
 - **Other options:** `--layer`, `--format`, `--max-level`, `--workers`, `--skip-base`.
 
 ## Use it in Unity
@@ -46,7 +49,9 @@ Pick one:
 
 - **In the Editor:** select **Cesium World Terrain + NASA GIBS** and turn on **Use Imagery
   Pack**. Set **Imagery Pack Directory** if the pack isn't in `ImageryPacks/`.
-- **From the command line:** add `-gt-pack <directory>`.
+- **From the command line:** add `-gt-pack <directory>`. Use this for a built player: there an
+  empty directory means `ImageryPacks/` next to the player's data folder (inside the `.app` on
+  macOS), not the project root.
 
 Unity uses the pack for the base layer and for the observation layer whose date matches the
 current setting. If that part of the pack is missing, incomplete, or built with a lower

@@ -77,6 +77,13 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
+        public void BuildPackTemplate_RejectsUriReservedCharacters()
+        {
+            Assert.Throws<ArgumentException>(() =>
+                NasaGibsUrl.BuildPackTemplate(Path.Combine(Path.GetTempPath(), "packs#1"), "png"));
+        }
+
+        [Test]
         public void BuildTemplate_RejectsUrlInjection()
         {
             Assert.Throws<ArgumentException>(() =>

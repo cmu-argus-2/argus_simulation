@@ -19,6 +19,8 @@ namespace Argus.Simulation.Core
                 out date);
         }
 
+        // Argus.Imagery/download_gibs_pack.py build_url repeats both WMS requests; keep them in
+        // step so pack tiles match streamed ones.
         public static string BuildBaseTemplate()
         {
             return "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi" +
@@ -58,6 +60,13 @@ namespace Argus.Simulation.Core
             if (extension != "png" && extension != "jpg")
             {
                 throw new ArgumentException("Imagery pack tiles must be png or jpg.", nameof(extension));
+            }
+
+            if (packDirectory.IndexOfAny(new[] { '#', '%', '?' }) >= 0)
+            {
+                throw new ArgumentException(
+                    "An imagery pack directory may not contain '#', '%' or '?'; move or rename the pack.",
+                    nameof(packDirectory));
             }
 
             string directory = Path.GetFullPath(packDirectory)

@@ -42,6 +42,8 @@ namespace Argus.Simulation.Unity
         [Serializable]
         private sealed class ImageryPackManifest
         {
+            public string layer;
+            public string date;
             public string extension;
             public int tile_size;
             public int root_tiles_x;
@@ -224,17 +226,19 @@ namespace Argus.Simulation.Unity
 
             try
             {
+                // Build the streaming templates first: BuildTemplate validates the layer, which
+                // also names the pack folder.
+                string baseTemplate = NasaGibsUrl.BuildBaseTemplate();
+                string observationTemplate = NasaGibsUrl.BuildTemplate(layer, date);
                 ConfigureOverlay(
                     _baseOverlay,
-                    ResolvePackTemplate(NasaGibsUrl.DefaultBaseLayer, StaticPackDate) ??
-                        NasaGibsUrl.BuildBaseTemplate(),
+                    ResolvePackTemplate(NasaGibsUrl.DefaultBaseLayer, StaticPackDate) ?? baseTemplate,
                     "0",
                     false,
                     90.0);
                 ConfigureOverlay(
                     _observationOverlay,
-                    ResolvePackTemplate(layer, observationDateUtc) ??
-                        NasaGibsUrl.BuildTemplate(layer, date),
+                    ResolvePackTemplate(layer, observationDateUtc) ?? observationTemplate,
                     "1",
                     true,
                     90.0);
@@ -266,7 +270,8 @@ namespace Argus.Simulation.Unity
         }
 
         // The night layer keeps streaming: its tiles follow the moving night-side rectangle,
-        // so they never line up with a pre-downloaded grid.
+        // so they never line up with a pre-downloaded grid. packLayer and packDate are already
+        // validated, so they cannot leave the pack root.
         private string ResolvePackTemplate(string packLayer, string packDate)
         {
             if (!useImageryPack)
@@ -299,6 +304,10 @@ namespace Argus.Simulation.Unity
                 if (manifest == null)
                 {
                     problem = "has an unreadable manifest.json";
+                }
+                else if (manifest.layer != packLayer || manifest.date != packDate)
+                {
+                    problem = $"holds a manifest for {manifest.layer} {manifest.date}, not {packLayer} {packDate}";
                 }
                 else if (!manifest.complete)
                 {

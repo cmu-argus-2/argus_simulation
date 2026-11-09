@@ -53,7 +53,6 @@ kernels/
 
 # Offline NASA GIBS imagery (tens of GB; made by Argus.Imagery/download_gibs_pack.py).
 ImageryPacks/
-__pycache__/
 
 # Local editor settings.
 .vscode/

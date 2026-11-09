@@ -51,6 +51,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
+Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (download_gibs_pack.py)
 ```
 
 ## Class map

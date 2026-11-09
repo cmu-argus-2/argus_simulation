@@ -19,9 +19,10 @@ work on:
 | Headless core and host | `headless/` | .NET SDK 8 or newer | The Unity-independent core, its EditMode tests, and the simulation host |
 | Basilisk service | `Argus.Basilisk/` | [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.4 or later; it installs Python 3.12 itself | The Python gRPC service that runs Basilisk and SPICE |
 
-`Argus.Basilisk/` holds the repository's only Python code, so it has the only Python
-environment: `Argus.Basilisk/.venv`, built from the committed lock file. The .NET and Unity
-parts don't use Python.
+`Argus.Basilisk/` has the repository's only Python environment: `Argus.Basilisk/.venv`, built
+from the committed lock file. The optional imagery-pack script in `Argus.Imagery/` uses only
+the Python 3 standard library and needs no environment. The .NET and Unity parts don't use
+Python.
 
 ## Set up and run the Basilisk service
 
