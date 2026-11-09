@@ -797,7 +797,7 @@ namespace Argus.Simulation.Core
                 WriteAnalyticOrbit(json, _begin.AnalyticOrbit);
                 json.EndObject().Key("devices").BeginArray();
                 // Every sensor that publishes frames, then the configured devices that publish none
-                // (actuators, from CON-2), so the manifest lists the whole spacecraft.
+                // (actuators), so the manifest lists the whole spacecraft.
                 foreach (SensorDefinition sensor in _begin.Sensors)
                 {
                     WriteDevice(json, sensor, run.Devices);

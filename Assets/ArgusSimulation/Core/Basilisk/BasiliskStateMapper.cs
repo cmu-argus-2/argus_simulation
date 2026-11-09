@@ -208,7 +208,7 @@ namespace Argus.Simulation.Core
             return new SensorMeasurementSet(measurements, unavailableSensorIds);
         }
 
-        // A sensor the backend models and samples. A backend-modelled actuator (CON-2) reports no
+        // A sensor the backend models and samples. A backend-modelled actuator (IActuatorKind) reports no
         // samples, so it is neither looked up nor expected on any step.
         private static bool IsBackendSensor(DeviceConfiguration device) =>
             device.IsBackendModelled && device.KindDefinition is IBackendSensorKind;

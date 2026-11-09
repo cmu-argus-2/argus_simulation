@@ -195,19 +195,23 @@ namespace Argus.Simulation.Host
 
         // One device: the common fields, its registered kind and that kind's parameters
         // (docs/device-model.md §1). The kind declares each parameter's type, so values are read as
-        // that type and never guessed from their JSON shape.
+        // that type and never guessed from their JSON shape. Only sensors have samplePeriodSeconds
+        // and controllerVisible: an actuator takes a command every step and publishes no frames.
         private static DeviceConfiguration Device(JsonElement element, string path)
         {
-            Fields(
-                element,
-                path,
-                new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount", "parameters" },
-                Array.Empty<string>(),
-                new[] { "initialState" });
-
+            Check(element.ValueKind == JsonValueKind.Object, path, "must be an object");
             string kindName = Text(element, "kind", path);
             IDeviceKind kind = DeviceKinds.Find(kindName);
             Check(kind != null, Join(path, "kind"), $"'{kindName}' is not a registered device kind ({DeviceKinds.Names})");
+            bool isActuator = kind.Role == DeviceRole.Actuator;
+            Fields(
+                element,
+                path,
+                isActuator
+                    ? new[] { "deviceId", "kind", "modelName", "frameId", "source", "mount", "parameters" }
+                    : new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount", "parameters" },
+                Array.Empty<string>(),
+                new[] { "initialState" });
 
             JsonElement mount = Field(element, "mount", path);
             string mountPath = Join(path, "mount");
@@ -216,16 +220,25 @@ namespace Argus.Simulation.Host
                 Vector(mount, "positionBodyMeters", mountPath),
                 Quaternion(mount, "deviceToBody", mountPath));
             Check(sensorMount.IsValid, mountPath, "needs a finite position and a unit quaternion");
+            Check(
+                !isActuator || ActuatorGeometry.IsIdentityRotation(sensorMount.SensorToBody),
+                Join(mountPath, "deviceToBody"),
+                "must be the identity for an actuator, whose axis is a body-frame parameter");
 
             SensorDefinition definition = new SensorDefinition(
                 Text(element, "deviceId", path),
                 Text(element, "modelName", path),
                 Text(element, "frameId", path),
-                Number(element, "samplePeriodSeconds", path),
+                isActuator ? 0.0 : Number(element, "samplePeriodSeconds", path),
                 Text(element, "source", path),
                 sensorMount,
-                Boolean(element, "controllerVisible", path));
-            Check(definition.IsValid, path, "needs non-blank deviceId, modelName, frameId and source, and samplePeriodSeconds > 0");
+                !isActuator && Boolean(element, "controllerVisible", path));
+            Check(
+                isActuator ? definition.HasValidCommonFields : definition.IsValid,
+                path,
+                isActuator
+                    ? "needs non-blank deviceId, modelName, frameId and source"
+                    : "needs non-blank deviceId, modelName, frameId and source, and samplePeriodSeconds > 0");
 
             DeviceValues parameters = ReadValues(
                 Field(element, "parameters", path), Join(path, "parameters"), kind.ParameterKeys, $"{kind.Name} parameter");

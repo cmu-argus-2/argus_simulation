@@ -14,23 +14,30 @@ namespace Argus.Simulation.Tests
         [Test]
         public void EveryKindDeclaresWhoModelsItWhetherAControllerMaySeeItAndWhetherItIsACamera()
         {
-            (string Name, bool IsBackendModelled, bool MayBeControllerVisible, bool IsCamera)[] kinds =
+            const DeviceRole sensor = DeviceRole.Sensor;
+            const DeviceRole actuator = DeviceRole.Actuator;
+            (string Name, DeviceRole Role, bool IsBackendModelled, bool MayBeControllerVisible, bool IsCamera)[] kinds =
             {
-                ("imu", true, true, false),
-                ("magnetometer", true, true, false),
-                ("light_sensor", true, true, false),
-                ("camera", false, false, true),
-                ("nadir_ground_truth_camera", false, false, true)
+                ("imu", sensor, true, true, false),
+                ("magnetometer", sensor, true, true, false),
+                ("light_sensor", sensor, true, true, false),
+                ("camera", sensor, false, false, true),
+                ("nadir_ground_truth_camera", sensor, false, false, true),
+                ("ideal_body_torque", actuator, true, false, false),
+                ("momentum_wheel", actuator, true, false, false),
+                ("magnetic_torquer", actuator, true, false, false),
+                ("thruster", actuator, true, false, false)
             };
 
             Assert.That(DeviceKinds.All.Select(kind => kind.Name), Is.EquivalentTo(kinds.Select(row => row.Name)));
-            foreach ((string name, bool isBackendModelled, bool mayBeControllerVisible, bool isCamera) in kinds)
+            foreach ((string name, DeviceRole role, bool isBackendModelled, bool mayBeControllerVisible, bool isCamera) in kinds)
             {
                 IDeviceKind kind = DeviceKinds.Find(name);
-                Assert.That(kind.Role, Is.EqualTo(DeviceRole.Sensor), name);
+                Assert.That(kind.Role, Is.EqualTo(role), name);
                 Assert.That(kind.IsBackendModelled, Is.EqualTo(isBackendModelled), name);
                 Assert.That(kind.MayBeControllerVisible, Is.EqualTo(mayBeControllerVisible), name);
-                Assert.That(kind is IBackendSensorKind, Is.EqualTo(isBackendModelled), name);
+                Assert.That(kind is IBackendSensorKind, Is.EqualTo(isBackendModelled && role == sensor), name);
+                Assert.That(kind is IActuatorKind, Is.EqualTo(role == actuator), name);
                 Assert.That(kind is ICameraKind, Is.EqualTo(isCamera), name);
             }
 
@@ -213,7 +220,18 @@ namespace Argus.Simulation.Tests
                 Magnetometer(),
                 LightSensorKind.Instance.Configure(Definition("light.px"), new LightSensorProfile(1.0, 1.0, 0.0, 0.0, 1500.0)),
                 TestCameras.Configuration(Definition("cam.px")),
-                TestCameras.NadirConfiguration(Definition("cam.nadir_gt"))
+                TestCameras.NadirConfiguration(Definition("cam.nadir_gt")),
+                IdealBodyTorque("torque.body"),
+                MomentumWheelKind.Instance.Configure(
+                    ActuatorDefinition("wheel.x"),
+                    new MomentumWheelProfile(new Vector3d(1.0, 0.0, 0.0), 1e-5, 1e-3, 600.0, ActuatorLimitPolicy.Clamp),
+                    0.0),
+                MagneticTorquerKind.Instance.Configure(
+                    ActuatorDefinition("mtq.x"),
+                    new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.2, ActuatorLimitPolicy.Reject)),
+                ThrusterKind.Instance.Configure(
+                    ActuatorDefinition("thruster.px"),
+                    new ThrusterProfile(new Vector3d(-1.0, 0.0, 0.0), 0.01, ActuatorLimitPolicy.Reject))
             };
 
             Assert.That(samples.Select(sample => sample.Kind), Is.EquivalentTo(DeviceKinds.All.Select(kind => kind.Name)));
@@ -236,6 +254,65 @@ namespace Argus.Simulation.Tests
 
         // Both camera kinds share CameraProfileKind's keys and checks.
         private static readonly CameraProfileKind[] CameraKinds = { CameraKind.Instance, NadirGroundTruthCameraKind.Instance };
+
+        // A spacecraft whose only actuator is one ideal body torque device is valid. Each actuator
+        // kind rejects bad limits, axes and keys, an actuator has no period and an unrotated mount,
+        // and device IDs are unique across sensors and actuators (CON-2).
+        [Test]
+        public void ActuatorDevicesCheckTheirLimitsAxesAndIds()
+        {
+            DeviceConfiguration torque = IdealBodyTorque("torque.body");
+            Assert.That(Run(torque).IsValid, Is.True, torque.FindProblem());
+            Assert.That(Run(torque, Magnetometer()).IsValid, Is.True);
+
+            Assert.That(
+                WheelProblem(WheelParameters(new Vector3d(2.0, 0.0, 0.0), 1e-3)),
+                Is.EqualTo("parameters[\"spin_axis_body\"]: must have unit length within 1e-6 (ActuatorGeometry.UnitTolerance)"));
+            Assert.That(
+                WheelProblem(WheelParameters(new Vector3d(1.0, 0.0, 0.0), 0.0)),
+                Is.EqualTo("parameters[\"max_torque_n_m\"]: must be > 0"));
+            Assert.That(
+                WheelProblem(WheelParameters(new Vector3d(1.0, 0.0, 0.0), double.PositiveInfinity)),
+                Is.EqualTo("parameters[\"max_torque_n_m\"]: must be finite"));
+            Assert.That(
+                Problem(IdealBodyTorqueKind.KindName, new DeviceValues.Builder()
+                    .Add("max_torque_body_n_m", new Vector3d(1e-3, 1e-3, 1e-3))
+                    .Add("limit_policy", DeviceValue.FromText("saturate"))
+                    .Build()),
+                Is.EqualTo("parameters[\"limit_policy\"]: must be clamp or reject"));
+            Assert.That(
+                Problem(ThrusterKind.KindName, new DeviceValues.Builder().Add("max_thrust_n", 0.01).Build()),
+                Is.EqualTo("parameters[\"thrust_direction_body\"]: is required"));
+
+            SensorDefinition sampled = new SensorDefinition("torque.body", "test-model", "torque_body", 0.1, "test", SensorMount.Identity, isControllerVisible: false);
+            SensorDefinition rotated = new SensorDefinition(
+                "torque.body", "test-model", "torque_body", 0.0, "test",
+                new SensorMount(new Vector3d(0.0, 0.0, 0.0), new Quaterniond(0.0, 0.0, 0.7071067811865476, 0.7071067811865476)),
+                isControllerVisible: false);
+            Assert.That(new DeviceConfiguration(sampled, torque.Kind, torque.Parameters).IsValid, Is.False);
+            Assert.That(new DeviceConfiguration(rotated, torque.Kind, torque.Parameters).IsValid, Is.False);
+
+            DeviceConfiguration sameIdAsSensor = IdealBodyTorque("mag.main");
+            Assert.That(sameIdAsSensor.IsValid, Is.True);
+            Assert.That(Run(Magnetometer(), sameIdAsSensor).IsValid, Is.False);
+        }
+
+        private static SimulationConfiguration Run(params DeviceConfiguration[] devices) =>
+            new SimulationConfiguration("actuators", System.DateTimeOffset.UnixEpoch, 0.1, devices: devices);
+
+        private static string WheelProblem(DeviceValues parameters) => new DeviceConfiguration(
+            ActuatorDefinition("wheel.x"),
+            MomentumWheelKind.KindName,
+            parameters,
+            new DeviceValues.Builder().Add(MomentumWheelKind.SpeedKey, 0.0).Build()).FindProblem();
+
+        private static DeviceValues WheelParameters(Vector3d spinAxis, double maxTorque) => new DeviceValues.Builder()
+            .Add("spin_axis_body", spinAxis)
+            .Add("spin_inertia_kg_m2", 1e-5)
+            .Add("max_torque_n_m", maxTorque)
+            .Add("max_speed_rad_per_s", 600.0)
+            .Add("limit_policy", DeviceValue.FromText("clamp"))
+            .Build();
 
         private static DeviceConfiguration Magnetometer() =>
             MagnetometerKind.Instance.Configure(
@@ -269,5 +346,13 @@ namespace Argus.Simulation.Tests
 
         private static SensorDefinition Definition(string sensorId) =>
             new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, "test", SensorMount.Identity);
+
+        // An actuator has no sample period and publishes no frames (docs/device-model.md §1).
+        private static SensorDefinition ActuatorDefinition(string deviceId) =>
+            new SensorDefinition(deviceId, "test-model", deviceId.Replace('.', '_'), 0.0, "test", SensorMount.Identity, isControllerVisible: false);
+
+        private static DeviceConfiguration IdealBodyTorque(string deviceId) => IdealBodyTorqueKind.Instance.Configure(
+            ActuatorDefinition(deviceId),
+            new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp));
     }
 }

@@ -9,29 +9,34 @@ module defines:
   key is required;
 - STATE (optional): each initial-state key and its type, as PARAMETERS; none when it is absent,
   as for every sensor kind so far;
-- OUTPUTS: each key and type of its BasiliskDeviceSample.output;
+- OUTPUTS (sensors): each key and type of its BasiliskDeviceSample.output;
+- COMMANDS and IDLE (actuators): each command key and its type, and the values the actuator runs
+  in a step whose command leaves it out (no output);
 - check(values, invalid): its range checks. values maps each parameter key that has its declared
-  type and is finite to its Python value (a float, or a tuple of components); a problem is
+  type and is finite to its Python value (a float, a str, or a tuple of components); a problem is
   reported as invalid(key, reason, value);
-- build(device, random_seed, inputs): its Argus sensor from a validated DeviceConfiguration and
-  the _common.Inputs messages. The sensor has device_id, sample_period_ns, modules, readers,
-  ready and output(), which returns the output map.
+- build(device, random_seed, inputs) (sensors): its Argus sensor from a validated
+  DeviceConfiguration and the _common.Inputs messages. The sensor has device_id,
+  sample_period_ns, modules, readers, ready and output(), which returns the output map.
+  Actuator kinds have no builder until BSK-8 (#21) builds their effectors.
 
 validation.py and the scenario walk KINDS instead of switching on kinds, so adding a kind is one
 module plus one entry here. Kind modules import numpy and Basilisk only inside their builders,
 so validation runs without the basilisk extra.
 """
 
-from . import imu, light_sensor, magnetometer
-from ._common import Inputs
+from . import ideal_body_torque, imu, light_sensor, magnetic_torquer, magnetometer, momentum_wheel, thruster
+from ._common import ACTUATOR, SENSOR, Inputs
 
-__all__ = ["ACTUATOR", "KINDS", "SENSOR", "actuator_ids", "build_sensors", "of_kind", "state_keys"]
+__all__ = ["ACTUATOR", "KINDS", "SENSOR", "actuators", "build_sensors", "is_actuator", "of_kind", "state_keys"]
 
-# A kind module's ROLE; a module without one is a sensor kind.
-SENSOR = "sensor"
-ACTUATOR = "actuator"
-
-KINDS = {module.KIND: module for module in (imu, magnetometer, light_sensor)}
+KINDS = {
+    module.KIND: module
+    for module in (
+        imu, magnetometer, light_sensor,
+        ideal_body_torque, momentum_wheel, magnetic_torquer, thruster,
+    )
+}
 
 
 def state_keys(kind) -> dict:
@@ -39,12 +44,17 @@ def state_keys(kind) -> dict:
     return getattr(kind, "STATE", {})
 
 
-def actuator_ids(configuration) -> frozenset:
-    """The device IDs of the run's actuators, the only devices a Step command may name. Every
-    registered kind is a sensor until the first actuator kind (CON-2 #34), so this is empty."""
-    return frozenset(
-        device.device_id for device in configuration.devices
-        if getattr(KINDS.get(device.kind), "ROLE", SENSOR) == ACTUATOR)
+def is_actuator(kind) -> bool:
+    """Whether a kind module is an actuator kind."""
+    return getattr(kind, "ROLE", SENSOR) == ACTUATOR
+
+
+def actuators(configuration) -> dict:
+    """The run's actuators by device ID, each to its kind module: the only devices a Step command
+    may name."""
+    return {
+        device.device_id: KINDS[device.kind] for device in configuration.devices
+        if is_actuator(KINDS.get(device.kind))}
 
 
 def of_kind(devices, kind: str) -> list:
@@ -55,7 +65,8 @@ def of_kind(devices, kind: str) -> list:
 def build_sensors(
         configuration, spacecraft_state_msg, magnetic_field_msg=None, *,
         sun_msg=None, eclipse_msg=None, albedo_msgs=None) -> list:
-    """The Argus sensors of a validated configuration, in configuration order.
+    """The Argus sensors of a validated configuration, in configuration order. Actuators are
+    skipped: they build no modules until BSK-8 (#21), and an idle actuator applies nothing.
 
     magnetic_field_msg is the MagneticFieldWMM output for the spacecraft, required with a
     magnetometer. Light sensors need the SPICE Sun, the eclipse output and their albedo output,
@@ -73,5 +84,7 @@ def build_sensors(
         kind = KINDS.get(device.kind)
         if kind is None:
             raise ValueError(f"device kind {device.kind!r} is not registered (device_id {device.device_id!r})")
+        if is_actuator(kind):
+            continue
         built.append(kind.build(device, configuration.random_seed, inputs))
     return built

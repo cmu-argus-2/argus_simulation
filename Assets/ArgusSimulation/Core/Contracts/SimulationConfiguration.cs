@@ -67,7 +67,8 @@ namespace Argus.Simulation.Core
             return copy;
         }
 
-        // Every sensor samples only at step states, so its period must be a whole number of steps:
+        // Every sensor samples only at step states, so its period must be a whole number of steps
+        // (an actuator has none, DeviceConfiguration.IsValid):
         // otherwise an Argus sensor samples unevenly under a period it never keeps (CORE-18). Basilisk
         // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor whose
         // frames carry truth may not be controller-visible, because the gateway forwards those frames
@@ -81,7 +82,7 @@ namespace Argus.Simulation.Core
             foreach (DeviceConfiguration device in devices)
             {
                 if (!device.IsValid ||
-                    !IsWholeNumberOfSteps(device.Definition.SamplePeriodSeconds, fixedStepSeconds) ||
+                    (!device.IsActuator && !IsWholeNumberOfSteps(device.Definition.SamplePeriodSeconds, fixedStepSeconds)) ||
                     (device.Definition.IsControllerVisible && !device.MayBeControllerVisible) ||
                     !deviceIds.Add(device.Definition.SensorId) ||
                     (device.KindDefinition is ICameraKind camera && !IsConsistent(cameraProfiles, camera.Profile(device))))

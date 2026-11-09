@@ -148,19 +148,20 @@ def configure_run_problems(
     return problems.ranked()
 
 
-def validate_step_request(request, fixed_step_ns: int, actuator_ids=frozenset()) -> None:
+def validate_step_request(request, fixed_step_ns: int, actuators=None) -> None:
     """Raise for a StepRequest whose commands are unset, malformed, for the wrong step, or for a
     device that is not a configured actuator (README §3 Step 3). The caller has checked run_id,
     sequence and sim_time_ns."""
-    _raise_first(step_request_problems(request, fixed_step_ns, actuator_ids))
+    _raise_first(step_request_problems(request, fixed_step_ns, actuators))
 
 
-def step_request_problems(request, fixed_step_ns: int, actuator_ids=frozenset()) -> list[ValidationError]:
+def step_request_problems(request, fixed_step_ns: int, actuators=None) -> list[ValidationError]:
     """Return every problem with a StepRequest's commands, INVALID_ARGUMENT first.
 
     Step(n) carries command n-1, which acts over [t_n-1, t_n) (target-architecture §4), so
     command_sequence and command_time_ns must name step n-1. Step(0) follows no command: both
-    are unset and the command set is empty. actuator_ids are the run's configured actuators.
+    are unset and the command set is empty. actuators maps the run's configured actuators to their
+    kind modules (devices.actuators).
     """
     problems = _Problems()
     sequence = request.sequence
@@ -183,27 +184,29 @@ def step_request_problems(request, fixed_step_ns: int, actuator_ids=frozenset())
         problems.unset("commands")
     else:
         problems.extend(step_command_problems(
-            request.commands, actuator_ids=actuator_ids, first_step=sequence == 0))
+            request.commands, actuators=actuators, first_step=sequence == 0))
     return problems.ranked()
 
 
 def validate_step_command(
-        commands, path: str = "commands", *, actuator_ids=frozenset(), first_step: bool = False) -> None:
+        commands, path: str = "commands", *, actuators=None, first_step: bool = False) -> None:
     """Raise for a Step DeviceCommandSet that is malformed or names a device that is not a
     configured actuator (README §3 Step 3)."""
-    _raise_first(step_command_problems(commands, path, actuator_ids=actuator_ids, first_step=first_step))
+    _raise_first(step_command_problems(commands, path, actuators=actuators, first_step=first_step))
 
 
 def step_command_problems(
-        commands, path: str = "commands", *, actuator_ids=frozenset(), first_step: bool = False
+        commands, path: str = "commands", *, actuators=None, first_step: bool = False
 ) -> list[ValidationError]:
     """Return every problem with a Step DeviceCommandSet, INVALID_ARGUMENT first.
 
     The set is complete (docs/device-model.md §6): an actuator it leaves out is idle, so the
-    empty set is no output and always valid. Each device appears at most once, with set, finite
-    values, and must be one of the run's actuators. first_step: the command of Step(0), which acts
-    over no interval, so it must be empty.
+    empty set is no output and always valid. Each device appears at most once and must be one of
+    the run's actuators (actuators maps each ID to its kind module), with exactly its kind's
+    command keys, each of its type and finite. first_step: the command of Step(0), which acts over
+    no interval, so it must be empty.
     """
+    actuators = actuators or {}
     problems = _Problems()
     seen = {}
     for index, command in enumerate(commands.commands):
@@ -215,6 +218,16 @@ def step_command_problems(
             problems.invalid(f"{command_path}.device_id", f"repeats commands[{seen[device_id]}]", device_id)
         else:
             seen[device_id] = index
+        kind = actuators.get(device_id)
+        if kind is not None and not first_step:
+            before = problems.count
+            values = _check_values(problems, kind, kind.COMMANDS, command.values, f"{command_path}.values", "command key")
+            # An idle command applies nothing, so it needs no effector. Lifted by BSK-8 (#21), which
+            # applies the commands of configured actuators (G1).
+            if problems.count == before and values != kind.IDLE:
+                problems.unimplemented(command_path, "applying actuator commands is not built yet", device_id)
+            continue
+
         for key in sorted(command.values):
             value = command.values[key]
             key_path = f"{command_path}.values[{json.dumps(key)}]"
@@ -225,12 +238,8 @@ def step_command_problems(
 
         if first_step:
             problems.invalid(command_path, "must not exist in Step(0), since no interval ends at t = 0", device_id)
-        elif device_id and device_id not in actuator_ids:
-            # No actuator kind is registered yet (CON-2 #34), so no device ID is valid here.
-            problems.invalid(f"{command_path}.device_id", "is not an actuator this run configures", device_id)
         elif device_id:
-            # Lifted by BSK-8 (#21), which applies the commands of configured actuators (G1).
-            problems.unimplemented(command_path, "applying actuator commands is not built yet", device_id)
+            problems.invalid(f"{command_path}.device_id", "is not an actuator this run configures", device_id)
     return problems.ranked()
 
 
@@ -289,6 +298,10 @@ class _Problems:
 
     def __init__(self):
         self._items: list[ValidationError] = []
+
+    @property
+    def count(self) -> int:
+        return len(self._items)
 
     def add(self, code: str, details: str) -> None:
         self._items.append(ValidationError(code, details))
@@ -422,8 +435,18 @@ def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: st
         else:
             seen_ids[device_id] = index
 
+        # A kind's role decides the period and mount rules; an unregistered kind is reported below.
+        kind = devices.KINDS.get(device.kind)
+        is_actuator = devices.is_actuator(kind)
         period = device.sample_period_ns
-        if period == 0:
+        if is_actuator:
+            # An actuator takes a command every step, so it has no period (docs/device-model.md §1).
+            if period != 0:
+                problems.invalid(f"{device_path}.sample_period_ns", "must be 0 for an actuator", period)
+            if device.HasField("controller_visible"):
+                problems.invalid(
+                    f"{device_path}.controller_visible", "must be unset for an actuator", device.controller_visible)
+        elif period == 0:
             problems.invalid(f"{device_path}.sample_period_ns", "must be > 0", period)
         elif fixed_step_ns > 0 and period % fixed_step_ns != 0:
             problems.invalid(
@@ -438,9 +461,11 @@ def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: st
             if _require(problems, mount, "position_body_m", mount_path):
                 _check_finite_vector(problems, mount.position_body_m, f"{mount_path}.position_body_m")
             if _require(problems, mount, "device_to_body", mount_path):
-                _check_unit_quaternion(problems, mount.device_to_body, f"{mount_path}.device_to_body")
+                rotation_path = f"{mount_path}.device_to_body"
+                if _check_unit_quaternion(problems, mount.device_to_body, rotation_path) and is_actuator:
+                    # An actuator's axis is a body-frame parameter, so its mount does not rotate.
+                    _check_identity_quaternion(problems, mount.device_to_body, rotation_path)
 
-        kind = devices.KINDS.get(device.kind)
         if kind is None:
             problems.invalid(
                 f"{device_path}.kind", f"must be a registered kind ({', '.join(sorted(devices.KINDS))})", device.kind)
@@ -553,6 +578,15 @@ def _check_unit_quaternion(problems: _Problems, quaternion, path: str) -> bool:
         problems.invalid(path, f"must have unit length within {QUATERNION_UNIT_TOLERANCE} (norm {norm!r})", components)
         return False
     return True
+
+
+def _check_identity_quaternion(problems: _Problems, quaternion, path: str) -> None:
+    """Core ActuatorKind.IsIdentity: +-(0, 0, 0, 1) within QUATERNION_UNIT_TOLERANCE."""
+    components = (quaternion.x, quaternion.y, quaternion.z)
+    if any(abs(component) > QUATERNION_UNIT_TOLERANCE for component in components):
+        problems.invalid(
+            path, "must be the identity for an actuator, whose axis is a body-frame parameter",
+            components + (quaternion.w,))
 
 
 def _components(vector) -> tuple[float, float, float]:

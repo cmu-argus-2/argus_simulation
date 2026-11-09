@@ -211,8 +211,8 @@ class Scenario:
         """
         t_n = sequence * self.fixed_step_ns
         # Step 5: for n > 0, write the request's commands (command n-1) into the actuator inputs
-        # before running, so they act over [t_n-1, t_n). It starts with actuators (G1, BSK-8);
-        # until then validation admits only the empty set.
+        # before running, so they act over [t_n-1, t_n). It starts with the actuator effectors
+        # (G1, BSK-8); until then no actuator is built and validation admits only idle commands.
         # A sensor that has not run before t_n runs without data at t_n (imuSensor's first firing).
         was_ready = [sensor.ready for sensor in self.sensors]
         self.sim.ConfigureStopTime(t_n)

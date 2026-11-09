@@ -92,7 +92,10 @@ file; the host gives each run its own.
   declares. `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
   `magnetometer` and `light_sensor`, which Basilisk models, and `camera` and
   `nadir_ground_truth_camera` (the north-up nadir ground-truth camera, CORE-8), which Argus
-  computes and never sends to the service (CORE-18). Both camera kinds take the same keys; a
+  computes and never sends to the service (CORE-18), and the actuator kinds `ideal_body_torque`,
+  `momentum_wheel`, `magnetic_torquer` and `thruster` (CON-2, `docs/device-model.md` §2). An
+  actuator has no `samplePeriodSeconds` or `controllerVisible`, and its `deviceToBody` must be the
+  identity, since its axis is a body-frame parameter. Both camera kinds take the same keys; a
   nadir camera needs its own `profile_id`, since cameras that share one share its parameters. Parameter keys are snake_case with their unit,
   the same spelling as on the wire and in the manifest (`noise_std_tesla`,
   `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists the keys of the kinds
@@ -102,13 +105,14 @@ file; the host gives each run its own.
   profile, each value with where it came from: `profile_id`, `intrinsics.*` with `source` and
   `calibrated`, `distortion.*` (`model` `brown-conrady-5`, `k1` … `k3` all zero, `source`),
   `noise.source` (`none`), `exposure_duration_s` and `extrinsics.*`. Each value is read as the
-  type its kind declares. `initialState` is optional and must be empty, since no
-  kind has state yet. `controllerVisible` is `false` for a ground-truth sensor: the gateway
+  type its kind declares. `initialState` holds the kind's initial-state keys: only
+  `momentum_wheel` has one (`speed_rad_per_s`), and the field is optional for the other kinds. `controllerVisible` is `false` for a ground-truth sensor: the gateway
   never returns its frames to a controller, though the recorder still receives them (D7). It
   must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
   observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
-  a 0.5 ms exposure (CORE-6). The list may hold any subset of the devices,
+  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device with
+  placeholder 1 mN·m limits per axis, until DATA-2 (#68) confirms the actuators. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
 - **Validation:** every field is required and unknown fields are rejected, including
