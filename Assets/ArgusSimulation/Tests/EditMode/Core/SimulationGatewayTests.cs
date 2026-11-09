@@ -44,7 +44,8 @@ namespace Argus.Simulation.Tests
                 sensor => new IdealBodyRateSensorModel(
                     sensor.Definition.SensorId,
                     sensor.Definition.FrameId,
-                    sensor.Definition.SamplePeriodSeconds));
+                    sensor.Definition.SamplePeriodSeconds,
+                    sensor.Definition.Source));
             List<SensorOutputSet> outputs = new List<SensorOutputSet>();
             gateway.SensorOutputProduced += outputs.Add;
             SimulationConfiguration scenario = Scenario(
@@ -264,6 +265,162 @@ namespace Argus.Simulation.Tests
                     new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(x, 0.0, 0.0)).Build())
             });
 
+        // The manifest lists each device as configured, while its frames carry the ID, frame and
+        // source of the sensor the factory built, on that sensor's period; so the two must agree
+        // (CORE-22 design review). A mismatch fails before the engine is configured, which for
+        // Basilisk is a call to the service (CORE-22 review).
+        [TestCase("rate.other", "rate.main", 0.1, DeviceSource.Basilisk)]
+        [TestCase("rate.main", "other_frame", 0.1, DeviceSource.Basilisk)]
+        [TestCase("rate.main", "rate.main", 0.2, DeviceSource.Basilisk)]
+        [TestCase("rate.main", "rate.main", 0.1, "simulation")]
+        public void ResetRejectsASensorThatDisagreesWithItsDevice(string sensorId, string frameId, double periodSeconds, string source)
+        {
+            AnalyticSimulationEngine engine = Engine();
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                device => new IdealBodyRateSensorModel(sensorId, frameId, periodSeconds, source));
+
+            ArgumentException error = Assert.Throws<ArgumentException>(
+                () => gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true))));
+            Assert.That(error.Message, Does.Contain("'rate.main'"));
+            Assert.That(engine.IsInitialized, Is.False);
+        }
+
+        // A camera places its frames by its own mount, so the built sensor must keep its device's
+        // position and rotation (up to the quaternion's sign). The device turns 120 degrees about
+        // (1, 1, 1); flipping one sign of it gives a turn 120 degrees away. "zero" forgets the
+        // mount's rotation and "scaled" doubles its quaternion: both invalid mounts, which the
+        // rotation comparison alone would accept (CORE-22 review).
+        [TestCase("x")]
+        [TestCase("y")]
+        [TestCase("z")]
+        [TestCase("w")]
+        [TestCase("position")]
+        [TestCase("zero")]
+        [TestCase("scaled")]
+        public void ResetRejectsASensorMountedElsewhereThanItsDevice(string changed)
+        {
+            SensorMount mount = new SensorMount(new Vector3d(0.1, 0.0, 0.0), new Quaterniond(0.5, 0.5, 0.5, 0.5));
+            SensorMount builtMount = new SensorMount(
+                changed == "position" ? new Vector3d(0.0, 0.0, 0.0) : mount.PositionBodyMeters,
+                changed == "zero" ? new Quaterniond(0.0, 0.0, 0.0, 0.0)
+                    : changed == "scaled" ? new Quaterniond(1.0, 1.0, 1.0, 1.0)
+                    : new Quaterniond(
+                        changed == "x" ? -0.5 : 0.5,
+                        changed == "y" ? -0.5 : 0.5,
+                        changed == "z" ? -0.5 : 0.5,
+                        changed == "w" ? -0.5 : 0.5));
+            AnalyticSimulationEngine engine = Engine();
+            DeviceConfiguration device = ImuKind.Instance.Configure(
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                TestImu.P0LikeProfile());
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                configured => new DefinitionOnlySensor(new SensorDefinition(
+                    configured.Definition.SensorId,
+                    configured.Definition.ModelName,
+                    configured.Definition.FrameId,
+                    configured.Definition.SamplePeriodSeconds,
+                    configured.Definition.Source,
+                    builtMount,
+                    configured.Definition.IsControllerVisible)));
+
+            ArgumentException error = Assert.Throws<ArgumentException>(() => gateway.Reset(0, Scenario(0.1, device)));
+            Assert.That(error.Message, Is.EqualTo("The sensor built for device 'rate.main' must keep its device's mount; it has another."));
+            Assert.That(engine.IsInitialized, Is.False);
+        }
+
+        // The same rotation can be written differently: q and -q are one rotation, and a valid mount
+        // may be up to 1e-6 off unit length (Quaterniond.IsUnit), so a sensor may hold it normalised.
+        // Both keep the device's mount (CORE-22 review). The device's turn is 2e-7 short of unit
+        // length, so a raw dot product without normalising would fall short of 1 in both cases.
+        [TestCase("negated")]
+        [TestCase("normalised")]
+        public void ResetAcceptsASensorWhoseMountRotationIsWrittenDifferently(string written)
+        {
+            Quaterniond turn = new Quaterniond(0.5, 0.5, 0.5, 0.4999996);
+            SensorMount mount = new SensorMount(new Vector3d(0.1, 0.0, 0.0), turn);
+            SensorMount builtMount = new SensorMount(
+                mount.PositionBodyMeters,
+                written == "negated" ? new Quaterniond(-turn.X, -turn.Y, -turn.Z, -turn.W) : turn.Normalized());
+            AnalyticSimulationEngine engine = Engine();
+            DeviceConfiguration device = ImuKind.Instance.Configure(
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                TestImu.P0LikeProfile());
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                configured => new DefinitionOnlySensor(new SensorDefinition(
+                    configured.Definition.SensorId,
+                    configured.Definition.ModelName,
+                    configured.Definition.FrameId,
+                    configured.Definition.SamplePeriodSeconds,
+                    configured.Definition.Source,
+                    builtMount,
+                    configured.Definition.IsControllerVisible)));
+
+            Assert.DoesNotThrow(() => gateway.Reset(0, Scenario(0.1, device)));
+            Assert.That(engine.IsInitialized, Is.True);
+        }
+
+        // A Reset refused by the gateway's own checks (an invalid scenario, or a sensor that disagrees
+        // with its device) changes nothing: the run in progress keeps running (CORE-22 review). A Reset
+        // the engine refuses still ends it, as before CORE-22.
+        [Test]
+        public void ARefusedResetLeavesTheRunInProgressRunning()
+        {
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => device.Definition.SensorId == "rate.bad"
+                    ? new IdealBodyRateSensorModel("rate.bad", "rate.bad", 0.1, "simulation")
+                    : SameDefinitionStandIn(device));
+            gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true)));
+            gateway.Step();
+
+            Assert.Throws<ArgumentException>(() => gateway.Reset(0, Scenario(0.1, Rate("rate.bad", isControllerVisible: true))));
+
+            Assert.That(gateway.IsRunning, Is.True);
+            Assert.DoesNotThrow(() => gateway.Step());
+        }
+
+        [Test]
+        public void ResetRejectsAFactoryThatBuildsNoSensor()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine(), device => null);
+
+            ArgumentException error = Assert.Throws<ArgumentException>(
+                () => gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true))));
+            Assert.That(error.Message, Does.Contain("'rate.main'"));
+        }
+
+        // An ideal body-rate sensor with its device's ID, frame, period and source.
+        private static ISensor SameDefinitionStandIn(DeviceConfiguration device) =>
+            new IdealBodyRateSensorModel(
+                device.Definition.SensorId,
+                device.Definition.FrameId,
+                device.Definition.SamplePeriodSeconds,
+                device.Definition.Source);
+
+        // A sensor with any definition, for the guard to compare; it never samples.
+        private sealed class DefinitionOnlySensor : ISensor
+        {
+            public DefinitionOnlySensor(SensorDefinition definition)
+            {
+                Definition = definition;
+            }
+
+            public SensorDefinition Definition { get; }
+
+            public void Reset(SensorResetContext context)
+            {
+            }
+
+            public bool TrySample(SensorSampleContext context, out ISensorFrame frame)
+            {
+                frame = null;
+                return false;
+            }
+        }
+
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
@@ -278,13 +435,9 @@ namespace Argus.Simulation.Tests
         // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
         private static DeviceConfiguration Rate(string sensorId, bool isControllerVisible)
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             return ImuKind.Instance.Configure(
-                new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, "test", SensorMount.Identity, isControllerVisible),
-                new ImuProfile(
-                    new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
-                    new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
+                new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, DeviceSource.Basilisk, SensorMount.Identity, isControllerVisible),
+                TestImu.P0LikeProfile());
         }
     }
 }

@@ -20,7 +20,7 @@ namespace Argus.Simulation.Core
         // Below this distance from the polar axis, north is undefined; see ComputePose.
         private const double PolarAxisToleranceMeters = 1e-3;
 
-        // As for ArducamImx708CameraModel: never gives up on a render, which is safe only while no
+        // As for BodyCameraModel: never gives up on a render, which is safe only while no
         // caller supplies a renderer, and a caller cannot wait for renders yet (CameraModel README).
         // TODO(G3): take the limit, or a way to wait, from the first caller that supplies a renderer (UNITY-4).
         private const double RenderLatencyLimitSeconds = double.PositiveInfinity;

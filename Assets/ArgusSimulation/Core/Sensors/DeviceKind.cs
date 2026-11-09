@@ -56,8 +56,20 @@ namespace Argus.Simulation.Core
             return Parse(configuration.Parameters);
         }
 
+        // Which side models the device belongs to its kind, not to the device (docs/device-model.md
+        // §1), so the definition's source is replaced by this kind's (DeviceSource.For, CORE-22).
         public DeviceConfiguration Configure(SensorDefinition definition, TProfile profile) =>
-            new DeviceConfiguration(definition, Name, ToParameters(profile));
+            new DeviceConfiguration(
+                new SensorDefinition(
+                    definition.SensorId,
+                    definition.ModelName,
+                    definition.FrameId,
+                    definition.SamplePeriodSeconds,
+                    DeviceSource.For(this),
+                    definition.Mount,
+                    definition.IsControllerVisible),
+                Name,
+                ToParameters(profile));
 
         public abstract ISensor CreateSensor(DeviceConfiguration configuration, IImageRenderer imageRenderer);
 

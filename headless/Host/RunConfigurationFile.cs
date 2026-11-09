@@ -198,10 +198,17 @@ namespace Argus.Simulation.Host
         // that type and never guessed from their JSON shape.
         private static DeviceConfiguration Device(JsonElement element, string path)
         {
+            // Which side models a device belongs to its kind and is not configured per device
+            // (docs/device-model.md §1), so the file has no source: the host sets it from the kind
+            // (CORE-22). An older file that still has one is told why.
+            Check(
+                element.ValueKind != JsonValueKind.Object || !element.TryGetProperty("source", out _),
+                Join(path, "source"),
+                "is no longer a run-file field; the device's kind sets it (device-model §1)");
             Fields(
                 element,
                 path,
-                new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount", "parameters" },
+                new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "controllerVisible", "mount", "parameters" },
                 Array.Empty<string>(),
                 new[] { "initialState" });
 
@@ -222,10 +229,10 @@ namespace Argus.Simulation.Host
                 Text(element, "modelName", path),
                 Text(element, "frameId", path),
                 Number(element, "samplePeriodSeconds", path),
-                Text(element, "source", path),
+                DeviceSource.For(kind),
                 sensorMount,
                 Boolean(element, "controllerVisible", path));
-            Check(definition.IsValid, path, "needs non-blank deviceId, modelName, frameId and source, and samplePeriodSeconds > 0");
+            Check(definition.IsValid, path, "needs non-blank deviceId, modelName and frameId, and samplePeriodSeconds > 0");
 
             DeviceValues parameters = ReadValues(
                 Field(element, "parameters", path), Join(path, "parameters"), kind.ParameterKeys, $"{kind.Name} parameter");

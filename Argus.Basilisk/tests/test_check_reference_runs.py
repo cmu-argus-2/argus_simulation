@@ -306,7 +306,7 @@ def manifest_device(device):
     """A run-file device as the host's manifest echoes it (snake_case, parameters flattened with dots)."""
     q = device["mount"]["deviceToBody"]
     return {"device_id": device["deviceId"], "model_name": device["modelName"], "frame_id": device["frameId"],
-            "sample_period_s": device["samplePeriodSeconds"], "source": device["source"],
+            "sample_period_s": device["samplePeriodSeconds"], "source": "basilisk",  # the kind's source (CORE-22)
             "mount": {"position_body_m": device["mount"]["positionBodyMeters"],
                       "device_to_body_xyzw": [q["x"], q["y"], q["z"], q["w"]]},
             "controller_visible": device["controllerVisible"], "kind": device["kind"],

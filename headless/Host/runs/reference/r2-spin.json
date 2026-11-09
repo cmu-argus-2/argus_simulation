@@ -49,7 +49,6 @@
       "modelName": "placeholder-mems-imu",
       "frameId": "imu_ref",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [

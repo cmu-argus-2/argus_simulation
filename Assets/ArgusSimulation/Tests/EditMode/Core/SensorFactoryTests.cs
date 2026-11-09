@@ -53,13 +53,9 @@ namespace Argus.Simulation.Tests
 
         private static DeviceConfiguration Imu()
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             return ImuKind.Instance.Configure(
                 new SensorDefinition("imu.main", "test-imu", "imu_main", 0.1, "basilisk", SensorMount.Identity),
-                new ImuProfile(
-                    new GyroscopeProfile(1e-4, 0.0, 0.0, zero, unitScale, 4.0, 1e-4),
-                    new AccelerometerProfile(1e-3, 0.0, 0.0, zero, unitScale, 20.0, 1e-3)));
+                TestImu.Profile());
         }
 
         private static DeviceConfiguration Camera() =>

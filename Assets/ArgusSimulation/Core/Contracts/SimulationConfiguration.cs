@@ -11,6 +11,8 @@ namespace Argus.Simulation.Core
         private const int MaximumKernelSetIdLength = 64;
 
         private readonly DeviceConfiguration[] _devices;
+        private readonly DeviceConfiguration[] _backendDevices;
+        private readonly DeviceConfiguration[] _backendSensors;
 
         public SimulationConfiguration(
             string runId,
@@ -30,6 +32,8 @@ namespace Argus.Simulation.Core
             KernelSetId = kernelSetId;
             Spacecraft = spacecraft;
             _devices = devices == null ? null : Copy(devices);
+            _backendDevices = Where(_devices, device => device.IsBackendModelled);
+            _backendSensors = Where(_backendDevices, device => device.IsBackendSensor);
         }
 
         public string RunId { get; }
@@ -45,6 +49,15 @@ namespace Argus.Simulation.Core
         // Every configured device, in configuration order (D11).
         public IReadOnlyList<DeviceConfiguration> Devices => _devices ?? Array.Empty<DeviceConfiguration>();
 
+        // The devices the dynamics backend models, in configuration order: what ConfigureRun sends
+        // (D10, CORE-18). Worked out once, when the configuration is built (CORE-22).
+        public IReadOnlyList<DeviceConfiguration> BackendDevices => _backendDevices ?? Array.Empty<DeviceConfiguration>();
+
+        // The backend devices that are sensors the backend samples (DeviceConfiguration.IsBackendSensor),
+        // in configuration order: the ones whose measurements come back, on the steps their sample
+        // periods divide. A backend-modelled actuator (CON-2) is in BackendDevices only.
+        public IReadOnlyList<DeviceConfiguration> BackendSensors => _backendSensors ?? Array.Empty<DeviceConfiguration>();
+
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(RunId) &&
             FixedStepSeconds > 0.0 &&
@@ -55,6 +68,25 @@ namespace Argus.Simulation.Core
             RandomSeed >= 0 &&
             (KernelSetId == null || IsKernelSetId(KernelSetId)) &&
             AreDevicesValid(Devices, FixedStepSeconds);
+
+        private static DeviceConfiguration[] Where(DeviceConfiguration[] devices, Func<DeviceConfiguration, bool> keep)
+        {
+            if (devices == null)
+            {
+                return null;
+            }
+
+            List<DeviceConfiguration> kept = new List<DeviceConfiguration>();
+            foreach (DeviceConfiguration device in devices)
+            {
+                if (keep(device))
+                {
+                    kept.Add(device);
+                }
+            }
+
+            return kept.ToArray();
+        }
 
         private static DeviceConfiguration[] Copy(IReadOnlyList<DeviceConfiguration> devices)
         {

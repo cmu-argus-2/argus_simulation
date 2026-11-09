@@ -49,7 +49,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_pz",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [
