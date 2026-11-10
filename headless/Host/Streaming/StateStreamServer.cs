@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PbStream = Argus.Contracts.Stream.V1;
 
@@ -43,6 +44,9 @@ namespace Argus.Simulation.Host
             WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
             // The host's console is the run report; a bind failure surfaces as the exception.
             builder.Logging.ClearProviders();
+            // Program owns Ctrl+C and the process: the default console lifetime would also swallow
+            // SIGTERM, so a plain kill would leave the host stepping with its stream stopped.
+            builder.Services.AddSingleton<IHostLifetime, ProgramOwnedLifetime>();
             builder.WebHost.ConfigureKestrel(kestrel =>
                 kestrel.Listen(endpoint, listen => listen.Protocols = HttpProtocols.Http2));
             builder.Services.AddGrpc();
@@ -67,6 +71,13 @@ namespace Argus.Simulation.Host
             await _application.StopAsync(timeout.Token).ConfigureAwait(false);
             await _application.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    internal sealed class ProgramOwnedLifetime : IHostLifetime
+    {
+        public Task WaitForStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     internal sealed class StateStreamRate
