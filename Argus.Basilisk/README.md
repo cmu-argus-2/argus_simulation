@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); magnetometer and light-sensor noise are drawn in the service; pacing is UNIMPLEMENTED, and Step accepts only the empty command set until actuator kinds exist
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 5 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors) and ClockSynch pacing; magnetometer and light-sensor noise are drawn in the service; Step accepts only the empty command set until actuator kinds exist
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -123,7 +123,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    Device checks walk `devices.KINDS`. A device problem names its path, for example
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
-   Pacing stays UNIMPLEMENTED until BSK-7 (#20). The actuator kinds are registered (CON-2,
+   `real_time_factor > 0` is accepted and paced (§5, BSK-7 #20), as long as one paced step
+   lasts at most 3600 s of wall time. The actuator kinds are registered (CON-2,
    #34) but build nothing, so only idle commands run until BSK-8 (#21) applies the rest. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
@@ -201,11 +202,19 @@ TDB-TT error of up to about 3.3 ms, under 30 µs per day of run).
 ## 5. Pacing
 
 - `real_time_factor == 0`: no ClockSynch; Step returns as fast as Basilisk runs.
-- `real_time_factor > 0`: add `simSynch.ClockSynch` with `accelFactor = real_time_factor`
-  and `accuracyNanos` set, on its own task at `fixed_step_ns`, highest priority. `Step(n)`
-  returns no earlier than about start + t_n / factor, on an absolute schedule from Step(0).
-  Report `clockOutMsg.overrunCounter` in `pacing_overrun_count`.
-- Until ClockSynch is built, `real_time_factor > 0` is UNIMPLEMENTED at ConfigureRun.
+- `real_time_factor > 0` (BSK-7, #20): `Scenario` adds `simSynch.ClockSynch` with
+  `accelFactor = real_time_factor` and `accuracyNanos = 5 ms` (`PACING_ACCURACY_NS`) on its
+  own task `pacing` at `fixed_step_ns`, priority 1000, so it runs first at every t_n (§6).
+  ClockSynch starts its wall clock at its first tick, in Step(0), so time spent between
+  ConfigureRun and Step(0) is not counted, and then holds every tick to start + t_n / factor:
+  `Step(n)` returns no earlier than about that time (it can release up to the 5 ms accuracy
+  early). The schedule is absolute, so a client that falls behind catches up
+  without sleeping instead of shifting every later step. Reset builds a new ClockSynch,
+  which re-arms the schedule and zeroes the count.
+- An overrun is a tick that starts more than `accuracyNanos` behind its target.
+  `pacing_overrun_count` reports `clockOutMsg.overrunCounter` since ConfigureRun or Reset;
+  overruns are counted only and never fail the run. Measured: the full P0 run at factor 1
+  for 60 s holds 10 Hz (61 s of wall time) with 0 overruns; unpaced, it takes 2 s.
 
 ## 6. Tick order and message freshness (required)
 
@@ -567,11 +576,11 @@ The draws are fixed by the `numpy` pin in `uv.lock`.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A command for a configured actuator after Step(0) (none can be configured yet); `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A command for a configured actuator after Step(0) (none can be configured yet) |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 

@@ -107,7 +107,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
             raise _Abort(error.code, error.details) from None
 
         # 3. Build and initialize; run no step.
-        scenario = self._build(request.configuration, kernel_set)
+        scenario = self._build(request, kernel_set)
 
         # 4. Store the request, end READY, and echo every field.
         self._run = _Run(request=request, kernel_set=kernel_set, scenario=scenario)
@@ -136,9 +136,9 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 raise _Abort(code, "; ".join(p.details for p in problems if p.code == code)) from None
             raise _Abort(kernel_error.code, kernel_error.details) from None
 
-    def _build(self, configuration, kernel_set: KernelSet) -> Scenario:
+    def _build(self, request, kernel_set: KernelSet) -> Scenario:
         try:
-            return Scenario(configuration, kernel_set)
+            return Scenario(request.configuration, kernel_set, request.real_time_factor)
         except KernelLoadError as error:
             raise _Abort("FAILED_PRECONDITION", str(error)) from None
         except Exception as error:  # A Basilisk failure (README §11).
@@ -155,7 +155,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
         except KernelSetError as error:
             raise _Abort(error.code, error.details) from None
         run.scenario = None
-        run.scenario = self._build(run.request.configuration, kernel_set)
+        run.scenario = self._build(run.request, kernel_set)
         run.kernel_set = kernel_set
         run.state = READY
         run.next_sequence = 0
