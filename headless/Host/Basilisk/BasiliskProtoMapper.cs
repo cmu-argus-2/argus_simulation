@@ -124,7 +124,8 @@ namespace Argus.Simulation.Host
             return message;
         }
 
-        private static void AddAll(MapField<string, PbSim.DeviceValue> map, DeviceValues values)
+        // The argus.sim.v1 conversions below are shared with StateStreamMapper.
+        internal static void AddAll(MapField<string, PbSim.DeviceValue> map, DeviceValues values)
         {
             foreach (KeyValuePair<string, DeviceValue> entry in values)
             {
@@ -132,7 +133,7 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static PbSim.DeviceValue ToProto(DeviceValue value) => value.Type switch
+        internal static PbSim.DeviceValue ToProto(DeviceValue value) => value.Type switch
         {
             DeviceValueType.Number => new PbSim.DeviceValue { Number = value.Number },
             DeviceValueType.Vector3 => new PbSim.DeviceValue { Vector3 = ToProto(value.Vector3) },
@@ -143,10 +144,10 @@ namespace Argus.Simulation.Host
             _ => throw new ArgumentException($"Device value type {value.Type} has no wire form.", nameof(value))
         };
 
-        private static PbSim.Vector3 ToProto(Vector3d value) =>
+        internal static PbSim.Vector3 ToProto(Vector3d value) =>
             new PbSim.Vector3 { X = value.X, Y = value.Y, Z = value.Z };
 
-        private static PbSim.Quaternion ToProto(Quaterniond value) =>
+        internal static PbSim.Quaternion ToProto(Quaterniond value) =>
             new PbSim.Quaternion { X = value.X, Y = value.Y, Z = value.Z, W = value.W };
 
         private static PbSim.Matrix3 ToProto(Matrix3d value) => new PbSim.Matrix3
