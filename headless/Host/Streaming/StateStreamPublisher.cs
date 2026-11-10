@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Argus.Simulation.Core;
+using PbStream = Argus.Contracts.Stream.V1;
 
 namespace Argus.Simulation.Host
 {
@@ -155,5 +156,11 @@ namespace Argus.Simulation.Host
 
         public SimulationState State { get; }
         public IReadOnlyList<ISensorFrame> Frames { get; }
+
+        // Mapped once, by the first subscription to send it, however many clients connect.
+        public PbStream.SubscribeResponse Response =>
+            LazyInitializer.EnsureInitialized(ref _response, () => StateStreamMapper.ToProto(this));
+
+        private PbStream.SubscribeResponse _response;
     }
 }

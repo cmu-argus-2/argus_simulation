@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using Argus.Simulation.Core;
+using Google.Protobuf.Collections;
 using Google.Protobuf.WellKnownTypes;
 using PbSim = Argus.Contracts.Sim.V1;
 using PbStream = Argus.Contracts.Stream.V1;
@@ -8,12 +10,18 @@ namespace Argus.Simulation.Host
 {
     // Maps one stream pair to argus.stream.v1 (CON-1, Argus.Contracts/README.md "Presence and
     // encoding"). It carries only Core contracts, never Basilisk types (D8). Payloads are each
-    // kind's output map under its declared keys (IBackendSensorKind.WriteOutput, D11).
+    // kind's output map under its declared keys (IBackendSensorKind.WriteOutput, D11). A state, frame
+    // or value that is not valid and finite throws rather than reaching a client.
     internal static class StateStreamMapper
     {
         public static PbStream.SubscribeResponse ToProto(StreamSnapshot snapshot)
         {
             SimulationState state = snapshot.State;
+            if (!state.IsValid)
+            {
+                throw new InvalidOperationException($"State {state.Spacecraft.Sequence} is not a valid, finite SimulationState.");
+            }
+
             PbSim.SensorOutputSet output = new PbSim.SensorOutputSet
             {
                 RunId = state.RunId,
@@ -46,10 +54,10 @@ namespace Argus.Simulation.Host
                     SimulationTimeS = spacecraft.SimulationTimeSeconds,
                     TimestampUtc = Timestamp.FromDateTimeOffset(spacecraft.TimestampUtc),
                     EarthFixedFrame = ToProto(spacecraft.EarthFixedFrame),
-                    PositionEarthFixedM = BasiliskProtoMapper.ToProto(spacecraft.PositionEcefMeters),
-                    VelocityEarthFixedMPerS = BasiliskProtoMapper.ToProto(spacecraft.VelocityEcefMetersPerSecond),
-                    BodyToEarthFixed = BasiliskProtoMapper.ToProto(spacecraft.BodyToEcef),
-                    AngularVelocityBodyRadPerS = BasiliskProtoMapper.ToProto(spacecraft.AngularVelocityBodyRadiansPerSecond)
+                    PositionEarthFixedM = SimProtoMapper.ToProto(spacecraft.PositionEcefMeters),
+                    VelocityEarthFixedMPerS = SimProtoMapper.ToProto(spacecraft.VelocityEcefMetersPerSecond),
+                    BodyToEarthFixed = SimProtoMapper.ToProto(spacecraft.BodyToEcef),
+                    AngularVelocityBodyRadPerS = SimProtoMapper.ToProto(spacecraft.AngularVelocityBodyRadiansPerSecond)
                 }
             };
 
@@ -65,7 +73,7 @@ namespace Argus.Simulation.Host
                 foreach (DeviceCommand device in applied.Commands)
                 {
                     PbSim.DeviceCommand values = new PbSim.DeviceCommand { DeviceId = device.DeviceId };
-                    BasiliskProtoMapper.AddAll(values.Values, device.Values);
+                    AddFinite(values.Values, device.Values, $"state.applied_commands device '{device.DeviceId}'");
                     command.Commands.Add(values);
                 }
 
@@ -78,9 +86,9 @@ namespace Argus.Simulation.Host
                 EnvironmentState environment = state.Environment.Value;
                 message.Environment = new PbSim.EnvironmentState
                 {
-                    SunPositionItrf93M = BasiliskProtoMapper.ToProto(environment.SunPositionItrf93Meters),
-                    J2000ToItrf93 = BasiliskProtoMapper.ToProto(environment.J2000ToItrf93),
-                    EarthAngularVelocityItrf93RadPerS = BasiliskProtoMapper.ToProto(environment.EarthAngularVelocityItrf93RadiansPerSecond),
+                    SunPositionItrf93M = SimProtoMapper.ToProto(environment.SunPositionItrf93Meters),
+                    J2000ToItrf93 = SimProtoMapper.ToProto(environment.J2000ToItrf93),
+                    EarthAngularVelocityItrf93RadPerS = SimProtoMapper.ToProto(environment.EarthAngularVelocityItrf93RadiansPerSecond),
                     SpacecraftShadowFactor = environment.SpacecraftShadowFactor
                 };
             }
@@ -98,8 +106,10 @@ namespace Argus.Simulation.Host
                 PbSim.BackendSensorSample sample = new PbSim.BackendSensorSample { SensorId = sensorId };
                 if (state.SensorMeasurements.TryGetUntypedMeasurement(sensorId, out object measurement))
                 {
-                    BasiliskProtoMapper.AddAll(
-                        sample.Output, ((IBackendSensorKind)device.KindDefinition).WriteOutput(measurement));
+                    AddFinite(
+                        sample.Output,
+                        ((IBackendSensorKind)device.KindDefinition).WriteOutput(measurement),
+                        $"state.backend_samples '{sensorId}'");
                 }
 
                 message.BackendSamples.Add(sample);
@@ -111,6 +121,11 @@ namespace Argus.Simulation.Host
         // A cached frame keeps its envelope unchanged; only Valid and Stale frames carry a payload.
         private static PbSim.SensorFrame ToProto(ISensorFrame frame, IBackendSensorKind kind)
         {
+            if (!frame.HasValidEnvelope)
+            {
+                throw new InvalidOperationException($"Frame {frame.Sequence} of sensor '{frame.SensorId}' has an invalid envelope.");
+            }
+
             PbSim.SensorFrame message = new PbSim.SensorFrame
             {
                 RunId = frame.RunId,
@@ -126,10 +141,23 @@ namespace Argus.Simulation.Host
             };
             if (frame.Status == SensorFrameStatus.Valid || frame.Status == SensorFrameStatus.Stale)
             {
-                BasiliskProtoMapper.AddAll(message.Payload, kind.WriteOutput(frame.UntypedPayload));
+                AddFinite(message.Payload, kind.WriteOutput(frame.UntypedPayload), $"sensor_output frame '{frame.SensorId}'");
             }
 
             return message;
+        }
+
+        private static void AddFinite(MapField<string, PbSim.DeviceValue> map, DeviceValues values, string path)
+        {
+            foreach (KeyValuePair<string, DeviceValue> entry in values)
+            {
+                if (!entry.Value.IsFinite)
+                {
+                    throw new InvalidOperationException($"{path} value \"{entry.Key}\" is not finite.");
+                }
+            }
+
+            SimProtoMapper.AddAll(map, values);
         }
 
         private static PbSim.ReferenceFrame ToProto(ReferenceFrame frame) => frame switch

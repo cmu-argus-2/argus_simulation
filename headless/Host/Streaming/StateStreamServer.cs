@@ -11,7 +11,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using PbStream = Argus.Contracts.Stream.V1;
 
 namespace Argus.Simulation.Host
@@ -37,21 +36,26 @@ namespace Argus.Simulation.Host
         // The bound address; its port is the OS's choice when the endpoint asked for port 0.
         public IPEndPoint Endpoint { get; private set; }
 
-        // Binds the endpoint and starts serving. Throws when the address is in use.
-        public static async Task<StateStreamServer> StartAsync(IPEndPoint endpoint, double rateHz)
+        // Binds the endpoint and starts serving, sending to each client at most once per period
+        // (HostOptions.TryStreamPeriod: whole milliseconds). Throws when the address is in use.
+        public static async Task<StateStreamServer> StartAsync(IPEndPoint endpoint, TimeSpan period)
         {
             StateStreamPublisher publisher = new StateStreamPublisher();
-            WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
-            // The host's console is the run report; a bind failure surfaces as the exception.
-            builder.Logging.ClearProviders();
-            // Program owns Ctrl+C and the process: the default console lifetime would also swallow
-            // SIGTERM, so a plain kill would leave the host stepping with its stream stopped.
+            // An empty builder reads no appsettings.json and no ASPNETCORE_ or DOTNET_ variables, so
+            // nothing can add a Kestrel endpoint beside the loopback one below. It has no logging
+            // providers either: the host's console is the run report, and a bind failure surfaces as
+            // the exception.
+            WebApplicationBuilder builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
+            // Program owns Ctrl+C and the process: a console lifetime would also swallow SIGTERM, so a
+            // plain kill would leave the host stepping with its stream stopped.
             builder.Services.AddSingleton<IHostLifetime, ProgramOwnedLifetime>();
+            builder.WebHost.UseKestrelCore();
             builder.WebHost.ConfigureKestrel(kestrel =>
                 kestrel.Listen(endpoint, listen => listen.Protocols = HttpProtocols.Http2));
+            builder.Services.AddRoutingCore();
             builder.Services.AddGrpc();
             builder.Services.AddSingleton(publisher);
-            builder.Services.AddSingleton(new StateStreamRate(TimeSpan.FromSeconds(1.0 / rateHz)));
+            builder.Services.AddSingleton(new StateStreamRate(period));
 
             WebApplication application = builder.Build();
             application.MapGrpcService<StateStreamService>();
@@ -132,7 +136,7 @@ namespace Argus.Simulation.Host
                     }
 
                     generation = snapshot.Generation.Id;
-                    await responseStream.WriteAsync(StateStreamMapper.ToProto(snapshot), finished.Token).ConfigureAwait(false);
+                    await responseStream.WriteAsync(snapshot.Response, finished.Token).ConfigureAwait(false);
                     sentVersion = snapshot.Version;
                 }
                 while (await timer.WaitForNextTickAsync(finished.Token).ConfigureAwait(false));

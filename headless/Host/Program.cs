@@ -96,15 +96,25 @@ namespace Argus.Simulation.Host
         private static void Run(HostOptions options, SimulationConfiguration configuration, RunRecorder recorder, CancellationToken cancellation)
         {
             // Bound before the service is configured, so a busy port fails the run before it starts.
-            StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamRateHz)
+            StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamPeriod)
                 .GetAwaiter().GetResult();
+            bool ranToEnd = false;
             try
             {
                 Run(options, configuration, recorder, stream, cancellation);
+                ranToEnd = true;
             }
             finally
             {
-                stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                try
+                {
+                    stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                catch (Exception exception) when (!ranToEnd)
+                {
+                    // The run's own failure is the one to report; this one is only logged.
+                    Console.Error.WriteLine($"Stopping the state stream also failed: {exception.Message}");
+                }
             }
         }
 
@@ -145,7 +155,8 @@ namespace Argus.Simulation.Host
             Console.WriteLine(
                 $"Basilisk {engine.BasiliskVersion}, kernel set {configuration.KernelSetId}, " +
                 $"{configuration.Devices.Count} devices, run {configuration.RunId}, " +
-                $"state stream on {stream.Endpoint} at {options.StreamRateHz:R} Hz");
+                $"state stream on {stream.Endpoint} at {options.StreamRateHz:R} Hz " +
+                $"(every {options.StreamPeriod.TotalMilliseconds:R} ms)");
 
             long lastSequence = (long)Math.Round(options.DurationSeconds / configuration.FixedStepSeconds);
             long stepsPerReport = Math.Max(1L, (long)Math.Round(1.0 / configuration.FixedStepSeconds));

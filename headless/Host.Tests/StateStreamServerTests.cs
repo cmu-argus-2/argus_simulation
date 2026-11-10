@@ -21,12 +21,14 @@ namespace Argus.Simulation.Host.Tests
     {
         // Serves the stream over the analytic gateway while one client never reads and another
         // reads everything. The step loop keeps its pace, and the reader gets distinct, increasing
-        // pairs of one generation, no faster than the rate.
-        [Test]
-        public async Task AStalledClientNeverDelaysTheStepLoop()
+        // pairs of one generation, no faster than the rate: 400 Hz is a 2.5 ms period, which the
+        // whole-millisecond timer must round up, not down.
+        [TestCase(1000.0)]
+        [TestCase(400.0)]
+        public async Task AStalledClientNeverDelaysTheStepLoop(double rateHz)
         {
-            const double rateHz = 1000.0;
-            await using StateStreamServer server = await StateStreamServer.StartAsync(new IPEndPoint(IPAddress.Loopback, 0), rateHz);
+            Assert.That(HostOptions.TryStreamPeriod(rateHz, out TimeSpan period), Is.True);
+            await using StateStreamServer server = await StateStreamServer.StartAsync(new IPEndPoint(IPAddress.Loopback, 0), period);
             SimulationGateway gateway = new SimulationGateway(new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0));
             gateway.RunStarted += (run, sensors) => server.Publisher.BeginGeneration(run);
             gateway.StateProduced += server.Publisher.PublishState;
@@ -76,6 +78,40 @@ namespace Argus.Simulation.Host.Tests
                 {
                     Assert.That(received[i].State.Spacecraft.Sequence, Is.GreaterThan(received[i - 1].State.Spacecraft.Sequence));
                 }
+            }
+        }
+
+        // The timer takes whole milliseconds from 1 ms, so faster or vanishingly slow rates are bad
+        // input, refused with the flag's name before anything starts.
+        [TestCase("2000")]
+        [TestCase("1e-300")]
+        [TestCase("0")]
+        public void ARateTheTimerCannotKeepIsRefused(string rate)
+        {
+            Assert.That(HostOptions.TryParse(new[] { "--stream-rate-hz", rate }, out _, out string error), Is.False);
+            Assert.That(error, Does.StartWith("--stream-rate-hz"));
+        }
+
+        // Configuration cannot add a listener beside the loopback endpoint: the web host reads no
+        // ASPNETCORE_ variables or appsettings.json.
+        [Test]
+        public async Task ConfigurationCannotBindAnotherEndpoint()
+        {
+            const string Variable = "ASPNETCORE_Kestrel__Endpoints__Extra__Url";
+            int extraPort = FreePort();
+            Environment.SetEnvironmentVariable(Variable, $"http://127.0.0.1:{extraPort}");
+            try
+            {
+                Assert.That(HostOptions.TryStreamPeriod(10.0, out TimeSpan period), Is.True);
+                await using StateStreamServer server = await StateStreamServer.StartAsync(new IPEndPoint(IPAddress.Loopback, 0), period);
+                using System.Net.Sockets.TcpClient probe = new System.Net.Sockets.TcpClient();
+                Assert.That(
+                    () => probe.Connect(IPAddress.Loopback, extraPort),
+                    Throws.InstanceOf<System.Net.Sockets.SocketException>());
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(Variable, null);
             }
         }
 

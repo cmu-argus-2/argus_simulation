@@ -71,9 +71,12 @@ The host also serves the state stream to Unity (`argus/stream/v1`, CON-1,
 `ARGUS_STREAM_ENDPOINT`, then `127.0.0.1:50052`, a loopback `host:port` only, in cleartext
 HTTP/2. Each client receives at most `--stream-rate-hz` (then `ARGUS_STREAM_RATE_HZ`, then 10)
 pairs per second of wall-clock time: the latest state with the latest frame of each non-camera
-sensor. The step loop only replaces that latest pair, so a slow or stalled client never delays a
-step; it just receives fewer pairs. A port already in use exits 1 before the host configures the
-service. An unpaced run may finish before a client connects.
+sensor. The rate must be above 0 and at most 1000 Hz, and its period is rounded up to whole
+milliseconds (400 Hz sends every 3 ms). The web host reads no `appsettings.json` or
+`ASPNETCORE_`/`DOTNET_` variables, so nothing but `--stream-endpoint` opens a listener. The step
+loop only replaces that latest pair, so a slow or stalled client never delays a step; it just
+receives fewer pairs. A port already in use exits 1 before the host configures the service. An
+unpaced run may finish before a client connects.
 
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,

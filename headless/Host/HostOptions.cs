@@ -16,6 +16,11 @@ namespace Argus.Simulation.Host
         public const string StreamRateVariable = "ARGUS_STREAM_RATE_HZ";
         public const double DefaultStreamRateHz = 10.0;
 
+        // The stream's send timer (PeriodicTimer) takes whole milliseconds, from 1 ms to
+        // uint.MaxValue - 1 ms, so the rate is at most 1000 Hz and at least one send per 49.7 days.
+        public const double MaximumStreamRateHz = 1000.0;
+        private const double MaximumStreamPeriodMilliseconds = uint.MaxValue - 1.0;
+
         // The checked-in P0 run file, copied next to the host binary.
         public static readonly string DefaultRunConfigurationPath =
             Path.Combine(AppContext.BaseDirectory, "runs", "p0-default.json");
@@ -39,7 +44,8 @@ namespace Argus.Simulation.Host
             string runConfigurationPath,
             string recordDirectory,
             IPEndPoint streamEndpoint,
-            double streamRateHz)
+            double streamRateHz,
+            TimeSpan streamPeriod)
         {
             DurationSeconds = durationSeconds;
             RealTimeFactor = realTimeFactor;
@@ -48,6 +54,7 @@ namespace Argus.Simulation.Host
             RecordDirectory = recordDirectory;
             StreamEndpoint = streamEndpoint;
             StreamRateHz = streamRateHz;
+            StreamPeriod = streamPeriod;
         }
 
         public double DurationSeconds { get; }
@@ -63,6 +70,10 @@ namespace Argus.Simulation.Host
 
         // Finite and positive; it paces delivery only, never physics or sensor sampling.
         public double StreamRateHz { get; }
+
+        // The least time between two sends to one client: 1 / StreamRateHz rounded up to whole
+        // milliseconds, so a client never receives faster than StreamRateHz.
+        public TimeSpan StreamPeriod { get; }
 
         // Each endpoint and the stream rate come from the flag, then the environment, then the
         // default.
@@ -154,15 +165,37 @@ namespace Argus.Simulation.Host
 
             streamRate = FirstSet(streamRate, StreamRateVariable, null);
             double streamRateHz = DefaultStreamRateHz;
-            if (streamRate != null && (!TryParseDouble(streamRate, out streamRateHz) || streamRateHz <= 0.0))
+            if ((streamRate != null && !TryParseDouble(streamRate, out streamRateHz)) ||
+                !TryStreamPeriod(streamRateHz, out TimeSpan streamPeriod))
             {
-                error = $"The stream rate must be a positive number of Hz, got '{streamRate}'.";
+                error = "--stream-rate-hz (or $" + StreamRateVariable + ") must be a number of Hz above 0 and at most " +
+                    $"{MaximumStreamRateHz:R}, at least one send per 49.7 days, got '{streamRate}'.";
                 return false;
             }
 
             options = new HostOptions(
-                durationSeconds, realTimeFactor, address, runConfigurationPath, recordDirectory, stream, streamRateHz);
+                durationSeconds, realTimeFactor, address, runConfigurationPath, recordDirectory, stream, streamRateHz, streamPeriod);
             error = null;
+            return true;
+        }
+
+        // The send period of a rate, rounded up to whole milliseconds; false for a rate the timer
+        // cannot keep.
+        internal static bool TryStreamPeriod(double rateHz, out TimeSpan period)
+        {
+            period = default;
+            if (!(rateHz > 0.0) || rateHz > MaximumStreamRateHz)
+            {
+                return false;
+            }
+
+            double milliseconds = Math.Ceiling(1000.0 / rateHz);
+            if (milliseconds > MaximumStreamPeriodMilliseconds)
+            {
+                return false;
+            }
+
+            period = TimeSpan.FromMilliseconds(milliseconds);
             return true;
         }
 

@@ -123,7 +123,8 @@ is distinct from the original per-step SensorManager output used by the recorder
 ### Delivery rules
 
 - Cap sends at 10 Hz of **wall-clock** time by default. Host rate precedence is
-  `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > 10; require a finite positive value.
+  `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > 10; require a finite value above 0 and at most 1000 Hz.
+  `headless/Host` rounds the period up to whole milliseconds, so a client never receives faster than the rate.
   This configures delivery, never the physics or sensor sample period. No runtime tuning RPC.
 - Host keeps the latest frame per non-camera sensor in the current generation. Every
   produced frame updates that sensor's slot, including Unavailable/Invalid (which must
