@@ -111,7 +111,7 @@ class Scenario:
             self.clock.accuracyNanos = PACING_ACCURACY_NS
             self.sim.AddModelToTask(PACING_TASK_NAME, self.clock)
 
-        # SPICE (§8). auto_configure_kernels=False stops bsk 2.11.1 from fetching its default
+        # SPICE (§8). auto_configure_kernels=False stops bsk from fetching its default
         # kernels (de430 and others) through pooch when the module is constructed.
         self.spice = spiceInterface.SpiceInterface(auto_configure_kernels=False)
         self.spice.ModelTag = "spiceInterface"
@@ -263,7 +263,7 @@ class Scenario:
             ),
             earth=_planet(earth, "earth"),
             sun=_planet(sun, "sun"),
-            # bsk 2.11.1: the reader returns the eclipse module's EclipseMsgPayload, whose only
+            # The reader returns the eclipse module's EclipseMsgPayload, whose only
             # field is the C name shadowFactor (1 sunlit, 0 umbra) and reads without a warning;
             # illuminationFactor is a Python alias that exists only on messaging.EclipseMsgPayload.
             spacecraft_shadow_factor=_finite(shadow.shadowFactor, "eclipseOutMsgs[0].shadowFactor"),

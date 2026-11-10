@@ -2,7 +2,7 @@ namespace Argus.Simulation.Core
 {
     // Gyroscope half of an ImuProfile. Output is scale x (true + noise + bias), quantised, then
     // clipped. Comments name the Basilisk imuSensor attribute each field sets; the service rejects
-    // combinations Basilisk 2.11.1 cannot represent (see Argus.Basilisk/README.md).
+    // combinations Basilisk's imuSensor cannot represent (see Argus.Basilisk/README.md).
     public readonly struct GyroscopeProfile
     {
         public GyroscopeProfile(

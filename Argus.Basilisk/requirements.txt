@@ -4,12 +4,12 @@ bokeh==3.9.0 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (pl
     --hash=sha256:775219714a8496973ddbae16b1861606ba19fe670a421e4d43267b41148e07a3 \
     --hash=sha256:b252bfb16a505f0e0c57d532d0df308ae1667235bafc622aa9441fe9e7c5ce4a
     # via bsk
-bsk==2.11.1 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') \
-    --hash=sha256:4d932881e630319fe751abf4e1ecde3aee8e7380cce579ec5447cf9652689b11 \
-    --hash=sha256:89bc5ef549f16f04935e2dbb4a5ce2f3cc424d5ff21e9f9ed21ce2246f5ca01d \
-    --hash=sha256:bcfed0f23f12078fa5b28ce17027d668385d7d7766010a34c023c9feaae7ec4a \
-    --hash=sha256:ea2072ca233c6ec24eba18e039319bf9e4ab3a0a41bd75bae95c3f93d64e14f7 \
-    --hash=sha256:f179faa2e4a2ecfa2f65bbde73a4eebf0a12f20158c5faaec1fb630d90634f73
+bsk==2.12.2 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') \
+    --hash=sha256:8608b6d65be41efddbae518089f97084a1ecd08b95a99f52fd88810cbc95a801 \
+    --hash=sha256:8b3b8bfa54d748d9bde24400a83be5eaf2e8428865e0a1048f7ceb748f65e819 \
+    --hash=sha256:9218d6c5fe99b77f470d6abe251dcbbefd77617f12c46f2e8dcdb327322d5302 \
+    --hash=sha256:db43095b1bf3fdc484289eeca8fa2798cefae54b2200ae2aa5539c3d941027a4 \
+    --hash=sha256:ed0ab8b4e660db127b60334f6175a0347511076cc3ba78644fd812f72ac65dfd
     # via argus-basilisk
 certifi==2026.10.19 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') \
     --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \

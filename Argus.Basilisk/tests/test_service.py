@@ -1,7 +1,7 @@
 """Service acceptance (README §13) over a real in-process gRPC server: BSK-3, the IMU (BSK-4) and
 the magnetometer (BSK-5).
 
-Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
+Needs the basilisk extra. The live-run tests also need the P0 kernel set
 argus-2026-11-02 in kernels/, and the SPICE reference test needs argus-2026-09-25
 (scripts/fetch_kernels.py); each is skipped without its files.
 """
@@ -222,7 +222,7 @@ def test_concurrent_call_is_resource_exhausted(service):
 
 
 def test_building_a_scenario_never_downloads(tmp_path):
-    """bsk 2.11.1 fetches de430 through pooch when SpiceInterface is built with defaults (D3)."""
+    """bsk fetches de430 through pooch when SpiceInterface is built with defaults (D3)."""
     script = """
 import sys
 from types import SimpleNamespace
@@ -267,7 +267,7 @@ def test_configure_run_echoes_every_field(service):
     assert response.kernel_set_id == P0_KERNEL_SET
     assert response.fixed_step_ns == STEP_NS
     assert list(response.configured_device_ids) == []
-    assert response.basilisk_version == "2.11.1"
+    assert response.basilisk_version == "2.12.2"
     assert response.spice_earth_frame == "ITRF93"
     assert servicer.state == servicer_module.READY
 
