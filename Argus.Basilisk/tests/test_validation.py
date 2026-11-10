@@ -337,14 +337,14 @@ INVALID_CASES = [
      'configuration.devices[1].parameters["range_tesla"]: must be finite and > 0'),
     ("zero light saturation", lambda r: setattr(parameter(r, 4, "saturation_w_per_m2"), "number", 0.0),
      'configuration.devices[4].parameters["saturation_w_per_m2"]: must be finite and > 0'),
-    # bsk 2.11.1 limits.
+    # imuSensor limits.
     ("gyro noise and random walk",
      lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"), "number", 1e-6),
-     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: bsk 2.11.1 cannot combine'),
+     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: imuSensor cannot combine'),
     ("accel noise and random walk",
      lambda r: setattr(parameter(r, 0, "accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"), "number", 1e-5),
      'configuration.devices[0].parameters["accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"]: '
-     'bsk 2.11.1 cannot combine'),
+     'imuSensor cannot combine'),
     ("walk bound without random walk",
      lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_bound_rad_per_s"), "number", 1e-3),
      'configuration.devices[0].parameters["gyroscope.bias_random_walk_bound_rad_per_s"]: needs'),

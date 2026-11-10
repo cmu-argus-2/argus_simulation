@@ -1,6 +1,6 @@
 namespace Argus.Simulation.Core
 {
-    // Output is scale x (field + noise + bias), then clipped to +/-range. Basilisk 2.11.1 has no
+    // Output is scale x (field + noise + bias), then clipped to +/-range. Basilisk 2.12.2 has no
     // magnetometer quantisation, so there is no resolution field. Comments name the Basilisk
     // magnetometer attribute each field sets.
     public readonly struct MagnetometerProfile
@@ -18,7 +18,7 @@ namespace Argus.Simulation.Core
         }
 
         // Per-sample white noise at the configured sample period, seeded per sensor by the
-        // Basilisk service (bsk 2.11.1 ignores the magnetometer's RNGSeed).
+        // Basilisk service (Argus.Basilisk/README.md §10).
         public double NoiseStdTesla { get; }
 
         // senBias.

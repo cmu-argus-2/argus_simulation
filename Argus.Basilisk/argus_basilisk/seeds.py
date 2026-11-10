@@ -4,8 +4,8 @@ Every noisy module gets its own seed, derived from the run seed, the Argus senso
 noise stream, so changing one sensor or stream never changes another module's noise. Never
 Python hash(), which is salted per process, and never the shared module default 0x1badcad1.
 
-Streams bsk 2.11.1 cannot seed or shape are drawn by the service, one sample at a time
-(sample_normals), keyed by sample_index. numpy is imported only to draw them, so the device
+The mag and css streams are drawn by the service, one sample at a time (sample_normals), keyed
+by sample_index, so a sample never depends on how many came before it. numpy is imported only to draw them, so the device
 registry, which imports this module, stays importable without the basilisk extra.
 """
 

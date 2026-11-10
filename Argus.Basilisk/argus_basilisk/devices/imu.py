@@ -7,7 +7,7 @@ from ._common import NUMBER, VECTOR3, Invalid, array, dcm, non_negative, positiv
 
 KIND = "imu"
 
-# imuSensor rate channel and specific-force channel. bsk 2.11.1 keeps one Gauss-Markov state per
+# imuSensor rate channel and specific-force channel. imuSensor keeps one Gauss-Markov state per
 # axis, so noise density and random walk exclude each other. README §9 maps each key.
 _CHANNELS = {
     "gyroscope": (
@@ -48,7 +48,7 @@ OUTPUTS = {
 
 
 def check(values, invalid: Invalid) -> None:
-    """Core GyroscopeProfile / AccelerometerProfile.IsValid plus the bsk 2.11.1 limits."""
+    """Core GyroscopeProfile / AccelerometerProfile.IsValid plus the imuSensor limits."""
     for channel, names in _CHANNELS.items():
         noise, walk, bound, _, scale, value_range, resolution = (f"{channel}.{name}" for name in names)
         for key in (noise, walk, bound):
@@ -58,13 +58,13 @@ def check(values, invalid: Invalid) -> None:
         if non_negative(values, invalid, resolution) and range_valid and values[resolution] >= values[value_range]:
             invalid(resolution, f"must be < {value_range} ({values[value_range]!r})", values[resolution])
 
-        # bsk 2.11.1 keeps one Gauss-Markov state per axis, so white noise and random walk exclude
+        # imuSensor keeps one Gauss-Markov state per axis, so white noise and random walk exclude
         # each other, and the walk bound would clip white noise if there were no random walk.
         if noise in values and walk in values and values[noise] > 0.0 and values[walk] > 0.0:
-            invalid(walk, f"bsk 2.11.1 cannot combine it with {noise} > 0 ({values[noise]!r}); set one of them to 0",
+            invalid(walk, f"imuSensor cannot combine it with {noise} > 0 ({values[noise]!r}); set one of them to 0",
                     values[walk])
         if bound in values and walk in values and values[bound] > 0.0 and not values[walk] > 0.0:
-            invalid(bound, f"needs {walk} > 0 (bsk 2.11.1 would bound white noise instead)", values[bound])
+            invalid(bound, f"needs {walk} > 0 (imuSensor would bound white noise instead)", values[bound])
 
 
 def build(device, random_seed: int, inputs) -> "Imu":
@@ -74,8 +74,8 @@ def build(device, random_seed: int, inputs) -> "Imu":
 class Imu:
     """One Argus IMU as two imuSensor modules: gyroscope noise only and accelerometer noise only.
 
-    bsk 2.11.1 seeds both channels of one imuSensor from a single RNGSeed, so each channel gets its
-    own module and seed stream. Both modules share the mount and the deterministic errors; the
+    One imuSensor draws both channels from its single RNGSeed, so each channel gets its own module
+    and seed stream. Both modules share the mount and the deterministic errors; the
     gyroscope module supplies AngVelPlatform and the accelerometer module AccelPlatform.
     """
 

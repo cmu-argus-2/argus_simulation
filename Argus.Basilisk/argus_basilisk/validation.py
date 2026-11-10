@@ -1,7 +1,7 @@
 """ConfigureRun and Step-command validation (README §3 and §11).
 
 Pure functions over the generated argus.sim.v1 and argus.basilisk.v1 messages. They repeat Core
-IsValid so Argus and Basilisk agree on what a valid run is (G5), add the bsk 2.11.1 limits, and
+IsValid so Argus and Basilisk agree on what a valid run is (G5), add the imuSensor limits, and
 run before anything touches Basilisk. Devices are checked against the kind registry (devices.KINDS).
 This module never imports Basilisk.
 """
