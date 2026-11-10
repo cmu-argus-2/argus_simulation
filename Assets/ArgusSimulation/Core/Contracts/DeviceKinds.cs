@@ -14,7 +14,11 @@ namespace Argus.Simulation.Core
             MagnetometerKind.Instance,
             LightSensorKind.Instance,
             CameraKind.Instance,
-            NadirGroundTruthCameraKind.Instance
+            NadirGroundTruthCameraKind.Instance,
+            IdealBodyTorqueKind.Instance,
+            MomentumWheelKind.Instance,
+            MagneticTorquerKind.Instance,
+            ThrusterKind.Instance
         };
 
         private static readonly Dictionary<string, IDeviceKind> ByName = Index(Registered);

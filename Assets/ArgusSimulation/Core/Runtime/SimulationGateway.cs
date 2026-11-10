@@ -135,7 +135,7 @@ namespace Argus.Simulation.Core
                 throw new ArgumentException(rejection, nameof(command));
             }
 
-            DeviceCommandSet applied = command;
+            DeviceCommandSet applied = WithIdleActuators(command);
             Log(new CommandRecord(
                 _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Applied, command, applied));
 
@@ -267,28 +267,73 @@ namespace Argus.Simulation.Core
                     _nextSimulationTimeSeconds);
             }
 
-            // Only the run's actuators take commands, and none is configured until the first
-            // actuator kind exists (CON-2, #34), so every command naming a device is rejected and
-            // never reaches the engine. TODO(G1): check each command's values against its kind and
-            // limits (CORE-10, #46).
+            // Only the run's actuators take commands, each with exactly its kind's command values.
+            // TODO(G1): check each command's values against its device's limits (CORE-10, #46).
             foreach (DeviceCommand device in command.Commands)
             {
-                if (!IsConfiguredActuator(device.DeviceId))
+                IActuatorKind actuator = ConfiguredActuatorKind(device.DeviceId);
+                if (actuator == null)
                 {
                     return $"Device '{device.DeviceId}' is not an actuator this run configures.";
+                }
+
+                string problem = actuator.FindCommandProblem(device.Values);
+                if (problem != null)
+                {
+                    return $"Device '{device.DeviceId}' command {problem}.";
+                }
+
+                // TODO(G1): no engine applies actuator commands yet. The analytic fixture only
+                // records them, and the service builds no effector until BSK-8 (#21), so it would
+                // return UNIMPLEMENTED and end the run after an Applied record. Refuse instead, so
+                // the log tells the truth and the run continues; BSK-8 lifts this.
+                if (!actuator.IsIdle(device.Values))
+                {
+                    return $"Device '{device.DeviceId}': applying actuator commands is not built yet (BSK-8, #21).";
                 }
             }
 
             return null;
         }
 
-        private bool IsConfiguredActuator(string deviceId)
+        private IActuatorKind ConfiguredActuatorKind(string deviceId)
         {
             foreach (DeviceConfiguration device in _scenario.Devices)
             {
                 if (device.Definition.SensorId == deviceId)
                 {
-                    return device.KindDefinition?.Role == DeviceRole.Actuator;
+                    return device.KindDefinition as IActuatorKind;
+                }
+            }
+
+            return null;
+        }
+
+        // The command the engine runs: the controller's, then every configured actuator it leaves
+        // out at its kind's idle values, so one record replays the step (docs/device-model.md §6).
+        private DeviceCommandSet WithIdleActuators(DeviceCommandSet command)
+        {
+            List<DeviceCommand> commands = new List<DeviceCommand>(command.Commands);
+            foreach (DeviceConfiguration device in _scenario.Devices)
+            {
+                if (device.KindDefinition is IActuatorKind actuator && !IsCommanded(command, device.Definition.SensorId))
+                {
+                    commands.Add(new DeviceCommand(device.Definition.SensorId, actuator.IdleValues));
+                }
+            }
+
+            return commands.Count == command.Commands.Count
+                ? command
+                : new DeviceCommandSet(command.Sequence, command.ApplyAtSimulationTimeSeconds, commands);
+        }
+
+        private static bool IsCommanded(DeviceCommandSet command, string deviceId)
+        {
+            foreach (DeviceCommand device in command.Commands)
+            {
+                if (device.DeviceId == deviceId)
+                {
+                    return true;
                 }
             }
 

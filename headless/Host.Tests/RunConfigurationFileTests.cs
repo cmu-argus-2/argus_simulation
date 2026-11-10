@@ -689,7 +689,13 @@ namespace Argus.Simulation.Host.Tests
                 Light("light.py", "light_py", new Vector3d(0.0, 0.05, 0.0), z, x, y),
                 Light("light.my", "light_my", new Vector3d(0.0, -0.05, 0.0), Negate(z), x, Negate(y)),
                 Light("light.pz", "light_pz", new Vector3d(0.0, 0.0, 0.05675), x, y, z),
-                Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.05675), x, Negate(y), Negate(z))
+                Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.05675), x, Negate(y), Negate(z)),
+                // An actuator has no period and publishes no frames (docs/device-model.md §1).
+                IdealBodyTorqueKind.Instance.Configure(
+                    new SensorDefinition(
+                        "torque.body", "placeholder-ideal-body-torque", "torque_body", 0.0, "basilisk", SensorMount.Identity,
+                        isControllerVisible: false),
+                    new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))
             };
 
             return new SimulationConfiguration(

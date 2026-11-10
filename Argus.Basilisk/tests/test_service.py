@@ -28,7 +28,7 @@ from argus_basilisk import scenario as scenario_module  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
-from argus_basilisk.devices import KINDS  # noqa: E402
+from argus_basilisk.devices import KINDS, is_actuator, of_kind  # noqa: E402
 from argus_basilisk.seeds import CSS, MAG, rng_seed, sample_normals  # noqa: E402
 from test_validation import (  # noqa: E402
     p0_default_request, set_parameter, set_quaternion, set_vector, torque_command, zero_command)
@@ -96,7 +96,8 @@ def imu_request():
 
 
 def light_sensor_request():
-    """The full P0 set: IMU, magnetometer and six light sensors (all noise-free light sensors)."""
+    """The full P0 set: IMU, magnetometer, six light sensors (all noise-free) and the ideal body
+    torque actuator, which builds no modules until BSK-8."""
     return p0_default_request()
 
 
@@ -627,7 +628,7 @@ def noisy_p0_request():
     request = noisy_magnetometer_request()
     full = light_sensor_request()
     request.configuration.devices.extend(full.configuration.devices[2:])
-    for device in request.configuration.devices[2:]:
+    for device in of_kind(request.configuration.devices, "light_sensor"):
         set_parameter(device, "noise_std_w_per_m2", 1.0)
     return request
 
@@ -642,7 +643,7 @@ def test_noisy_light_sensors_add_seeded_noise_to_the_noise_free_reading(service)
     noisy = [stub.Step(step_request(n)) for n in range(20)]
 
     lit = 0
-    for device in request.configuration.devices[2:]:
+    for device in of_kind(request.configuration.devices, "light_sensor"):
         device_id = device.device_id
         parameters = device.parameters
         seed = rng_seed(request.configuration.random_seed, device_id, CSS)
@@ -660,16 +661,19 @@ def test_noisy_light_sensors_add_seeded_noise_to_the_noise_free_reading(service)
 def test_configure_run_accepts_the_full_p0_sensor_set(service):
     _, stub = service
     assert list(stub.ConfigureRun(light_sensor_request()).configured_device_ids) == [
-        "imu.main", "mag.main", *P0_LIGHT_SENSOR_IDS]
+        "imu.main", "mag.main", *P0_LIGHT_SENSOR_IDS, "torque.body"]
 
 
 @real_kernels
 def test_every_output_has_exactly_its_kind_keys_and_types(service):
-    """Step(0) has an empty IMU output (no data yet); every other sample carries the kind's OUTPUTS."""
+    """Step(0) has an empty IMU output (no data yet); every other sample carries the kind's OUTPUTS.
+    Actuators publish no samples."""
     _, stub = service
     request = light_sensor_request()
     stub.ConfigureRun(request)
-    kinds = {device.device_id: KINDS[device.kind] for device in request.configuration.devices}
+    kinds = {
+        device.device_id: KINDS[device.kind] for device in request.configuration.devices
+        if not is_actuator(KINDS[device.kind])}
     for n in range(3):
         response = stub.Step(step_request(n))
         assert [sample.device_id for sample in response.device_samples] == list(kinds)
@@ -766,7 +770,8 @@ def one_orbit_albedo(stub, servicer):
     configuration = request.configuration
     configuration.fixed_step_ns = 10_000_000_000
     for device in configuration.devices:
-        device.sample_period_ns = configuration.fixed_step_ns
+        if not is_actuator(KINDS[device.kind]):
+            device.sample_period_ns = configuration.fixed_step_ns
     stub.ConfigureRun(request)
     readers = servicer._run.scenario.readers
     rows = []

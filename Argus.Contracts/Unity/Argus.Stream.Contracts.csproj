@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Generation/build check for Unity-compatible managed contracts; no Core or Basilisk. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.36.2" />
+    <PackageReference Include="Grpc.Core.Api" Version="2.84.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.84.0" PrivateAssets="All" />
+    <Protobuf Include="../proto/argus/sim/v1/*.proto" ProtoRoot="../proto" GrpcServices="None" />
+    <Protobuf Include="../proto/argus/stream/v1/state_stream.proto" ProtoRoot="../proto" GrpcServices="Client" />
+  </ItemGroup>
+</Project>

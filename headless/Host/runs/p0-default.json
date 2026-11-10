@@ -301,6 +301,20 @@
         "exposure_duration_s": 0.0005,
         "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
       }
+    },
+    {
+      "deviceId": "torque.body",
+      "kind": "ideal_body_torque",
+      "modelName": "placeholder-ideal-body-torque",
+      "frameId": "torque_body",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.0, 0.0],
+        "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+      },
+      "parameters": {
+        "max_torque_body_n_m": [0.001, 0.001, 0.001],
+        "limit_policy": "clamp"
+      }
     }
   ]
 }

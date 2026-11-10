@@ -126,8 +126,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    Device checks walk `devices.KINDS`. A device problem names its path, for example
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
-   Pacing stays UNIMPLEMENTED until BSK-7 (#20). No actuator kind is registered yet (CON-2,
-   #34), so a Step command may name no device, and applying commands waits for BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   Pacing stays UNIMPLEMENTED until BSK-7 (#20). The actuator kinds are registered (CON-2,
+   #34) but build nothing, so only idle commands run until BSK-8 (#21) applies the rest. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -157,11 +157,12 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    sent in the wrong request is rejected instead of acting a step off. The set is complete:
    an actuator it leaves out is idle, so the empty set is no output. Each command names a
    configured actuator once, with set, finite values; otherwise INVALID_ARGUMENT
-   (`commands.commands[0].device_id: is not an actuator this run configures`). Until actuator
-   kinds exist (CON-2, #34) a run has no actuators, so only the empty set is valid. Step(0)
-   follows no command: both fields are unset and the set is empty, or INVALID_ARGUMENT (no
-   interval ends at t = 0). A command for a configured actuator is UNIMPLEMENTED until BSK-8
-   (#21) applies it (G1).
+   (`commands.commands[0].device_id: is not an actuator this run configures`), and exactly its
+   kind's `COMMANDS` keys, or INVALID_ARGUMENT naming the key. Step(0) follows no command: both
+   fields are unset and the set is empty, or INVALID_ARGUMENT (no interval ends at t = 0). No
+   actuator builds an effector until BSK-8 (#21) (G1), so a command at its kind's `IDLE` values
+   runs, since it applies nothing, and any other is UNIMPLEMENTED. The gateway sends every
+   configured actuator, idle ones included, so a P0 run with `torque.body` steps cleanly.
 4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
    otherwise OUT_OF_RANGE, checked before executing.
 5. For n > 0, write the request's command (command n-1) into the actuator input messages
@@ -404,7 +405,14 @@ module defines `KIND`; `PARAMETERS` and `OUTPUTS`, which map each key to its `De
 case; `check(values, invalid)`, its range checks; and `build(device, random_seed, inputs)`,
 its Argus sensor, whose `output()` returns the output map. `devices.build_sensors` and
 `validation.py` walk `KINDS`. Adding a kind is one module plus one registration. Every
-parameter key is required, and no kind has a default or an initial state.
+parameter key is required, and no sensor kind has a default or an initial state.
+
+The actuator kinds (`ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`;
+CON-2, #34) are registered the same way, with `ROLE = ACTUATOR`, `COMMANDS` and `IDLE` in place
+of `OUTPUTS`, and no `build` until BSK-8 (#21) builds their effectors. Their keys are in
+[device-model.md](../docs/device-model.md) §2; `momentum_wheel` has an initial state,
+`speed_rad_per_s`. An actuator has `sample_period_ns` 0, no `controller_visible` and an
+identity `mount.device_to_body`, or ConfigureRun returns INVALID_ARGUMENT.
 
 Common: `C_SB = EP2C([w, x, y, z])` of `mount.device_to_body`; `mount.position_body_m` goes
 to IMU `sensorPos_B`, CSS `r_B` and albedo `r_IB_B`. **Always set the A matrix

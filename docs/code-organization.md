@@ -12,6 +12,7 @@ The target design these folders work toward is in [target-architecture.md](targe
 Assets/ArgusSimulation/
 ├── Core/                         # Pure C#; no Unity or Cesium dependencies (noEngineReferences)
 │   ├── Abstractions/             # Replaceable backend/service interfaces
+│   ├── Actuators/                # Actuator device kinds and their profiles (D11, CON-2)
 │   ├── Basilisk/                 # Internal Basilisk-to-Argus mapping (D8; visible to host and tests)
 │   ├── Contracts/                # State, command, step, and configuration DTOs
 │   ├── Dynamics/                 # Analytic dynamics (development and test fixture)
@@ -51,6 +52,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
+Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (download_gibs_pack.py)
 ```
 
 ## Class map
@@ -60,7 +62,7 @@ Argus.Hardware/                   # Flight-computer adapters (README placeholder
 | Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `IStepDrivenStateSource` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
-| Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry), `DeviceSource` (a device's `basilisk` or `argus` label, from its kind); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases |
+| Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry), `DeviceSource` (a device's `basilisk` or `argus` label, from its kind); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases; actuators `IActuatorKind`, `ActuatorLimitPolicy`, `ActuatorGeometry`, and `IdealBodyTorqueKind`, `MomentumWheelKind`, `MagneticTorquerKind` and `ThrusterKind` with their profiles, on `ActuatorKind<TProfile>` (in `Core/Actuators`) |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
