@@ -856,6 +856,58 @@ def test_a_state_field_of_the_wrong_type_is_reported_not_raised(tmp_path, spin_c
     assert any(p.startswith(f"{field}: state {index}") for p in report.problems), report.problems
 
 
+# The recorder writes a non-finite value as null, element by element (Core/Recording/README.md, "Numbers"): a legal
+# recording that must FAIL its metric, not raise.
+@pytest.mark.parametrize("field, metric", [
+    ("position_ecef_m", "position_m"), ("velocity_ecef_m_s", "velocity_m_s"),
+    ("earth_angular_velocity_itrf93_rad_s", "earth_rate_rel"), ("sun_position_itrf93_m", "sun_position_rel"),
+    ("body_to_ecef_xyzw", "attitude_rad"),
+])
+def test_a_null_element_as_the_recorder_writes_it_fails_the_metric(tmp_path, spin_case, field, metric):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    holder = states[3000] if field in states[3000] else states[3000]["environment"]
+    holder[field] = [None] + list(holder[field][1:])
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "null", run, states, frames), FakeEphemeris())
+    assert any(p.startswith(metric.split("_")[0]) and metric in p for p in report.problems), report.problems
+
+
+@pytest.mark.parametrize("field, metric", [("angular_velocity_sensor_rad_s", "gyro_rad_s"),
+                                           ("specific_force_sensor_m_s2", "accel_m_s2")])
+def test_a_null_imu_element_fails_the_metric(tmp_path, spin_case, field, metric):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    frames[100]["payload"][field] = [None] + list(frames[100]["payload"][field][1:])
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "imu-null", run, states, frames), FakeEphemeris())
+    assert any(metric in p for p in report.problems), report.problems
+
+
+def test_a_null_irradiance_fails_the_metric(tmp_path):
+    run, case = reference_run("r5-sun-pointing"), check.CASES["r5-sun-pointing"]
+    eph = FakeEphemeris()
+    states, frames = simulate(run, eph, 600, 0.1, irradiance=sun_irradiance(run, eph))
+    frames[100]["payload"]["irradiance_w_m2"] = None
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "irr-null", run, states, frames), eph)
+    assert any("irradiance_rel" in p for p in report.problems), report.problems
+
+
+@pytest.mark.parametrize("line", ["not-utf8", b'{"sequence": ' + b"9" * 5000 + b"}"],
+                         ids=["not-utf8", "5000-digit-integer"])
+def test_a_states_line_that_does_not_parse_is_reported_not_raised(tmp_path, spin_case, line):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    directory = write_dataset(tmp_path / "bytes", run, states, frames)
+    text = (directory / "states.jsonl").read_bytes().split(b"\n")
+    if line == "not-utf8":  # one bad byte inside an otherwise valid line: replacing it would hide the corruption
+        line = text[3].replace(b'"sequence"', b'"seq\xffuence"', 1)
+        assert line != text[3]
+    text[3] = line
+    (directory / "states.jsonl").write_bytes(b"\n".join(text))
+    report = check.check_dataset(case, run, directory, FakeEphemeris())
+    assert any(p.startswith("states.jsonl: line 4") for p in report.problems), report.problems
+    assert report.metrics == {}
+
+
 KERNEL_DATA = ROOT  # Argus.Basilisk/, as the service uses it
 _KERNEL_SET = json.loads((ROOT / "kernel_sets" / "argus-2026-11-02.json").read_text())
 _HAVE_KERNELS = all((ROOT / "kernels" / entry["file"]).exists()

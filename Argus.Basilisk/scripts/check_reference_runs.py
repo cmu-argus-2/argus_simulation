@@ -415,7 +415,8 @@ def echo_problems(manifest: dict, run: dict) -> list[str]:
     if sorted(listed) != sorted(wanted):  # a list, so a device listed twice is refused too
         problems.append(f"devices in the manifest are {sorted(listed)}, the run file has {sorted(wanted)}")
     for device_id in sorted(set(recorded) & set(wanted)):
-        problems += [f"device {device_id}: {key} in the manifest is {recorded[device_id].get(key)!r}, the run file has {want!r}"
+        problems += [f"device {device_id}: {key} in the manifest is {recorded[device_id].get(key)!r}, "
+                     + (f"its kind's is {want!r}" if key == "source" else f"the run file has {want!r}")
                      for key, want in wanted[device_id].items() if recorded[device_id].get(key) != want]
     return problems
 
@@ -431,6 +432,8 @@ def _flatten(parameters: dict, prefix: str = "") -> dict:
 # Who models each device kind the cases compare: all of them Basilisk (D10). A run file no longer names it; the host
 # derives it from the kind (CORE-22 #136) and writes it to the manifest.
 KIND_SOURCE = {"imu": "basilisk", "light_sensor": "basilisk"}
+if not set().union(*DEVICE_KINDS.values()) <= set(KIND_SOURCE):  # the two tables are kept in step by hand
+    raise RuntimeError(f"KIND_SOURCE lacks {sorted(set().union(*DEVICE_KINDS.values()) - set(KIND_SOURCE))}")
 
 
 def _run_device(device: dict) -> dict:
@@ -441,7 +444,7 @@ def _run_device(device: dict) -> dict:
               "mount.position_body_m": device["mount"]["positionBodyMeters"],
               "mount.device_to_body_xyzw": [q["x"], q["y"], q["z"], q["w"]],
               "parameters": _flatten(device.get("parameters") or {})}
-    values["source"] = KIND_SOURCE.get(device["kind"])
+    values["source"] = KIND_SOURCE[device["kind"]]
     return values
 
 
@@ -458,16 +461,17 @@ class _Unreadable(str):
 
 
 def _read_jsonl(path: Path):
-    """Each non-blank line's JSON value; a line that doesn't parse comes back as _Unreadable, so the gate reports it."""
+    """Each non-blank line's JSON value; a line that doesn't parse (bad JSON, bad UTF-8, a number Python won't read, or
+    nesting too deep) comes back as _Unreadable, so the gate reports it."""
     if not path.exists():
         return
-    with path.open() as handle:
-        for line in handle:
-            if line.strip():
+    with path.open("rb") as handle:
+        for raw in handle:
+            if raw.strip():
                 try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    yield _Unreadable(line.strip())
+                    yield json.loads(raw.decode("utf-8"))
+                except (ValueError, RecursionError):  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+                    yield _Unreadable(raw.strip()[:60].decode("utf-8", "replace"))
 
 
 def _quat(d: dict) -> np.ndarray:
@@ -489,7 +493,8 @@ def _scan_states(path: Path, step_s: float, epoch_utc: str) -> tuple[int, list[s
         if problems:
             continue
         if not isinstance(state, dict):
-            problems.append(f"states.jsonl: line {k + 1} is not a JSON object: {str(state)[:60]!r}")
+            what = "doesn't parse" if isinstance(state, _Unreadable) else "is not a JSON object"
+            problems.append(f"states.jsonl: line {k + 1} {what}: {str(state)[:60]!r}")
             continue
         time, stamp = _number(state.get("simulation_time_s")), _parsed_utc(state.get("timestamp_utc"))
         if _integer(state.get("sequence")) != k:
@@ -508,7 +513,8 @@ def _scan_sensors(path: Path, device_ids) -> tuple[int, list[str]]:
         count += 1
         if not isinstance(frame, dict):
             if not problems:
-                problems.append(f"sensors.jsonl: line {count} is not a JSON object: {str(frame)[:60]!r}")
+                what = "doesn't parse" if isinstance(frame, _Unreadable) else "is not a JSON object"
+                problems.append(f"sensors.jsonl: line {count} {what}: {str(frame)[:60]!r}")
         elif frame.get("sensor_id") not in device_ids:
             unknown.add(str(frame.get("sensor_id")))
     if unknown:
@@ -575,15 +581,15 @@ def check_dataset(case: Case, run: dict, directory, ephemeris, tolerances: dict 
         frame, frame_dot = ephemeris.frame(et)
         q_frame = quat_from_dcm(frame)
         env = state["environment"]
-        _worst(m, "position_m", np.linalg.norm(np.asarray(state["position_ecef_m"]) - frame @ r))
-        _worst(m, "velocity_m_s", np.linalg.norm(np.asarray(state["velocity_ecef_m_s"]) - (frame @ v + frame_dot @ r)))
+        _worst(m, "position_m", np.linalg.norm(np.asarray(state["position_ecef_m"], float) - frame @ r))
+        _worst(m, "velocity_m_s", np.linalg.norm(np.asarray(state["velocity_ecef_m_s"], float) - (frame @ v + frame_dot @ r)))
         _worst(m, "frame_rad", rotation_angle(q_frame, _unit(env["j2000_to_itrf93_xyzw"])))
         sun = frame @ ephemeris.sun_j2000(et)
         _worst(m, "sun_position_rel", np.linalg.norm(np.asarray(env["sun_position_itrf93_m"], float) - sun) / np.linalg.norm(sun))
         omega_cross = -frame_dot @ frame.T
         earth_rate = np.array([omega_cross[2, 1], omega_cross[0, 2], omega_cross[1, 0]])
         _worst(m, "earth_rate_rel",
-               np.linalg.norm(np.asarray(env["earth_angular_velocity_itrf93_rad_s"]) - earth_rate) / np.linalg.norm(earth_rate))
+               np.linalg.norm(np.asarray(env["earth_angular_velocity_itrf93_rad_s"], float) - earth_rate) / np.linalg.norm(earth_rate))
         q_rec = _unit(state["body_to_ecef_xyzw"])
         w_rec = np.asarray(state["angular_velocity_body_rad_s"], float)
         if case.kind in ("spin", "spin_drift"):
@@ -605,7 +611,7 @@ def check_dataset(case: Case, run: dict, directory, ephemeris, tolerances: dict 
             _worst(m, "momentum_rel", np.linalg.norm(h_n - h_n0) / np.linalg.norm(h_n0))
             _worst(m, "energy_rel", abs(energy - t_0) / t_0)
         if case.kind == "sun":
-            itrf_to_j2000_by_k[k] = (frame.T @ np.asarray(state["position_ecef_m"]), et, env.get("spacecraft_shadow_factor"))
+            itrf_to_j2000_by_k[k] = (frame.T @ np.asarray(state["position_ecef_m"], float), et, env.get("spacecraft_shadow_factor"))
         # advance the references to the next state
         r, v = advance_orbit(r, v, et, step, ephemeris)
         if case.kind == "tumble":
@@ -670,8 +676,8 @@ def _check_imu(run, directory, w0, steps, step_s, m, report):
         m.setdefault("gyro_rad_s", 0.0)
         m.setdefault("accel_m_s2", 0.0)
         for f in valid:
-            _worst(m, "gyro_rad_s", np.max(np.abs(np.asarray(f["payload"]["angular_velocity_sensor_rad_s"]) - gyro_expected)))
-            _worst(m, "accel_m_s2", np.max(np.abs(np.asarray(f["payload"]["specific_force_sensor_m_s2"]) - accel_expected)))
+            _worst(m, "gyro_rad_s", np.max(np.abs(np.asarray(f["payload"]["angular_velocity_sensor_rad_s"], float) - gyro_expected)))
+            _worst(m, "accel_m_s2", np.max(np.abs(np.asarray(f["payload"]["specific_force_sensor_m_s2"], float) - accel_expected)))
 
 
 def _check_irradiance(run, directory, ephemeris, positions, steps, step_s, m, report):
@@ -690,7 +696,8 @@ def _check_irradiance(run, directory, ephemeris, positions, steps, step_s, m, re
                 return
             distance = np.linalg.norm(ephemeris.sun_j2000(et) - r_j2000)
             expected = SOLAR_IRRADIANCE_W_M2 * scale * (AU_M / distance) ** 2
-            _worst(m, "irradiance_rel", abs(f["payload"]["irradiance_w_m2"] - expected) / expected)
+            reading = _number(f["payload"]["irradiance_w_m2"])  # null (a non-finite value) fails as NaN
+            _worst(m, "irradiance_rel", abs((math.nan if reading is None else reading) - expected) / expected)
 
 
 # ----------------------------------------------------------------------------------------------------------------
