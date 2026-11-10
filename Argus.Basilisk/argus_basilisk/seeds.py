@@ -5,8 +5,9 @@ noise stream, so changing one sensor or stream never changes another module's no
 Python hash(), which is salted per process, and never the shared module default 0x1badcad1.
 
 The mag and css streams are drawn by the service, one sample at a time (sample_normals), keyed
-by sample_index, so a sample never depends on how many came before it. numpy is imported only to draw them, so the device
-registry, which imports this module, stays importable without the basilisk extra.
+by sample_index, so a sample never depends on how many came before it. numpy is imported only
+to draw them, so the device registry, which imports this module, stays importable without the
+basilisk extra.
 """
 
 import hashlib

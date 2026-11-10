@@ -25,6 +25,10 @@ QUATERNION_UNIT_TOLERANCE = 1e-6
 # Core SimulationConfiguration.IsKernelSetId; the service turns the ID into a file name.
 KERNEL_SET_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
+# headless/Host BasiliskEngine.MaximumPacedStepSeconds: ClockSynch sleeps fixed_step / factor of
+# wall time per step, so a tiny factor would hold one Step for hours (README §5).
+MAXIMUM_PACED_STEP_SECONDS = 3600.0
+
 # google.protobuf.Timestamp range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z.
 _TIMESTAMP_MIN_SECONDS = -62_135_596_800
 _TIMESTAMP_MAX_SECONDS = 253_402_300_799
@@ -106,9 +110,9 @@ def configure_run_problems(
         problems.unset("configuration")
         return problems.ranked()
 
-    _check_real_time_factor(problems, request.real_time_factor, "real_time_factor")
-
     configuration = request.configuration
+    _check_real_time_factor(problems, request.real_time_factor, configuration.fixed_step_ns, "real_time_factor")
+
     path = "configuration"
     if not configuration.run_id.strip():
         problems.invalid(f"{path}.run_id", "must not be blank", configuration.run_id)
@@ -334,12 +338,12 @@ def _raise_first(problems: list[ValidationError]) -> None:
     raise ValidationError(code, "; ".join(problem.details for problem in problems if problem.code == code))
 
 
-def _check_real_time_factor(problems: _Problems, value: float, path: str) -> None:
+def _check_real_time_factor(problems: _Problems, value: float, fixed_step_ns: int, path: str) -> None:
+    # 0 is unpaced; > 0 paces the run with ClockSynch (README §5).
     if not math.isfinite(value) or value < 0.0:
         problems.invalid(path, "must be finite and >= 0", value)
-    elif value > 0.0:
-        # Lifted by BSK-7 (#20) when ClockSynch pacing is built (README §5).
-        problems.unimplemented(path, "pacing (ClockSynch) is not built yet; use 0", value)
+    elif value > 0.0 and fixed_step_ns / _NANOSECONDS_PER_SECOND / value > MAXIMUM_PACED_STEP_SECONDS:
+        problems.invalid(path, f"would pace each step to over {MAXIMUM_PACED_STEP_SECONDS:g} s", value)
 
 
 def _check_orbit(problems: _Problems, orbit, path: str) -> None:

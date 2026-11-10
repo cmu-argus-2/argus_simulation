@@ -1,6 +1,6 @@
 namespace Argus.Simulation.Core
 {
-    // Output is scale x (field + noise + bias), then clipped to +/-range. Basilisk 2.12.2 has no
+    // Output is scale x (field + noise + bias), then clipped to +/-range. Basilisk has no
     // magnetometer quantisation, so there is no resolution field. Comments name the Basilisk
     // magnetometer attribute each field sets.
     public readonly struct MagnetometerProfile

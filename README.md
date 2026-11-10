@@ -19,9 +19,10 @@ work on:
 | Headless core and host | `headless/` | .NET SDK 8 or newer | The Unity-independent core, its EditMode tests, and the simulation host |
 | Basilisk service | `Argus.Basilisk/` | [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.4 or later; it installs Python 3.12 itself | The Python gRPC service that runs Basilisk and SPICE |
 
-`Argus.Basilisk/` holds the repository's only Python code, so it has the only Python
-environment: `Argus.Basilisk/.venv`, built from the committed lock file. The .NET and Unity
-parts don't use Python.
+`Argus.Basilisk/` has the repository's only Python environment: `Argus.Basilisk/.venv`, built
+from the committed lock file. The optional imagery-pack script in `Argus.Imagery/` uses only
+the Python 3 standard library and needs no environment. The .NET and Unity parts don't use
+Python.
 
 ## Set up and run the Basilisk service
 
@@ -115,6 +116,10 @@ When Unity opens for the first time:
 The scene is at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 
 NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-06-21`, a date with daylight imagery up to the north pole. To change it, use the **SETTINGS** panel in the top toolbar, pass `-gt-date YYYY-MM-DD` and `-gt-layer LAYER` on the command line, or select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
+
+For tests and dataset generation you can optionally download the full-resolution imagery once
+(~31 GB per date as PNG, ~5 GB as JPEG) and have Unity read it from disk instead of streaming.
+See [Argus.Imagery/README.md](Argus.Imagery/README.md).
 
 ### Simulator controls
 

@@ -28,6 +28,7 @@ crashlytics-build.properties
 
 # Headless dotnet build of the Unity-independent core (see headless/README.md).
 !headless/**/*.csproj
+!Argus.Contracts/Unity/*.csproj
 [Bb]in/
 [Tt]est[Rr]esults/
 
@@ -50,6 +51,9 @@ kernels/
 .env
 .env.*
 !.env.example
+
+# Offline NASA GIBS imagery (tens of GB; made by Argus.Imagery/download_gibs_pack.py).
+ImageryPacks/
 
 # Local editor settings.
 .vscode/
