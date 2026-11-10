@@ -13,6 +13,7 @@ Conventions follow `Assets/ArgusSimulation/Core/Recording/README.md`: quaternion
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import sys
@@ -274,14 +275,25 @@ def _orbit_step(r, v, et, h, ephemeris, mu_earth, mu_sun):
     return s1[:3], s1[3:]
 
 
-def propagate_orbit(r0, v0, et0, step_s, steps, ephemeris, mu_earth=MU_EARTH, mu_sun=MU_SUN, substeps=2):
-    """J2000 states at et0 + k·step_s, k = 0..steps; RK4 at step_s / substeps. Times are never accumulated."""
-    r, v = np.asarray(r0, float), np.asarray(v0, float)
+ORBIT_SUBSTEPS = 2  # the reference orbit's RK4 runs at half the recorded step
+BODY_SUBSTEPS = 20  # the reference tumble's RK4 runs at a twentieth of it (5 ms at 0.1 s)
+
+
+def advance_orbit(r, v, et, step_s, ephemeris, mu_earth=MU_EARTH, mu_sun=MU_SUN, substeps=ORBIT_SUBSTEPS):
+    """The J2000 state one recorded step after (r, v) at et: RK4 at step_s / substeps. The one implementation of the
+    reference orbit; propagate_orbit and check_dataset both use it."""
     h = step_s / substeps
+    for j in range(substeps):
+        r, v = _orbit_step(r, v, et + j * h, h, ephemeris, mu_earth, mu_sun)
+    return r, v
+
+
+def propagate_orbit(r0, v0, et0, step_s, steps, ephemeris, mu_earth=MU_EARTH, mu_sun=MU_SUN, substeps=ORBIT_SUBSTEPS):
+    """J2000 states at et0 + k·step_s, k = 0..steps. Times are never accumulated."""
+    r, v = np.asarray(r0, float), np.asarray(v0, float)
     states = [(r, v)]
     for k in range(steps):
-        for j in range(substeps):
-            r, v = _orbit_step(r, v, et0 + k * step_s + j * h, h, ephemeris, mu_earth, mu_sun)
+        r, v = advance_orbit(r, v, et0 + k * step_s, step_s, ephemeris, mu_earth, mu_sun, substeps)
         states.append((r, v))
     return states
 
@@ -292,24 +304,50 @@ def _rigid_rate(q, w, inertia, inertia_inv):
     return q_dot, w_dot
 
 
-def propagate_rigid_body(q0, w0, inertia, step_s, steps, substeps=20):
-    """Torque-free rigid body: body-to-J2000 q and body rate ω at k·step_s; RK4 at step_s / substeps."""
+def advance_rigid_body(q, w, inertia, inertia_inv, step_s, substeps=BODY_SUBSTEPS):
+    """Torque-free rigid body one recorded step on: RK4 at step_s / substeps. The caller inverts the inertia once."""
+    h = step_s / substeps
+    for _ in range(substeps):
+        a_q, a_w = _rigid_rate(q, w, inertia, inertia_inv)
+        b_q, b_w = _rigid_rate(q + h / 2 * a_q, w + h / 2 * a_w, inertia, inertia_inv)
+        c_q, c_w = _rigid_rate(q + h / 2 * b_q, w + h / 2 * b_w, inertia, inertia_inv)
+        d_q, d_w = _rigid_rate(q + h * c_q, w + h * c_w, inertia, inertia_inv)
+        q = q + h / 6 * (a_q + 2 * b_q + 2 * c_q + d_q)
+        w = w + h / 6 * (a_w + 2 * b_w + 2 * c_w + d_w)
+        q = q / np.linalg.norm(q)
+    return q, w
+
+
+def propagate_rigid_body(q0, w0, inertia, step_s, steps, substeps=BODY_SUBSTEPS):
+    """Torque-free rigid body: body-to-J2000 q and body rate ω at k·step_s."""
     inertia = np.asarray(inertia, float)
     inertia_inv = np.linalg.inv(inertia)
     q, w = np.asarray(q0, float), np.asarray(w0, float)
-    h = step_s / substeps
     out = [(q, w)]
     for _ in range(steps):
-        for _ in range(substeps):
-            a_q, a_w = _rigid_rate(q, w, inertia, inertia_inv)
-            b_q, b_w = _rigid_rate(q + h / 2 * a_q, w + h / 2 * a_w, inertia, inertia_inv)
-            c_q, c_w = _rigid_rate(q + h / 2 * b_q, w + h / 2 * b_w, inertia, inertia_inv)
-            d_q, d_w = _rigid_rate(q + h * c_q, w + h * c_w, inertia, inertia_inv)
-            q = q + h / 6 * (a_q + 2 * b_q + 2 * c_q + d_q)
-            w = w + h / 6 * (a_w + 2 * b_w + 2 * c_w + d_w)
-            q = q / np.linalg.norm(q)
+        q, w = advance_rigid_body(q, w, inertia, inertia_inv, step_s, substeps)
         out.append((q, w))
     return out
+
+
+class _RecentSun:
+    """An ephemeris whose sun_j2000 remembers its last few answers, by exact time. Each recorded step asks for its own
+    time and for both RK4 substeps' times, which share their ends: 5 distinct times, not 9 calls (#137 review). Only
+    an identical float is reused, so the reference is bit-for-bit what it was."""
+
+    def __init__(self, ephemeris, size=8):
+        self._ephemeris, self._size, self._recent = ephemeris, size, {}
+
+    def sun_j2000(self, et):
+        sun = self._recent.get(et)
+        if sun is None:
+            sun = self._recent[et] = self._ephemeris.sun_j2000(et)
+            if len(self._recent) > self._size:
+                del self._recent[next(iter(self._recent))]
+        return sun
+
+    def __getattr__(self, name):
+        return getattr(self._ephemeris, name)
 
 
 def _utc(value: str) -> tuple:
@@ -317,6 +355,33 @@ def _utc(value: str) -> tuple:
     text = value.rstrip("Z")
     whole, _, fraction = text.partition(".")
     return datetime.fromisoformat(whole), float("0." + fraction) if fraction else 0.0
+
+
+def _parsed_utc(value):
+    """_utc of a recorded stamp, or None when it isn't one (null, a number, or text in another form)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        whole, fraction = _utc(value)
+    except ValueError:
+        return None
+    return (whole, fraction) if whole.tzinfo is None else None
+
+
+def _number(value):
+    """A recorded JSON number as a float, or None for anything else (null, text, true or false, or an integer too big
+    for a float)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value)
+    except OverflowError:
+        return None
+
+
+def _integer(value):
+    """A recorded JSON integer, or None for anything else (5.0 and true included)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def echo_problems(manifest: dict, run: dict) -> list[str]:
@@ -341,7 +406,8 @@ def echo_problems(manifest: dict, run: dict) -> list[str]:
     }
     problems = [f"{key} in the manifest is {got!r}, the run file has {want!r}"
                 for key, (got, want) in expected.items() if got != want]
-    if "epoch_utc" not in c or _utc(c["epoch_utc"]) != _utc(run["epochUtc"]):
+    epoch = _parsed_utc(c.get("epoch_utc"))
+    if epoch is None or epoch != _utc(run["epochUtc"]):
         problems.append(f"epoch_utc in the manifest is {c.get('epoch_utc')!r}, the run file has {run['epochUtc']!r}")
     listed = [str(d.get("device_id")) for d in manifest.get("devices") or []]
     recorded = {d.get("device_id"): _manifest_device(d) for d in manifest.get("devices") or []}
@@ -362,16 +428,20 @@ def _flatten(parameters: dict, prefix: str = "") -> dict:
     return out
 
 
+# Who models each device kind the cases compare: all of them Basilisk (D10). A run file no longer names it; the host
+# derives it from the kind (CORE-22 #136) and writes it to the manifest.
+KIND_SOURCE = {"imu": "basilisk", "light_sensor": "basilisk"}
+
+
 def _run_device(device: dict) -> dict:
-    """A run-file device's values under the manifest's names. `source` only when the run file still carries it."""
+    """A run-file device's values under the manifest's names, with `source` from the kind (KIND_SOURCE)."""
     q = device["mount"]["deviceToBody"]
     values = {"kind": device["kind"], "model_name": device["modelName"], "frame_id": device["frameId"],
               "sample_period_s": device["samplePeriodSeconds"], "controller_visible": device["controllerVisible"],
               "mount.position_body_m": device["mount"]["positionBodyMeters"],
               "mount.device_to_body_xyzw": [q["x"], q["y"], q["z"], q["w"]],
               "parameters": _flatten(device.get("parameters") or {})}
-    if "source" in device:
-        values["source"] = device["source"]
+    values["source"] = KIND_SOURCE.get(device["kind"])
     return values
 
 
@@ -383,49 +453,67 @@ def _manifest_device(device: dict) -> dict:
             "parameters": device.get("parameters"), "source": device.get("source")}
 
 
+class _Unreadable(str):
+    """A JSONL line that doesn't parse, such as the last one a killed host left half-written."""
+
+
 def _read_jsonl(path: Path):
+    """Each non-blank line's JSON value; a line that doesn't parse comes back as _Unreadable, so the gate reports it."""
     if not path.exists():
         return
     with path.open() as handle:
         for line in handle:
             if line.strip():
-                yield json.loads(line)
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    yield _Unreadable(line.strip())
 
 
 def _quat(d: dict) -> np.ndarray:
     return np.array([d["x"], d["y"], d["z"], d["w"]], float)
 
 
-def _seconds_after(stamp: str, epoch: str) -> float:
-    (whole, fraction), (whole0, fraction0) = _utc(stamp), _utc(epoch)
+def _seconds_after(stamp: tuple, epoch: tuple) -> float:
+    (whole, fraction), (whole0, fraction0) = stamp, epoch
     return (whole - whole0).total_seconds() + (fraction - fraction0)
 
 
 def _scan_states(path: Path, step_s: float, epoch_utc: str) -> tuple[int, list[str]]:
     """The number of states, and the first one whose sequence, simulation time or UTC stamp isn't its place in the
-    file. The stamp is the run epoch plus the simulation time, to the recorder's 100 ns ticks."""
-    count, problems = 0, []
+    file. The stamp is the run epoch plus the simulation time, to the recorder's 100 ns ticks. A field of the wrong
+    type is reported under its own name, never raised."""
+    count, problems, epoch = 0, [], _utc(epoch_utc)
     for k, state in enumerate(_read_jsonl(path)):
         count += 1
         if problems:
             continue
-        if state.get("sequence") != k:
+        if not isinstance(state, dict):
+            problems.append(f"states.jsonl: line {k + 1} is not a JSON object: {str(state)[:60]!r}")
+            continue
+        time, stamp = _number(state.get("simulation_time_s")), _parsed_utc(state.get("timestamp_utc"))
+        if _integer(state.get("sequence")) != k:
             problems.append(f"sequence: state {k} in the file has sequence {state.get('sequence')!r}")
-        elif not abs(float(state.get("simulation_time_s", math.nan)) - k * step_s) <= 1e-9:
+        elif time is None or not abs(time - k * step_s) <= 1e-9:
             problems.append(f"simulation_time_s: state {k} is at {state.get('simulation_time_s')!r} s, not {k * step_s:.10g} s")
-        elif not abs(_seconds_after(str(state.get("timestamp_utc", "")), epoch_utc) - k * step_s) <= 1e-6:
+        elif stamp is None or not abs(_seconds_after(stamp, epoch) - k * step_s) <= 1e-6:
             problems.append(f"timestamp_utc: state {k} is stamped {state.get('timestamp_utc')!r}, not {epoch_utc} + {k * step_s:.10g} s")
     return count, problems
 
 
 def _scan_sensors(path: Path, device_ids) -> tuple[int, list[str]]:
     """The number of sensor frames, and any from a sensor the run file doesn't declare."""
-    count, unknown = 0, set()
+    count, unknown, problems = 0, set(), []
     for frame in _read_jsonl(path):
         count += 1
-        if frame.get("sensor_id") not in device_ids:
+        if not isinstance(frame, dict):
+            if not problems:
+                problems.append(f"sensors.jsonl: line {count} is not a JSON object: {str(frame)[:60]!r}")
+        elif frame.get("sensor_id") not in device_ids:
             unknown.add(str(frame.get("sensor_id")))
-    return count, [f"sensors.jsonl has frames from {sorted(unknown)}, which the run file doesn't declare"] if unknown else []
+    if unknown:
+        problems.append(f"sensors.jsonl has frames from {sorted(unknown)}, which the run file doesn't declare")
+    return count, problems
 
 
 def recording_problems(case: Case, run: dict, directory) -> list[str]:
@@ -433,10 +521,7 @@ def recording_problems(case: Case, run: dict, directory) -> list[str]:
     configuration echo."""
     directory = Path(directory)
     manifest = json.loads((directory / "manifest.json").read_text())
-    try:
-        states, out_of_step = _scan_states(directory / "states.jsonl", case.step_s, run["epochUtc"])
-    except ValueError as error:  # a stamp that doesn't parse
-        states, out_of_step = sum(1 for _ in _read_jsonl(directory / "states.jsonl")), [f"timestamp_utc: {error}"]
+    states, out_of_step = _scan_states(directory / "states.jsonl", case.step_s, run["epochUtc"])
     frames, undeclared = _scan_sensors(directory / "sensors.jsonl", {d["deviceId"] for d in run["devices"]})
     lines_read = {"states.jsonl": states, "sensors.jsonl": frames}
     gate_case = {"duration_s": case.duration_s, "step_s": case.step_s, "kernel_set_id": run["kernelSetId"]}
@@ -461,6 +546,7 @@ def check_dataset(case: Case, run: dict, directory, ephemeris, tolerances: dict 
         return report
 
     step, sc = case.step_s, run["spacecraft"]
+    ephemeris = _RecentSun(ephemeris)
     et0 = ephemeris.et_of(run["epochUtc"])
     q0 = _quat(sc["initialBodyToJ2000"])
     w0 = np.asarray(sc["initialAngularVelocityBodyRadiansPerSecond"], float)
@@ -472,7 +558,7 @@ def check_dataset(case: Case, run: dict, directory, ephemeris, tolerances: dict 
             report.problems.append("the closed-form spin needs a principal-axis rate: ω × Iω is not 0")
             return report
     if case.kind == "tumble":
-        q_body, w_body = q0, w0
+        q_body, w_body, inertia_inv = q0, w0, np.linalg.inv(inertia)
 
     m = dict.fromkeys(_EVERY_CASE, 0.0)
     if case.kind in ("spin", "spin_drift", "tumble"):
@@ -521,10 +607,9 @@ def check_dataset(case: Case, run: dict, directory, ephemeris, tolerances: dict 
         if case.kind == "sun":
             itrf_to_j2000_by_k[k] = (frame.T @ np.asarray(state["position_ecef_m"]), et, env.get("spacecraft_shadow_factor"))
         # advance the references to the next state
-        for j in range(2):
-            r, v = _orbit_step(r, v, et + j * step / 2, step / 2, ephemeris, MU_EARTH, MU_SUN)
+        r, v = advance_orbit(r, v, et, step, ephemeris)
         if case.kind == "tumble":
-            (q_body, w_body), = propagate_rigid_body(q_body, w_body, inertia, step, 1, 20)[1:]
+            q_body, w_body = advance_rigid_body(q_body, w_body, inertia, inertia_inv, step)
 
     steps = round(case.duration_s / case.step_s)
     if case.kind == "spin":
@@ -686,6 +771,27 @@ def r4_deviation(dataset: Path, fixture_csv: Path, step_s: float) -> dict:
     return report
 
 
+_BASILISK_DIR = Path(__file__).resolve().parents[1]  # Argus.Basilisk/ of the repo this script is in
+
+
+def _kernels_module():
+    """This repo's argus_basilisk/kernels.py, loaded from its file: never another copy that sys.path or --data-dir
+    could put first (#137 review). It verifies each kernel's SHA-256 and makes no SPICE call."""
+    name = "check_reference_runs._argus_kernels"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, _BASILISK_DIR / "argus_basilisk" / "kernels.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module  # dataclasses look their module up here
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+def kernel_paths(kernel_set_id: str, data_dir: Path) -> list:
+    """The kernel set's files in load order, each SHA-checked. data_dir holds kernel_sets/ and kernels/; it never
+    decides which code does the checking."""
+    return list(_kernels_module().load_kernel_set(kernel_set_id, data_dir=Path(data_dir)).kernel_paths)
+
+
 class SpiceEphemeris:
     """Every SPICE call the checker makes, in one place.
 
@@ -698,11 +804,8 @@ class SpiceEphemeris:
     def __init__(self, kernel_set_id: str, data_dir: Path):
         import spiceypy  # only here: nothing else in the checker touches SPICE
 
-        sys.path.insert(0, str(data_dir))
-        from argus_basilisk import kernels  # verifies every file's SHA-256; makes no SPICE call
-
         self._sp = spiceypy
-        for path in kernels.load_kernel_set(kernel_set_id, data_dir=data_dir).kernel_paths:
+        for path in kernel_paths(kernel_set_id, data_dir):
             spiceypy.furnsh(str(path))
 
     def et_of(self, utc: str) -> float:
@@ -755,8 +858,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Check a recorded run against its HOST-8 reference case.")
     parser.add_argument("case", choices=sorted(CASES))
     parser.add_argument("dataset", type=Path, help="the run directory, holding manifest.json and states.jsonl")
-    parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parents[1],
-                        help="Argus.Basilisk/, holding kernel_sets/ and kernels/")
+    parser.add_argument("--data-dir", type=Path, default=_BASILISK_DIR,
+                        help="the folder holding kernel_sets/ and kernels/ (default: this repo's Argus.Basilisk/). "
+                             "The SHA-256 pins come from its kernel_sets/<id>.json; the code that checks them is "
+                             "always this repo's")
     parser.add_argument("--json", type=Path, help="also write the metrics and problems as JSON")
     args = parser.parse_args(argv)
     case = CASES[args.case]

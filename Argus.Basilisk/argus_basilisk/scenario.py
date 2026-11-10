@@ -37,6 +37,7 @@ GRAVITY = {
 PLANET_FRAMES = ("ITRF93", "")
 EARTH_INDEX = 0
 SUN_INDEX = 1
+ZERO_BASE = "Earth"  # SPICE's zero base: the central body, whose position and velocity are then zero
 
 PROCESS_NAME = "dynamics"
 TASK_NAME = "dynamics"
@@ -97,7 +98,7 @@ class Scenario:
         self.spice.addPlanetNames(list(PLANET_NAMES))
         self.spice.planetFrames = list(PLANET_FRAMES)
         self.spice.referenceBase = "j2000"
-        self.spice.zeroBase = "Earth"
+        self.spice.zeroBase = ZERO_BASE
         self.spice.UTCCalInit = format_epoch(configuration.epoch_utc)
         self.sim.AddModelToTask(TASK_NAME, self.spice, SPICE_PRIORITY)
 
@@ -105,10 +106,14 @@ class Scenario:
         # velocity are zero, and its gravity body reads no planet message. Earth's message also carries the ITRF93
         # orientation and its rate, and bsk 2.11.1 steps that orientation linearly inside each step, which isn't a
         # rotation: the point-mass orbit then converges at second order (1.45 m a day at 1 s steps; HOST-8 #32).
-        # The Sun reads its SPICE state.
+        # _unsubscribed_body refuses any other zero base, which would leave Earth's gravity at the origin.
+        # The Sun reads its SPICE state. Its IAU_SUN frame turns at about 2.9e-6 rad/s, against Earth's 7.3e-5, and is
+        # stepped the same way. It stays: with it, R1 still holds the orbit over 24 h to 3e-5 m at 0.1 s steps and
+        # 5.9e-5 m at 1 s, far inside 1 cm (HOST-8 #32; #137 review).
         # TODO(basilisk-team): a J2 or spherical-harmonics Earth needs that orientation, and would meet the same error.
+        unsubscribed = _unsubscribed_body(self.spice.zeroBase)
         self._gravity_bodies = [
-            _gravity_body(name, None if index == EARTH_INDEX else self.spice.planetStateOutMsgs[index])
+            _gravity_body(name, None if index == unsubscribed else self.spice.planetStateOutMsgs[index])
             for index, name in enumerate(PLANET_NAMES)]
         earth = self._gravity_bodies[EARTH_INDEX]
         earth.isCentralBody = True
@@ -279,6 +284,18 @@ def _epoch_msg(timestamp) -> messaging.EpochMsg:
     payload.minutes = whole.minute
     payload.seconds = whole.second + timestamp.nanos / 1e9
     return messaging.EpochMsg().write(payload)
+
+
+def _unsubscribed_body(zero_base: str) -> int:
+    """The index of the gravity body that reads no SPICE planet message: the central body, Earth.
+
+    That is right only while Earth is SPICE's zero base, where its position and velocity are zero by construction.
+    Any other zero base would leave Earth's gravity at the origin with zero velocity while SPICE, eclipse, albedo and
+    WMM put Earth elsewhere, so it is refused here instead of failing silently.
+    """
+    if zero_base.lower() != PLANET_NAMES[EARTH_INDEX]:
+        raise ValueError(f"the central body, {PLANET_NAMES[EARTH_INDEX]}, must be SPICE's zero base, not {zero_base!r}")
+    return EARTH_INDEX
 
 
 def _gravity_body(name: str, planet_state_msg) -> gravityEffector.GravBodyData:

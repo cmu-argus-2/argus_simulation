@@ -313,7 +313,11 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
   The orbit then converges at second order: 1.45 m a day at 1 s steps against an independent
   reference, instead of micrometres (HOST-8, #32). A message with the orientation and no rate
   leaves the orbit exact, so the rate is the trigger. A J2 or spherical-harmonics Earth needs
-  the orientation and would hit the same error. The Sun's body reads its SPICE state.
+  the orientation and would hit the same error. `_unsubscribed_body` refuses any zero base
+  but the central body, which would otherwise leave Earth's gravity at the origin. The Sun's
+  body reads its SPICE state; its IAU_SUN frame turns at about 2.9e-6 rad/s and is stepped
+  the same way, and R1 still holds the orbit over 24 h to 3e-5 m at 0.1 s steps and
+  5.9e-5 m at 1 s.
 - A kernel that cannot be loaded raises `BasiliskError` during `InitializeSimulation`; it is
   FAILED_PRECONDITION. A file that loads but lacks data (no leap seconds, no ITRF93 for the
   epoch) is not an error until CSPICE needs that data, and then CSPICE aborts the process.

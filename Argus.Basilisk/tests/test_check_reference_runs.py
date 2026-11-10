@@ -736,6 +736,126 @@ def test_a_device_kind_the_case_does_not_compare_is_an_error(tmp_path, orbit_cas
         check.check_dataset(case, run, write_dataset(tmp_path / "dev", run, states), FakeEphemeris())
 
 
+# --- Review of #137 (Sohum, 9 Nov 2026): malformed fields are FAILs, not crashes; the kernel check's own code; one
+# implementation of the reference orbit; one SPICE call per distinct time.
+
+@pytest.mark.parametrize("bad", [None, "x", True], ids=["null", "string", "bool"])
+def test_a_malformed_simulation_time_is_reported_under_its_own_name(tmp_path, spin_case, bad):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    states[10]["simulation_time_s"] = bad
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "time", run, states, frames), FakeEphemeris())
+    assert any(p.startswith("simulation_time_s: state 10") for p in report.problems), report.problems
+    assert report.metrics == {}
+
+
+@pytest.mark.parametrize("bad", [None, 7, "noon"], ids=["null", "number", "text"])
+def test_a_malformed_utc_stamp_is_reported_not_raised(tmp_path, spin_case, bad):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    states[10]["timestamp_utc"] = bad
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "stamp", run, states, frames), FakeEphemeris())
+    assert any(p.startswith("timestamp_utc: state 10") for p in report.problems), report.problems
+
+
+@pytest.mark.parametrize("bad", ["2026-06-01T12:00:00.0000000+00:00", None, "noon"], ids=["offset", "null", "text"])
+def test_a_manifest_epoch_that_does_not_parse_is_reported_not_raised(tmp_path, spin_case, bad):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    directory = write_dataset(tmp_path / "epoch", run, states, frames)
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["configuration"]["epoch_utc"] = bad
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    report = check.check_dataset(case, run, directory, FakeEphemeris())
+    assert any(p.startswith("epoch_utc") for p in report.problems), report.problems
+
+
+def test_the_kernel_check_is_this_repos_code_whatever_the_data_dir_holds(tmp_path, monkeypatch):
+    """--data-dir names where the kernels are, not which code checks their SHA-256s. Other tests import the real
+    argus_basilisk first, so forget it here: an import from sys.path would then find the stale copy."""
+    for name in [n for n in sys.modules if n == "argus_basilisk" or n.startswith("argus_basilisk.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.syspath_prepend(str(tmp_path / "cache"))
+    data = tmp_path / "cache"
+    (data / "argus_basilisk").mkdir(parents=True)
+    (data / "argus_basilisk" / "__init__.py").write_text("raise RuntimeError('a stale argus_basilisk was imported')\n")
+    (data / "kernels").mkdir()
+    (data / "kernel_sets").mkdir()
+    (data / "kernel_sets" / "argus-2026-11-02.json").write_text((ROOT / "kernel_sets" / "argus-2026-11-02.json").read_text())
+    assert Path(check._kernels_module().__file__).resolve() == (ROOT / "argus_basilisk" / "kernels.py").resolve()
+    with pytest.raises(Exception, match="required file is missing"):
+        check.kernel_paths("argus-2026-11-02", data)
+
+
+class CountingEphemeris(FakeEphemeris):
+    def __init__(self):
+        self.sun_calls = 0
+
+    def sun_j2000(self, et):
+        self.sun_calls += 1
+        return super().sun_j2000(et)
+
+
+def test_the_reference_asks_for_the_sun_once_per_distinct_time(tmp_path, orbit_case):
+    run, case = orbit_case
+    states, _ = simulate(run, FakeEphemeris(), 7200, 1.0)
+    eph = CountingEphemeris()
+    check.check_dataset(case, run, write_dataset(tmp_path / "calls", run, states), eph)
+    # Per state: its own time, then two RK4 substeps sharing their ends: at most 5 distinct times, not 9 calls.
+    assert eph.sun_calls <= 5 * len(states), eph.sun_calls / len(states)
+
+
+def test_the_checker_builds_its_reference_with_propagate_orbit(tmp_path, orbit_case):
+    """One implementation: a recording made by propagate_orbit itself matches the checker's reference exactly."""
+    run, case = orbit_case
+    eph = FakeEphemeris()
+    r0, v0 = check.initial_state(run)
+    orbit = check.propagate_orbit(r0, v0, eph.ET0, 1.0, 7200, eph)
+    states, _ = simulate(run, eph, 7200, 1.0)
+    for k, (state, (r, v)) in enumerate(zip(states, orbit)):
+        frame, frame_dot = eph.frame(eph.ET0 + k * 1.0)
+        state["position_ecef_m"] = list(frame @ r)
+        state["velocity_ecef_m_s"] = list(frame @ v + frame_dot @ r)
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "same", run, states), eph)
+    assert report.metrics["position_m"] == 0.0 and report.metrics["velocity_m_s"] == 0.0, report.metrics
+
+
+def test_a_device_echoed_with_another_source_is_refused(tmp_path, spin_case):
+    """Run files no longer carry `source` (CORE-22): the kinds the cases compare are all Basilisk-modelled (D10)."""
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    directory = write_dataset(tmp_path / "source", run, states, frames)
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["devices"][0]["source"] = "argus"
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    report = check.check_dataset(case, run, directory, FakeEphemeris())
+    assert any("source" in p for p in report.problems), report.problems
+
+
+@pytest.mark.parametrize("line", ['{"sequence": 3, "simul', "null", "[1, 2]"], ids=["truncated", "null", "list"])
+def test_a_states_line_that_is_not_a_json_object_is_reported_not_raised(tmp_path, spin_case, line):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    directory = write_dataset(tmp_path / "line", run, states, frames)
+    text = (directory / "states.jsonl").read_text().splitlines()
+    text[3] = line  # a host killed mid-write leaves a truncated line
+    (directory / "states.jsonl").write_text("\n".join(text) + "\n")
+    report = check.check_dataset(case, run, directory, FakeEphemeris())
+    assert any(p.startswith("states.jsonl: line 4") for p in report.problems), report.problems
+    assert report.metrics == {}
+
+
+@pytest.mark.parametrize("field, value", [("simulation_time_s", 10 ** 400), ("sequence", True), ("sequence", 5.0)],
+                         ids=["huge-time", "sequence-true", "sequence-float"])
+def test_a_state_field_of_the_wrong_type_is_reported_not_raised(tmp_path, spin_case, field, value):
+    run, case = spin_case
+    states, frames = spin_recording(run)
+    index = 1 if value is True else 5
+    states[index][field] = value
+    report = check.check_dataset(case, run, write_dataset(tmp_path / "type", run, states, frames), FakeEphemeris())
+    assert any(p.startswith(f"{field}: state {index}") for p in report.problems), report.problems
+
+
 KERNEL_DATA = ROOT  # Argus.Basilisk/, as the service uses it
 _KERNEL_SET = json.loads((ROOT / "kernel_sets" / "argus-2026-11-02.json").read_text())
 _HAVE_KERNELS = all((ROOT / "kernels" / entry["file"]).exists()
