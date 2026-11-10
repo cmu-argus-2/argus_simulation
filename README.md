@@ -142,7 +142,8 @@ See [Argus.Imagery/README.md](Argus.Imagery/README.md).
 - The host owns the run, so Unity has no pause, reset, speed, orbit or attitude controls: change
   the run in the host's run file. The stream panel under the toolbar shows the endpoint, the
   stream's status and how fast the run advances (×1 when paced in real time). The CubeSat is
-  interpolated between the streamed states, and the orbit trail draws the track flown so far.
+  interpolated between the streamed states, and the orbit trail draws the last orbit or so flown
+  (one point per 10 simulated seconds).
 - Images are not exported automatically. Press **CAPTURE** in the top toolbar to hold the CubeSat
   at the latest state, wait for Cesium to finish that view, and save one synchronized set of
   camera images; the host keeps running meanwhile. A timed-out load is cancelled instead of

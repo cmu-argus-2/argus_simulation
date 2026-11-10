@@ -25,10 +25,12 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(0f)] private float lookaheadWallSeconds = 4f;
         [SerializeField, Min(0f)] private float maximumLookaheadSimulationSeconds = 600f;
 
+        // The nadir view keeps moving with the host's run, so the warm-up ends at the first frame its
+        // tiles reach this much, not after a run of stable frames.
         [Header("Warm-up")]
         [SerializeField] private bool warmUpOnStart = true;
-        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 100f;
-        [SerializeField, Min(1)] private int stableFramesRequired = 10;
+        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 95f;
+        [SerializeField, Min(1)] private int stableFramesRequired = 1;
         [SerializeField, Min(1f)] private float warmUpTimeoutSeconds = 30f;
 
         private readonly List<Camera> _deferredCameras = new List<Camera>(4);
@@ -38,7 +40,9 @@ namespace Argus.Simulation.Unity
         private CesiumCameraManager _cameraManager;
         private Camera _lookaheadCamera;
         private CesiumGlobeAnchor _lookaheadAnchor;
+        private CesiumSpacecraftPoseDriver _pose;
         private Coroutine _warmUp;
+        private bool _viewsDeferred;
         private bool _restoreMainCamera;
         private bool _restoreSceneViewCamera;
 
@@ -72,6 +76,7 @@ namespace Argus.Simulation.Unity
                 _runner.HistoryReset += RequestWarmUp;
             }
 
+            _pose = GetComponent<CesiumSpacecraftPoseDriver>();
             _cameraRig = GetComponent<CubeSatCameraRig>();
             _cameraRig.BuildIfNeeded();
             _cameraManager = CesiumCameraManager.GetOrCreate(gameObject);
@@ -97,22 +102,21 @@ namespace Argus.Simulation.Unity
             {
                 StopCoroutine(_warmUp);
             }
-            else
-            {
-                DeferNonNadirViews();
-            }
 
             _warmUp = StartCoroutine(WarmUp());
         }
 
         private IEnumerator WarmUp()
         {
-            // The nadir camera needs a pose to load for; the host may not be streaming yet.
+            // The nadir camera needs a pose to load for, and the host may not be streaming yet:
+            // every view keeps loading until a state arrives, so the globe is never left blank.
             while (!_runner.HasState)
             {
                 WarmUpProgress = 0f;
                 yield return null;
             }
+
+            DeferNonNadirViews();
 
             Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
                 FindObjectsInactive.Exclude);
@@ -147,7 +151,8 @@ namespace Argus.Simulation.Unity
 
         private void LateUpdate()
         {
-            if (_lookaheadAnchor == null || _runner == null || !_runner.HasState)
+            // While a capture holds the pose, the look-ahead holds too, so the capture's tiles can settle.
+            if (_lookaheadAnchor == null || _runner == null || !_runner.HasState || (_pose != null && _pose.IsHeld))
             {
                 return;
             }
@@ -188,6 +193,12 @@ namespace Argus.Simulation.Unity
 
         private void DeferNonNadirViews()
         {
+            if (_viewsDeferred)
+            {
+                return;
+            }
+
+            _viewsDeferred = true;
             _deferredCameras.Clear();
             Camera groundTruth = _cameraRig.GroundTruthCamera;
             foreach (Camera camera in _cameraRig.Cameras)
@@ -206,10 +217,12 @@ namespace Argus.Simulation.Unity
 
         private void RestoreDeferredViews()
         {
-            if (_cameraManager == null)
+            if (_cameraManager == null || !_viewsDeferred)
             {
                 return;
             }
+
+            _viewsDeferred = false;
 
             foreach (Camera camera in _deferredCameras)
             {

@@ -8,14 +8,18 @@ namespace Argus.Simulation.Unity
     // Places the CubeSat at the host's truth pose. The stream is decimated (CON-1), so the pose is
     // interpolated between the last two received states, one arrival interval behind the latest:
     // at each arrival it starts from the previous state and reaches the new one after the interval
-    // they arrived apart. Published states are never changed. Hold shows one state exactly, for a
-    // capture whose images must match its metadata.
+    // they arrived apart. Published states are never changed. After a gap longer than
+    // MaximumInterpolationGapSeconds (a reconnect) it jumps to the new state rather than gliding
+    // across the gap. Hold shows one state exactly, for a capture whose images must match its
+    // metadata.
     [RequireComponent(typeof(CesiumGlobeAnchor))]
     public sealed class CesiumSpacecraftPoseDriver : MonoBehaviour
     {
         [SerializeField] private SimulationRunner runner;
         [SerializeField] private CesiumGlobeAnchor globeAnchor;
         [SerializeField] private bool applyAttitude = true;
+
+        private const double MaximumInterpolationGapSeconds = 1.0;
 
         private SpacecraftState _from;
         private SpacecraftState _to;
@@ -91,6 +95,12 @@ namespace Argus.Simulation.Unity
             }
 
             double interval = _toArrivalSeconds - _fromArrivalSeconds;
+            if (interval > MaximumInterpolationGapSeconds)
+            {
+                Apply(_to.PositionEcefMeters, _to.BodyToEcef);
+                return;
+            }
+
             double t = interval > 0.0
                 ? math.saturate((Time.realtimeSinceStartupAsDouble - _toArrivalSeconds) / interval)
                 : 1.0;

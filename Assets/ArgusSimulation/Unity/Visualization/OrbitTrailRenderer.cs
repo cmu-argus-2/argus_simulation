@@ -6,14 +6,16 @@ using UnityEngine;
 namespace Argus.Simulation.Unity
 {
     // Draws the track the spacecraft has flown, from the states received from the host: the run
-    // cannot be sampled ahead in Unity (G2). It keeps the last sampleCount positions in Earth-fixed
-    // axes and clears them on a new run or subscription. A predicted track sent by the host is
+    // cannot be sampled ahead in Unity (G2). It keeps one Earth-fixed position per
+    // sampleSpacingSeconds of simulated time, the last sampleCount of them (about 100 minutes, an
+    // orbit, by default), and clears them on a new run. A predicted track sent by the host is
     // UNITY-8 (#62).
     [DisallowMultipleComponent]
     public sealed class OrbitTrailRenderer : MonoBehaviour
     {
         [SerializeField] private SimulationRunner runner;
         [SerializeField, Range(64, 2048)] private int sampleCount = 600;
+        [SerializeField, Min(0.1f)] private float sampleSpacingSeconds = 10f;
         [SerializeField] private float trailWidthMeters = 28_000f;
 
         private CesiumGeoreference _georeference;
@@ -21,6 +23,7 @@ namespace Argus.Simulation.Unity
         private Vector3d[] _positionsEcef;
         private int _count;
         private int _next;
+        private double _lastSampleSeconds;
         private bool _isDirty;
 
         public int PointCount => _count;
@@ -47,6 +50,7 @@ namespace Argus.Simulation.Unity
             }
 
             _positionsEcef = new Vector3d[sampleCount];
+            ClearTrack();
             Subscribe();
         }
 
@@ -88,6 +92,13 @@ namespace Argus.Simulation.Unity
 
         private void HandleState(SimulationState state)
         {
+            double time = state.Spacecraft.SimulationTimeSeconds;
+            if (_count > 0 && time - _lastSampleSeconds < sampleSpacingSeconds)
+            {
+                return;
+            }
+
+            _lastSampleSeconds = time;
             _positionsEcef[_next] = state.Spacecraft.PositionEcefMeters;
             _next = (_next + 1) % _positionsEcef.Length;
             _count = Mathf.Min(_count + 1, _positionsEcef.Length);

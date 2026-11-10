@@ -68,7 +68,10 @@ namespace Argus.Simulation.Tests
             Assert.That(exporter.EpisodeDirectory, Is.Empty);
             OrbitTrailRenderer trail = Object.FindAnyObjectByType<OrbitTrailRenderer>();
             Assert.That(trail, Is.Not.Null);
+            // One point per 10 simulated seconds: step 1 (0.1 s) adds none, step 100 (10 s) one.
             source.Publish(1);
+            Assert.That(trail.PointCount, Is.EqualTo(1));
+            source.Publish(100);
             Assert.That(trail.PointCount, Is.EqualTo(2));
             source.ResetHistory();
             Assert.That(trail.PointCount, Is.Zero);

@@ -13,9 +13,14 @@ namespace Argus.Simulation.Unity
     {
         [SerializeField] private MonoBehaviour stateSourceComponent;
 
+        // SimulationRate averages over this many arrivals, since one is stamped at frame time.
+        private const int RateWindow = 5;
+
+        private readonly double[] _arrivalSeconds = new double[RateWindow];
+        private readonly double[] _arrivalSimulationSeconds = new double[RateWindow];
         private ISimulationStateSource _stateSource;
         private bool _isSubscribed;
-        private double _lastArrivalSeconds = double.NaN;
+        private int _arrivals;
 
         public event Action<SimulationState> StateProduced;
 
@@ -26,8 +31,8 @@ namespace Argus.Simulation.Unity
         public SimulationState LastState { get; private set; }
         public double SimulationTimeSeconds => HasState ? LastState.Spacecraft.SimulationTimeSeconds : 0.0;
 
-        // Simulated seconds per wall-clock second between the last two states, or 0 before two:
-        // how fast the host's run advances (1 when Basilisk paces it in real time).
+        // Simulated seconds per wall-clock second over the last few states, or 0 before two: how fast
+        // the host's run advances (1 when Basilisk paces it in real time).
         public double SimulationRate { get; private set; }
 
         public ISimulationStateSource StateSource => _stateSource;
@@ -61,14 +66,20 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            double now = Time.realtimeSinceStartupAsDouble;
-            if (HasState && now > _lastArrivalSeconds)
+            int slot = _arrivals % RateWindow;
+            _arrivalSeconds[slot] = Time.realtimeSinceStartupAsDouble;
+            _arrivalSimulationSeconds[slot] = state.Spacecraft.SimulationTimeSeconds;
+            _arrivals++;
+            if (_arrivals > 1)
             {
-                SimulationRate = (state.Spacecraft.SimulationTimeSeconds - LastState.Spacecraft.SimulationTimeSeconds) /
-                    (now - _lastArrivalSeconds);
+                int oldest = _arrivals > RateWindow ? _arrivals % RateWindow : 0;
+                double wall = _arrivalSeconds[slot] - _arrivalSeconds[oldest];
+                if (wall > 0.0)
+                {
+                    SimulationRate = (_arrivalSimulationSeconds[slot] - _arrivalSimulationSeconds[oldest]) / wall;
+                }
             }
 
-            _lastArrivalSeconds = now;
             LastState = state;
             HasState = true;
             StateProduced?.Invoke(state);
@@ -79,7 +90,7 @@ namespace Argus.Simulation.Unity
             HasState = false;
             LastState = default;
             SimulationRate = 0.0;
-            _lastArrivalSeconds = double.NaN;
+            _arrivals = 0;
             HistoryReset?.Invoke();
         }
 

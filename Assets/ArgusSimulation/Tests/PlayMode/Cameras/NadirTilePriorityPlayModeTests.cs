@@ -10,16 +10,17 @@ namespace Argus.Simulation.Tests
     public sealed class NadirTilePriorityPlayModeTests
     {
         [UnityTest]
-        public IEnumerator WarmUpLoadsOnlyNadirViewsUntilLoadedThenRestoresEveryView()
+        public IEnumerator WarmUpWaitsForAStateWithEveryViewLoadingThenEnds()
         {
             NadirScene scene = new NadirScene();
 
-            // One frame for Start. With no state from the host yet, the nadir view waits for one.
+            // One frame for Start. With no state from the host yet, the warm-up waits for one, and
+            // every view keeps loading meanwhile, so the globe is never left blank.
             yield return null;
             yield return null;
 
             Assert.That(scene.Priority.IsWarmingUp, Is.True);
-            scene.AssertOnlyNadirViews();
+            scene.AssertEveryViewRestored();
             Assert.That(scene.Priority.LookaheadCamera.enabled, Is.False);
 
             // With a state and no tilesets in the scene, loading is complete and the gate opens.
@@ -49,7 +50,7 @@ namespace Argus.Simulation.Tests
             yield return null;
             Assert.That(scene.Priority.IsWarmingUp, Is.True);
             Assert.That(scene.Runner.HasState, Is.False);
-            scene.AssertOnlyNadirViews();
+            scene.AssertEveryViewRestored();
 
             scene.Source.Publish(0);
             yield return scene.WaitForWarmUp();
@@ -104,21 +105,6 @@ namespace Argus.Simulation.Tests
                 for (int frame = 0; frame < 60 && Priority.IsWarmingUp; frame++)
                 {
                     yield return null;
-                }
-            }
-
-            public void AssertOnlyNadirViews()
-            {
-                Camera groundTruth = CameraRig.GroundTruthCamera;
-                Assert.That(CameraManager.useMainCamera, Is.False);
-                Assert.That(CameraManager.additionalCameras, Has.Member(groundTruth));
-                Assert.That(CameraManager.additionalCameras, Has.Member(Priority.LookaheadCamera));
-                foreach (Camera camera in CameraRig.Cameras)
-                {
-                    if (camera != groundTruth)
-                    {
-                        Assert.That(CameraManager.additionalCameras, Has.No.Member(camera));
-                    }
                 }
             }
 
