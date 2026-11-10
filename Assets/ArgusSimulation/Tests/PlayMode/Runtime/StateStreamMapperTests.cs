@@ -45,10 +45,16 @@ namespace Argus.Simulation.Tests
             emptyValid.SensorOutput.Frames[0].Payload.Clear();
             PbStream.SubscribeResponse unknownKind = Response();
             unknownKind.SensorOutput.Frames[0].Kind = "star_tracker";
+            PbStream.SubscribeResponse zeroAttitude = Response();
+            zeroAttitude.State.Spacecraft.BodyToEarthFixed = new PbSim.Quaternion();
+            PbStream.SubscribeResponse negativeTime = Response();
+            negativeTime.State.Spacecraft.SimulationTimeS = -1.0;
 
             Assert.That(() => StateStreamMapper.ToCore(noGeneration), Throws.TypeOf<FormatException>().With.Message.StartsWith("run_generation"));
             Assert.That(() => StateStreamMapper.ToCore(emptyValid), Throws.TypeOf<FormatException>().With.Message.StartsWith("sensor_output.frames[0].payload"));
             Assert.That(() => StateStreamMapper.ToCore(unknownKind), Throws.TypeOf<FormatException>().With.Message.StartsWith("sensor_output.frames[0].kind"));
+            Assert.That(() => StateStreamMapper.ToCore(zeroAttitude), Throws.TypeOf<FormatException>().With.Message.StartsWith("state.spacecraft.body_to_earth_fixed"));
+            Assert.That(() => StateStreamMapper.ToCore(negativeTime), Throws.TypeOf<FormatException>().With.Message.StartsWith("state.spacecraft.simulation_time_s"));
         }
 
         // Step 12 of a Basilisk run in umbra: a magnetometer reading and the IMU's first, empty update.

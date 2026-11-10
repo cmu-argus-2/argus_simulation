@@ -55,6 +55,8 @@ namespace Argus.Simulation.Unity
                 throw Invalid("sensor_output", "must carry the state's run ID and a simulation time");
             }
 
+            RequireStepAndTime("sensor_output", output.SpacecraftSequence, output.SimulationTimeS);
+
             SensorOutputSet set = new SensorOutputSet(output.RunId, output.SpacecraftSequence, output.SimulationTimeS, frames);
             if (!set.IsValid)
             {
@@ -72,13 +74,15 @@ namespace Argus.Simulation.Unity
                 throw Unset("state.spacecraft.sequence and simulation_time_s");
             }
 
+            RequireStepAndTime("state.spacecraft", spacecraft.Sequence, spacecraft.SimulationTimeS);
+
             SpacecraftState spacecraftState = new SpacecraftState(
                 spacecraft.Sequence,
                 spacecraft.SimulationTimeS,
                 (spacecraft.TimestampUtc ?? throw Unset("state.spacecraft.timestamp_utc")).ToDateTimeOffset(),
                 ToCore(spacecraft.PositionEarthFixedM, "state.spacecraft.position_earth_fixed_m"),
                 ToCore(spacecraft.VelocityEarthFixedMPerS, "state.spacecraft.velocity_earth_fixed_m_per_s"),
-                ToCore(spacecraft.BodyToEarthFixed, "state.spacecraft.body_to_earth_fixed"),
+                ToUnit(spacecraft.BodyToEarthFixed, "state.spacecraft.body_to_earth_fixed"),
                 ToCore(spacecraft.AngularVelocityBodyRadPerS, "state.spacecraft.angular_velocity_body_rad_per_s"),
                 ToCore(spacecraft.EarthFixedFrame));
 
@@ -90,6 +94,8 @@ namespace Argus.Simulation.Unity
                 {
                     throw Unset("state.applied_commands.sequence and apply_at_simulation_time_s");
                 }
+
+                RequireStepAndTime("state.applied_commands", command.Sequence, command.ApplyAtSimulationTimeS);
 
                 DeviceCommand[] commands = new DeviceCommand[command.Commands.Count];
                 for (int i = 0; i < commands.Length; i++)
@@ -111,9 +117,15 @@ namespace Argus.Simulation.Unity
                     throw Unset("state.environment.spacecraft_shadow_factor");
                 }
 
+                // 0 is umbra and 1 full illumination.
+                if (!(env.SpacecraftShadowFactor >= 0.0 && env.SpacecraftShadowFactor <= 1.0))
+                {
+                    throw Invalid("state.environment.spacecraft_shadow_factor", $"must be within [0, 1], got {env.SpacecraftShadowFactor}");
+                }
+
                 environment = new EnvironmentState(
                     ToCore(env.SunPositionItrf93M, "state.environment.sun_position_itrf93_m"),
-                    ToCore(env.J2000ToItrf93, "state.environment.j2000_to_itrf93"),
+                    ToUnit(env.J2000ToItrf93, "state.environment.j2000_to_itrf93"),
                     ToCore(env.EarthAngularVelocityItrf93RadPerS, "state.environment.earth_angular_velocity_itrf93_rad_per_s"),
                     env.SpacecraftShadowFactor);
             }
@@ -168,6 +180,12 @@ namespace Argus.Simulation.Unity
             if (!frame.HasSequence || !frame.HasSimulationTimeS || !frame.HasCaptureStateSequence)
             {
                 throw Unset($"{path}.sequence, simulation_time_s and capture_state_sequence");
+            }
+
+            RequireStepAndTime(path, frame.Sequence, frame.SimulationTimeS);
+            if (frame.CaptureStateSequence < 0)
+            {
+                throw Invalid($"{path}.capture_state_sequence", $"must be >= 0, got {frame.CaptureStateSequence}");
             }
 
             if (kinds.ContainsKey(frame.SensorId))
@@ -232,6 +250,28 @@ namespace Argus.Simulation.Unity
             PbSim.DeviceValue.ValueOneofCase.Text => DeviceValue.FromText(value.Text),
             _ => throw Unset(path)
         };
+
+        // CON-1 ranges the Core types do not check themselves: a nonnegative sequence and a finite,
+        // nonnegative simulation time.
+        private static void RequireStepAndTime(string path, long sequence, double simulationTimeSeconds)
+        {
+            if (sequence < 0)
+            {
+                throw Invalid($"{path}.sequence", $"must be >= 0, got {sequence}");
+            }
+
+            if (!(simulationTimeSeconds >= 0.0) || double.IsInfinity(simulationTimeSeconds))
+            {
+                throw Invalid($"{path}.simulation_time_s", $"must be finite and >= 0, got {simulationTimeSeconds}");
+            }
+        }
+
+        // An attitude: a unit quaternion, never (0, 0, 0, 0).
+        private static Quaterniond ToUnit(PbSim.Quaternion value, string path)
+        {
+            Quaterniond quaternion = ToCore(value, path);
+            return quaternion.IsUnit ? quaternion : throw Invalid(path, "must be a unit quaternion");
+        }
 
         private static Vector3d ToCore(PbSim.Vector3 value, string path) =>
             value == null ? throw Unset(path) : new Vector3d(value.X, value.Y, value.Z);
