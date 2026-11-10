@@ -61,6 +61,11 @@ configured sensor, or `Unavailable` with no service), 2 on bad arguments or a ru
 configuration file that is unreadable or invalid. A bad file exits before the host connects
 to the service, and the message names the field.
 
+Against the service, the full P0 run (`--duration-s 600`, the default run file) exits 0 with
+no mapper, period or freshness error. HOST-5 (#29) checked its output against CSPICE and an
+independent orbit propagation (target-architecture G4), so the Basilisk path is verified and
+v1 is additive only (`Argus.Contracts/README.md`).
+
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
 including ground-truth sensors, and every command the gateway logged, applied or rejected
@@ -82,21 +87,34 @@ file; the host gives each run its own.
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
 - **Devices** (D11, `docs/device-model.md`): each entry holds the common fields (`deviceId`,
-  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`,
+  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `controllerVisible`,
   `mount` with `positionBodyMeters` and `deviceToBody`) and `parameters`, the keys its kind
-  declares. `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
-  `magnetometer` and `light_sensor`, which Basilisk models, and `camera`, which Argus computes
-  and never sends to the service (CORE-18). Parameter keys are snake_case with their unit,
+  declares. There is no `source`: which side models a device belongs to its kind
+  (`docs/device-model.md` §1), so the host records `basilisk` or `argus` from the kind, and a
+  file that still sets `source` exits 2 naming it (CORE-22). `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
+  `magnetometer` and `light_sensor`, which Basilisk models, and `camera` and
+  `nadir_ground_truth_camera` (the north-up nadir ground-truth camera, CORE-8), which Argus
+  computes and never sends to the service (CORE-18), and the actuator kinds `ideal_body_torque`,
+  `momentum_wheel`, `magnetic_torquer` and `thruster` (CON-2, `docs/device-model.md` §2). An
+  actuator has no `samplePeriodSeconds` or `controllerVisible`, and its `deviceToBody` must be the
+  identity, since its axis is a body-frame parameter. Both camera kinds take the same keys; a
+  nadir camera needs its own `profile_id`, since cameras that share one share its parameters. Parameter keys are snake_case with their unit,
   the same spelling as on the wire and in the manifest (`noise_std_tesla`,
-  `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists each kind's keys. A
-  key's group may be written as a nested object, so the IMU's
-  `gyroscope.range_rad_per_s` is `"gyroscope": { "range_rad_per_s": ... }`, and the camera's
-  are `intrinsics.width_px` and the other intrinsics, plus `exposure_duration_s`. Each value is
-  read as the type its kind declares. `initialState` is optional and must be empty, since no
-  kind has state yet. `controllerVisible` is `false` for a ground-truth sensor: the gateway
+  `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists the keys of the kinds
+  Basilisk models, and `Core/Sensors/Camera/README.md` the camera's. A key's group may be
+  written as a nested object, so the IMU's `gyroscope.range_rad_per_s` is
+  `"gyroscope": { "range_rad_per_s": ... }`. The camera's parameters are the DATA-6 (#71)
+  profile, each value with where it came from: `profile_id`, `intrinsics.*` with `source` and
+  `calibrated`, `distortion.*` (`model` `brown-conrady-5`, `k1` … `k3` all zero, `source`),
+  `noise.source` (`none`), `exposure_duration_s` and `extrinsics.*`. Each value is read as the
+  type its kind declares. `initialState` holds the kind's initial-state keys: only
+  `momentum_wheel` has one (`speed_rad_per_s`), and the field is optional for the other kinds. `controllerVisible` is `false` for a ground-truth sensor: the gateway
   never returns its frames to a controller, though the recorder still receives them (D7). It
-  must be `false` for a camera, whose frames carry the true camera pose, until CORE-6 (#42)
-  decides what a controller sees of one. The list may hold any subset of the devices,
+  must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
+  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
+  (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
+  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device with
+  placeholder 1 mN·m limits per axis, until DATA-2 (#68) confirms the actuators. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
 - **Validation:** every field is required and unknown fields are rejected, including
@@ -104,7 +122,10 @@ file; the host gives each run its own.
   each device by its kind, so the file accepts exactly what Core accepts and an error names
   the key (`devices[1].parameters["range_tesla"]: is required`). Every
   `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
-  at steps.
+  at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
+  one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
+  the camera that set it and the part that differs
+  (`devices[12].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 

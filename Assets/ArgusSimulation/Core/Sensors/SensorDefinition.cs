@@ -47,6 +47,9 @@ namespace Argus.Simulation.Core
         public string ModelName { get; }
         public string FrameId { get; }
         public double SamplePeriodSeconds { get; }
+        // Who computes the frames, recorded with each frame and in the manifest. For a configured
+        // device it is its kind's (DeviceSource, CORE-22); other sensors, such as Unity's analytic
+        // bridge sensors, carry their own label.
         public string Source { get; }
         public SensorMount Mount { get; }
 
@@ -55,13 +58,19 @@ namespace Argus.Simulation.Core
         // for a kind whose frames carry truth, such as a camera (IDeviceKind.MayBeControllerVisible).
         public bool IsControllerVisible { get; }
 
+        // A valid sensor definition: the common fields and a positive sample period.
         public bool IsValid =>
+            HasValidCommonFields &&
+            SamplePeriodSeconds > 0.0 &&
+            !double.IsNaN(SamplePeriodSeconds) &&
+            !double.IsInfinity(SamplePeriodSeconds);
+
+        // The fields every device needs. An actuator has no sample period: it takes a command
+        // every step (DeviceConfiguration.IsValid, docs/device-model.md §1).
+        public bool HasValidCommonFields =>
             !string.IsNullOrWhiteSpace(SensorId) &&
             !string.IsNullOrWhiteSpace(ModelName) &&
             !string.IsNullOrWhiteSpace(FrameId) &&
-            SamplePeriodSeconds > 0.0 &&
-            !double.IsNaN(SamplePeriodSeconds) &&
-            !double.IsInfinity(SamplePeriodSeconds) &&
             !string.IsNullOrWhiteSpace(Source) &&
             Mount.IsValid;
     }

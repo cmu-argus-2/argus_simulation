@@ -44,7 +44,8 @@ namespace Argus.Simulation.Tests
                 sensor => new IdealBodyRateSensorModel(
                     sensor.Definition.SensorId,
                     sensor.Definition.FrameId,
-                    sensor.Definition.SamplePeriodSeconds));
+                    sensor.Definition.SamplePeriodSeconds,
+                    sensor.Definition.Source));
             List<SensorOutputSet> outputs = new List<SensorOutputSet>();
             gateway.SensorOutputProduced += outputs.Add;
             SimulationConfiguration scenario = Scenario(
@@ -150,9 +151,55 @@ namespace Argus.Simulation.Tests
             Assert.That(log[2].Reason, Is.EqualTo("The command is for t = 0.05 s; step 0 is at t = 0 s."));
             Assert.That(log[3].Reason, Is.EqualTo("Device 'torque.body' is not an actuator this run configures."));
 
+            // With no actuator configured, the applied command is the requested one.
             Assert.That((log[4].Outcome, log[4].Reason, log[4].RunId), Is.EqualTo((CommandOutcome.Applied, (string)null, "test-run")));
             Assert.That(log[4].Applied.Value.Commands, Is.Empty);
             Assert.That(gateway.NextSequence, Is.EqualTo(1));
+        }
+
+        // Each command has exactly its kind's keys, and only idle values until an engine applies
+        // commands (BSK-8). The applied command adds every actuator the controller left out, at its
+        // idle values, once each, while the requested command stays as sent (CON-2).
+        [Test]
+        public void ActuatorCommandsAreCheckedByKindAndOmittedActuatorsRunIdle()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<CommandRecord> log = new List<CommandRecord>();
+            gateway.CommandLogged += log.Add;
+            gateway.Reset(0, Scenario(0.1, IdealBodyTorque("torque.body"), MagneticTorquer("mtq.x")));
+
+            Assert.Throws<ArgumentException>(() => gateway.Step(Command(0, "torque.body", new DeviceValues.Builder()
+                .Add("torque_body_n_m", new Vector3d(0.0, 0.0, 0.0))
+                .Add("dipole_a_m2", 0.0)
+                .Build())));
+            Assert.Throws<ArgumentException>(() => gateway.Step(Command(0, "torque.body", DeviceValues.Empty)));
+            Assert.Throws<ArgumentException>(() => gateway.Step(Command(0, "torque.body", new DeviceValues.Builder()
+                .Add("torque_body_n_m", 0.0)
+                .Build())));
+            Assert.Throws<ArgumentException>(() => gateway.Step(Torque(0.001)));
+            gateway.Step(Torque(0.0));
+            gateway.Step(DeviceCommandSet.None(1, 0.1));
+
+            Assert.That(log.Count, Is.EqualTo(6));
+            Assert.That(log[0].Reason, Is.EqualTo(
+                "Device 'torque.body' command values[\"dipole_a_m2\"]: is not a ideal_body_torque key."));
+            Assert.That(log[1].Reason, Is.EqualTo("Device 'torque.body' command values[\"torque_body_n_m\"]: is required."));
+            Assert.That(log[2].Reason, Is.EqualTo(
+                "Device 'torque.body' command values[\"torque_body_n_m\"]: must be a Vector3, not a Number."));
+            Assert.That(log[3].Reason, Is.EqualTo(
+                "Device 'torque.body': applying actuator commands is not built yet (BSK-8, #21)."));
+            for (int index = 0; index < 4; index++)
+            {
+                Assert.That((log[index].Outcome, log[index].Applied.HasValue), Is.EqualTo((CommandOutcome.Rejected, false)));
+            }
+
+            Assert.That(log[4].Outcome, Is.EqualTo(CommandOutcome.Applied));
+            Assert.That(DeviceIds(log[4].Requested), Is.EqualTo(new[] { "torque.body" }));
+            Assert.That(DeviceIds(log[4].Applied.Value), Is.EqualTo(new[] { "torque.body", "mtq.x" }));
+            Assert.That(log[4].Applied.Value.Commands[1].Values.Number("dipole_a_m2"), Is.EqualTo(0.0));
+            Assert.That(DeviceIds(log[5].Requested), Is.Empty);
+            Assert.That(DeviceIds(log[5].Applied.Value), Is.EqualTo(new[] { "torque.body", "mtq.x" }));
+            Assert.That(log[5].Applied.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(0.0, 0.0, 0.0)));
         }
 
         [Test]
@@ -253,16 +300,192 @@ namespace Argus.Simulation.Tests
             Assert.That(stopped.Stop("again"), Is.Null);
         }
 
-        // A command for step 0 naming one device, which no run configures yet.
-        private static DeviceCommandSet Torque(double x) => new DeviceCommandSet(
-            0,
-            0.0,
-            new[]
+        // A command for step 0 naming the ideal body torque device "torque.body".
+        private static DeviceCommandSet Torque(double x) =>
+            Command(0, "torque.body", new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(x, 0.0, 0.0)).Build());
+
+        // A command for one device at a 0.1 s step.
+        private static DeviceCommandSet Command(long sequence, string deviceId, DeviceValues values) =>
+            new DeviceCommandSet(sequence, sequence * 0.1, new[] { new DeviceCommand(deviceId, values) });
+
+        private static string[] DeviceIds(DeviceCommandSet command)
+        {
+            string[] ids = new string[command.Commands.Count];
+            for (int i = 0; i < ids.Length; i++)
             {
-                new DeviceCommand(
-                    "torque.body",
-                    new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(x, 0.0, 0.0)).Build())
-            });
+                ids[i] = command.Commands[i].DeviceId;
+            }
+
+            return ids;
+        }
+
+        // An actuator has no period and publishes no frames (docs/device-model.md §1).
+        private static SensorDefinition Actuator(string deviceId) =>
+            new SensorDefinition(deviceId, "test-actuator", deviceId, 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false);
+
+        private static DeviceConfiguration IdealBodyTorque(string deviceId) => IdealBodyTorqueKind.Instance.Configure(
+            Actuator(deviceId),
+            new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp));
+
+        private static DeviceConfiguration MagneticTorquer(string deviceId) => MagneticTorquerKind.Instance.Configure(
+            Actuator(deviceId),
+            new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.2, ActuatorLimitPolicy.Reject));
+
+        // The manifest lists each device as configured, while its frames carry the ID, frame and
+        // source of the sensor the factory built, on that sensor's period; so the two must agree
+        // (CORE-22 design review). A mismatch fails before the engine is configured, which for
+        // Basilisk is a call to the service (CORE-22 review).
+        [TestCase("rate.other", "rate.main", 0.1, DeviceSource.Basilisk)]
+        [TestCase("rate.main", "other_frame", 0.1, DeviceSource.Basilisk)]
+        [TestCase("rate.main", "rate.main", 0.2, DeviceSource.Basilisk)]
+        [TestCase("rate.main", "rate.main", 0.1, "simulation")]
+        public void ResetRejectsASensorThatDisagreesWithItsDevice(string sensorId, string frameId, double periodSeconds, string source)
+        {
+            AnalyticSimulationEngine engine = Engine();
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                device => new IdealBodyRateSensorModel(sensorId, frameId, periodSeconds, source));
+
+            ArgumentException error = Assert.Throws<ArgumentException>(
+                () => gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true))));
+            Assert.That(error.Message, Does.Contain("'rate.main'"));
+            Assert.That(engine.IsInitialized, Is.False);
+        }
+
+        // A camera places its frames by its own mount, so the built sensor must keep its device's
+        // position and rotation (up to the quaternion's sign). The device turns 120 degrees about
+        // (1, 1, 1); flipping one sign of it gives a turn 120 degrees away. "zero" forgets the
+        // mount's rotation and "scaled" doubles its quaternion: both invalid mounts, which the
+        // rotation comparison alone would accept (CORE-22 review).
+        [TestCase("x")]
+        [TestCase("y")]
+        [TestCase("z")]
+        [TestCase("w")]
+        [TestCase("position")]
+        [TestCase("zero")]
+        [TestCase("scaled")]
+        public void ResetRejectsASensorMountedElsewhereThanItsDevice(string changed)
+        {
+            SensorMount mount = new SensorMount(new Vector3d(0.1, 0.0, 0.0), new Quaterniond(0.5, 0.5, 0.5, 0.5));
+            SensorMount builtMount = new SensorMount(
+                changed == "position" ? new Vector3d(0.0, 0.0, 0.0) : mount.PositionBodyMeters,
+                changed == "zero" ? new Quaterniond(0.0, 0.0, 0.0, 0.0)
+                    : changed == "scaled" ? new Quaterniond(1.0, 1.0, 1.0, 1.0)
+                    : new Quaterniond(
+                        changed == "x" ? -0.5 : 0.5,
+                        changed == "y" ? -0.5 : 0.5,
+                        changed == "z" ? -0.5 : 0.5,
+                        changed == "w" ? -0.5 : 0.5));
+            AnalyticSimulationEngine engine = Engine();
+            DeviceConfiguration device = ImuKind.Instance.Configure(
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                TestImu.P0LikeProfile());
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                configured => new DefinitionOnlySensor(new SensorDefinition(
+                    configured.Definition.SensorId,
+                    configured.Definition.ModelName,
+                    configured.Definition.FrameId,
+                    configured.Definition.SamplePeriodSeconds,
+                    configured.Definition.Source,
+                    builtMount,
+                    configured.Definition.IsControllerVisible)));
+
+            ArgumentException error = Assert.Throws<ArgumentException>(() => gateway.Reset(0, Scenario(0.1, device)));
+            Assert.That(error.Message, Is.EqualTo("The sensor built for device 'rate.main' must keep its device's mount; it has another."));
+            Assert.That(engine.IsInitialized, Is.False);
+        }
+
+        // The same rotation can be written differently: q and -q are one rotation, and a valid mount
+        // may be up to 1e-6 off unit length (Quaterniond.IsUnit), so a sensor may hold it normalised.
+        // Both keep the device's mount (CORE-22 review). The device's turn is 2e-7 short of unit
+        // length, so a raw dot product without normalising would fall short of 1 in both cases.
+        [TestCase("negated")]
+        [TestCase("normalised")]
+        public void ResetAcceptsASensorWhoseMountRotationIsWrittenDifferently(string written)
+        {
+            Quaterniond turn = new Quaterniond(0.5, 0.5, 0.5, 0.4999996);
+            SensorMount mount = new SensorMount(new Vector3d(0.1, 0.0, 0.0), turn);
+            SensorMount builtMount = new SensorMount(
+                mount.PositionBodyMeters,
+                written == "negated" ? new Quaterniond(-turn.X, -turn.Y, -turn.Z, -turn.W) : turn.Normalized());
+            AnalyticSimulationEngine engine = Engine();
+            DeviceConfiguration device = ImuKind.Instance.Configure(
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                TestImu.P0LikeProfile());
+            SimulationGateway gateway = new SimulationGateway(
+                engine,
+                configured => new DefinitionOnlySensor(new SensorDefinition(
+                    configured.Definition.SensorId,
+                    configured.Definition.ModelName,
+                    configured.Definition.FrameId,
+                    configured.Definition.SamplePeriodSeconds,
+                    configured.Definition.Source,
+                    builtMount,
+                    configured.Definition.IsControllerVisible)));
+
+            Assert.DoesNotThrow(() => gateway.Reset(0, Scenario(0.1, device)));
+            Assert.That(engine.IsInitialized, Is.True);
+        }
+
+        // A Reset refused by the gateway's own checks (an invalid scenario, or a sensor that disagrees
+        // with its device) changes nothing: the run in progress keeps running (CORE-22 review). A Reset
+        // the engine refuses still ends it, as before CORE-22.
+        [Test]
+        public void ARefusedResetLeavesTheRunInProgressRunning()
+        {
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => device.Definition.SensorId == "rate.bad"
+                    ? new IdealBodyRateSensorModel("rate.bad", "rate.bad", 0.1, "simulation")
+                    : SameDefinitionStandIn(device));
+            gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true)));
+            gateway.Step();
+
+            Assert.Throws<ArgumentException>(() => gateway.Reset(0, Scenario(0.1, Rate("rate.bad", isControllerVisible: true))));
+
+            Assert.That(gateway.IsRunning, Is.True);
+            Assert.DoesNotThrow(() => gateway.Step());
+        }
+
+        [Test]
+        public void ResetRejectsAFactoryThatBuildsNoSensor()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine(), device => null);
+
+            ArgumentException error = Assert.Throws<ArgumentException>(
+                () => gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true))));
+            Assert.That(error.Message, Does.Contain("'rate.main'"));
+        }
+
+        // An ideal body-rate sensor with its device's ID, frame, period and source.
+        private static ISensor SameDefinitionStandIn(DeviceConfiguration device) =>
+            new IdealBodyRateSensorModel(
+                device.Definition.SensorId,
+                device.Definition.FrameId,
+                device.Definition.SamplePeriodSeconds,
+                device.Definition.Source);
+
+        // A sensor with any definition, for the guard to compare; it never samples.
+        private sealed class DefinitionOnlySensor : ISensor
+        {
+            public DefinitionOnlySensor(SensorDefinition definition)
+            {
+                Definition = definition;
+            }
+
+            public SensorDefinition Definition { get; }
+
+            public void Reset(SensorResetContext context)
+            {
+            }
+
+            public bool TrySample(SensorSampleContext context, out ISensorFrame frame)
+            {
+                frame = null;
+                return false;
+            }
+        }
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
@@ -273,18 +496,14 @@ namespace Argus.Simulation.Tests
         private static DeviceConfiguration Camera(string sensorId, bool isControllerVisible) =>
             CameraKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
-                new CameraProfile(new CameraIntrinsics(4608, 2592, 3548.0, 3548.0, 2304.0, 1296.0), 0.0005));
+                TestCameras.Imx708Profile());
 
         // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
         private static DeviceConfiguration Rate(string sensorId, bool isControllerVisible)
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             return ImuKind.Instance.Configure(
-                new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, "test", SensorMount.Identity, isControllerVisible),
-                new ImuProfile(
-                    new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
-                    new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
+                new SensorDefinition(sensorId, "test-rate", sensorId, 0.1, DeviceSource.Basilisk, SensorMount.Identity, isControllerVisible),
+                TestImu.P0LikeProfile());
         }
     }
 }

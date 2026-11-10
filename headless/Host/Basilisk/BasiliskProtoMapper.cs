@@ -43,12 +43,9 @@ namespace Argus.Simulation.Host
             };
 
             // Only backend-modelled devices go to Basilisk; Argus computes the rest (D10, CORE-18).
-            foreach (DeviceConfiguration device in configuration.Devices)
+            foreach (DeviceConfiguration device in configuration.BackendDevices)
             {
-                if (device.IsBackendModelled)
-                {
-                    message.Devices.Add(ToProto(device));
-                }
+                message.Devices.Add(ToProto(device));
             }
 
             return message;
@@ -108,14 +105,20 @@ namespace Argus.Simulation.Host
             {
                 DeviceId = definition.SensorId,
                 Kind = device.Kind,
+                // 0 for an actuator, which takes a command every step.
                 SamplePeriodNs = checked((ulong)BasiliskTime.ToNanoseconds(definition.SamplePeriodSeconds)),
-                ControllerVisible = definition.IsControllerVisible,
                 Mount = new PbSim.DeviceMount
                 {
                     PositionBodyM = ToProto(definition.Mount.PositionBodyMeters),
                     DeviceToBody = ToProto(definition.Mount.SensorToBody)
                 }
             };
+            // Sensors only: an actuator publishes no frames, so the field stays unset.
+            if (!device.IsActuator)
+            {
+                message.ControllerVisible = definition.IsControllerVisible;
+            }
+
             AddAll(message.Parameters, device.Parameters);
             AddAll(message.InitialState, device.InitialState);
             return message;

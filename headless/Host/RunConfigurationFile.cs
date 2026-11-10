@@ -130,6 +130,7 @@ namespace Argus.Simulation.Host
 
             DeviceConfiguration[] devices = new DeviceConfiguration[element.GetArrayLength()];
             HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, DeviceConfiguration> cameraByProfileId = new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
             int index = 0;
             foreach (JsonElement device in element.EnumerateArray())
             {
@@ -142,27 +143,82 @@ namespace Argus.Simulation.Host
                     Join(devicePath, "samplePeriodSeconds"),
                     "must be a whole multiple of fixedStepSeconds");
                 Check(deviceIds.Add(devices[index].Definition.SensorId), Join(devicePath, "deviceId"), "duplicates another device's ID");
+                if (devices[index].KindDefinition is ICameraKind camera)
+                {
+                    // A profile ID names one parameter set (CameraProfile.IsSameParameterSetAs, CORE-6).
+                    CameraProfile profile = camera.Profile(devices[index]);
+                    if (cameraByProfileId.TryGetValue(profile.ProfileId, out DeviceConfiguration first))
+                    {
+                        CameraProfile firstProfile = ((ICameraKind)first.KindDefinition).Profile(first);
+                        Check(
+                            profile.IsSameParameterSetAs(firstProfile),
+                            $"{devicePath}.parameters[\"profile_id\"]",
+                            $"names another parameter set than {first.Definition.SensorId}: it differs in {DifferingParts(profile, firstProfile)}");
+                    }
+                    else
+                    {
+                        cameraByProfileId.Add(profile.ProfileId, devices[index]);
+                    }
+                }
+
                 index++;
             }
 
             return devices;
         }
 
+        // Which parts of a camera's parameter set differ, in the file's groups, for the profile_id error.
+        // CameraProfile.IsSameParameterSetAs is the rule; keep the two in step.
+        private static string DifferingParts(CameraProfile profile, CameraProfile first)
+        {
+            List<string> parts = new List<string>();
+            if (!profile.Intrinsics.Equals(first.Intrinsics) ||
+                !string.Equals(profile.IntrinsicsSource, first.IntrinsicsSource, StringComparison.Ordinal) ||
+                profile.IsCalibrated != first.IsCalibrated)
+            {
+                parts.Add("intrinsics");
+            }
+
+            if (!profile.Distortion.Equals(first.Distortion))
+            {
+                parts.Add("distortion");
+            }
+
+            if (!string.Equals(profile.NoiseSource, first.NoiseSource, StringComparison.Ordinal))
+            {
+                parts.Add("noise");
+            }
+
+            // Falls back to the whole set if a versioned field is missing above.
+            return parts.Count == 0 ? "its parameter set" : string.Join(" and ", parts);
+        }
+
         // One device: the common fields, its registered kind and that kind's parameters
         // (docs/device-model.md §1). The kind declares each parameter's type, so values are read as
-        // that type and never guessed from their JSON shape.
+        // that type and never guessed from their JSON shape. Only sensors have samplePeriodSeconds
+        // and controllerVisible: an actuator takes a command every step and publishes no frames.
         private static DeviceConfiguration Device(JsonElement element, string path)
         {
-            Fields(
-                element,
-                path,
-                new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "source", "controllerVisible", "mount", "parameters" },
-                Array.Empty<string>(),
-                new[] { "initialState" });
-
+            Check(element.ValueKind == JsonValueKind.Object, path, "must be an object");
+            // Which side models a device belongs to its kind and is not configured per device
+            // (docs/device-model.md §1), so the file has no source: the host sets it from the kind
+            // (CORE-22). An older file that still has one is told why.
+            Check(
+                !element.TryGetProperty("source", out _),
+                Join(path, "source"),
+                "is no longer a run-file field; the device's kind sets it (device-model §1)");
             string kindName = Text(element, "kind", path);
             IDeviceKind kind = DeviceKinds.Find(kindName);
             Check(kind != null, Join(path, "kind"), $"'{kindName}' is not a registered device kind ({DeviceKinds.Names})");
+            bool isActuator = kind.Role == DeviceRole.Actuator;
+            Fields(
+                element,
+                path,
+                isActuator
+                    ? new[] { "deviceId", "kind", "modelName", "frameId", "mount", "parameters" }
+                    : new[] { "deviceId", "kind", "modelName", "frameId", "samplePeriodSeconds", "controllerVisible", "mount", "parameters" },
+                Array.Empty<string>(),
+                new[] { "initialState" });
 
             JsonElement mount = Field(element, "mount", path);
             string mountPath = Join(path, "mount");
@@ -171,16 +227,25 @@ namespace Argus.Simulation.Host
                 Vector(mount, "positionBodyMeters", mountPath),
                 Quaternion(mount, "deviceToBody", mountPath));
             Check(sensorMount.IsValid, mountPath, "needs a finite position and a unit quaternion");
+            Check(
+                !isActuator || ActuatorGeometry.IsIdentityRotation(sensorMount.SensorToBody),
+                Join(mountPath, "deviceToBody"),
+                "must be the identity for an actuator, whose axis is a body-frame parameter");
 
             SensorDefinition definition = new SensorDefinition(
                 Text(element, "deviceId", path),
                 Text(element, "modelName", path),
                 Text(element, "frameId", path),
-                Number(element, "samplePeriodSeconds", path),
-                Text(element, "source", path),
+                isActuator ? 0.0 : Number(element, "samplePeriodSeconds", path),
+                DeviceSource.For(kind),
                 sensorMount,
-                Boolean(element, "controllerVisible", path));
-            Check(definition.IsValid, path, "needs non-blank deviceId, modelName, frameId and source, and samplePeriodSeconds > 0");
+                !isActuator && Boolean(element, "controllerVisible", path));
+            Check(
+                isActuator ? definition.HasValidCommonFields : definition.IsValid,
+                path,
+                isActuator
+                    ? "needs non-blank deviceId, modelName and frameId"
+                    : "needs non-blank deviceId, modelName and frameId, and samplePeriodSeconds > 0");
 
             DeviceValues parameters = ReadValues(
                 Field(element, "parameters", path), Join(path, "parameters"), kind.ParameterKeys, $"{kind.Name} parameter");
@@ -200,7 +265,7 @@ namespace Argus.Simulation.Host
             Check(
                 !definition.IsControllerVisible || kind.MayBeControllerVisible,
                 Join(path, "controllerVisible"),
-                $"must be false, because {kindName} frames carry truth a controller may not see (D7; cameras until CORE-6, #42)");
+                $"must be false, because {kindName} frames carry truth a controller may not see (D7)");
             return configuration;
         }
 

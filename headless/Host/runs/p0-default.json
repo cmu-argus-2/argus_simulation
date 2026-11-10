@@ -28,7 +28,6 @@
       "modelName": "placeholder-mems-imu",
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
@@ -61,7 +60,6 @@
       "modelName": "placeholder-magnetometer",
       "frameId": "mag_main",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.0],
@@ -80,7 +78,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_px",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.05, 0.0, 0.0],
@@ -100,7 +97,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_mx",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [-0.05, 0.0, 0.0],
@@ -120,7 +116,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_py",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.05, 0.0],
@@ -140,7 +135,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_my",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, -0.05, 0.0],
@@ -160,7 +154,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_pz",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, 0.05675],
@@ -180,7 +173,6 @@
       "modelName": "placeholder-face-light-sensor",
       "frameId": "light_mz",
       "samplePeriodSeconds": 0.1,
-      "source": "basilisk",
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.0, -0.05675],
@@ -192,6 +184,136 @@
         "noise_std_w_per_m2": 0.0,
         "bias_w_per_m2": 0.0,
         "saturation_w_per_m2": 2000.0
+      }
+    },
+    {
+      "deviceId": "cam.px",
+      "kind": "camera",
+      "modelName": "arducam-imx708",
+      "frameId": "cam_px",
+      "samplePeriodSeconds": 15.0,
+      "controllerVisible": false,
+      "mount": {
+        "positionBodyMeters": [0.05116, -0.000198, -0.02927],
+        "deviceToBody": { "x": -0.5, "y": 0.5, "z": -0.5, "w": 0.5 }
+      },
+      "parameters": {
+        "profile_id": "imx708-66deg-spec-v0",
+        "intrinsics": {
+          "width_px": 4608,
+          "height_px": 2592,
+          "focal_length_x_px": 3548.0,
+          "focal_length_y_px": 3548.0,
+          "principal_point_x_px": 2304.0,
+          "principal_point_y_px": 1296.0,
+          "source": "spec-estimate",
+          "calibrated": false
+        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
+        "exposure_duration_s": 0.0005,
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+      }
+    },
+    {
+      "deviceId": "cam.py",
+      "kind": "camera",
+      "modelName": "arducam-imx708",
+      "frameId": "cam_py",
+      "samplePeriodSeconds": 15.0,
+      "controllerVisible": false,
+      "mount": {
+        "positionBodyMeters": [-0.00018, 0.051362, -0.02927],
+        "deviceToBody": { "x": -0.7071067811865476, "y": 0.0, "z": 0.0, "w": 0.7071067811865476 }
+      },
+      "parameters": {
+        "profile_id": "imx708-66deg-spec-v0",
+        "intrinsics": {
+          "width_px": 4608,
+          "height_px": 2592,
+          "focal_length_x_px": 3548.0,
+          "focal_length_y_px": 3548.0,
+          "principal_point_x_px": 2304.0,
+          "principal_point_y_px": 1296.0,
+          "source": "spec-estimate",
+          "calibrated": false
+        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
+        "exposure_duration_s": 0.0005,
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+      }
+    },
+    {
+      "deviceId": "cam.mx",
+      "kind": "camera",
+      "modelName": "arducam-imx708",
+      "frameId": "cam_mx",
+      "samplePeriodSeconds": 15.0,
+      "controllerVisible": false,
+      "mount": {
+        "positionBodyMeters": [-0.05214, 0.000022, -0.02927],
+        "deviceToBody": { "x": -0.5, "y": -0.5, "z": 0.5, "w": 0.5 }
+      },
+      "parameters": {
+        "profile_id": "imx708-66deg-spec-v0",
+        "intrinsics": {
+          "width_px": 4608,
+          "height_px": 2592,
+          "focal_length_x_px": 3548.0,
+          "focal_length_y_px": 3548.0,
+          "principal_point_x_px": 2304.0,
+          "principal_point_y_px": 1296.0,
+          "source": "spec-estimate",
+          "calibrated": false
+        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
+        "exposure_duration_s": 0.0005,
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+      }
+    },
+    {
+      "deviceId": "cam.my",
+      "kind": "camera",
+      "modelName": "arducam-imx708",
+      "frameId": "cam_my",
+      "samplePeriodSeconds": 15.0,
+      "controllerVisible": false,
+      "mount": {
+        "positionBodyMeters": [-0.00030, -0.051438, -0.02927],
+        "deviceToBody": { "x": 0.0, "y": -0.7071067811865476, "z": 0.7071067811865476, "w": 0.0 }
+      },
+      "parameters": {
+        "profile_id": "imx708-66deg-spec-v0",
+        "intrinsics": {
+          "width_px": 4608,
+          "height_px": 2592,
+          "focal_length_x_px": 3548.0,
+          "focal_length_y_px": 3548.0,
+          "principal_point_x_px": 2304.0,
+          "principal_point_y_px": 1296.0,
+          "source": "spec-estimate",
+          "calibrated": false
+        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
+        "exposure_duration_s": 0.0005,
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+      }
+    },
+    {
+      "deviceId": "torque.body",
+      "kind": "ideal_body_torque",
+      "modelName": "placeholder-ideal-body-torque",
+      "frameId": "torque_body",
+      "mount": {
+        "positionBodyMeters": [0.0, 0.0, 0.0],
+        "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
+      },
+      "parameters": {
+        "max_torque_body_n_m": [0.001, 0.001, 0.001],
+        "limit_policy": "clamp"
       }
     }
   ]

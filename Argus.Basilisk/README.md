@@ -123,8 +123,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    Device checks walk `devices.KINDS`. A device problem names its path, for example
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
-   Pacing stays UNIMPLEMENTED until BSK-7 (#20). No actuator kind is registered yet (CON-2,
-   #34), so a Step command may name no device, and applying commands waits for BSK-8 (#21). Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   Pacing stays UNIMPLEMENTED until BSK-7 (#20). The actuator kinds are registered (CON-2,
+   #34) but build nothing, so only idle commands run until BSK-8 (#21) applies the rest. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -154,11 +154,12 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    sent in the wrong request is rejected instead of acting a step off. The set is complete:
    an actuator it leaves out is idle, so the empty set is no output. Each command names a
    configured actuator once, with set, finite values; otherwise INVALID_ARGUMENT
-   (`commands.commands[0].device_id: is not an actuator this run configures`). Until actuator
-   kinds exist (CON-2, #34) a run has no actuators, so only the empty set is valid. Step(0)
-   follows no command: both fields are unset and the set is empty, or INVALID_ARGUMENT (no
-   interval ends at t = 0). A command for a configured actuator is UNIMPLEMENTED until BSK-8
-   (#21) applies it (G1).
+   (`commands.commands[0].device_id: is not an actuator this run configures`), and exactly its
+   kind's `COMMANDS` keys, or INVALID_ARGUMENT naming the key. Step(0) follows no command: both
+   fields are unset and the set is empty, or INVALID_ARGUMENT (no interval ends at t = 0). No
+   actuator builds an effector until BSK-8 (#21) (G1), so a command at its kind's `IDLE` values
+   runs, since it applies nothing, and any other is UNIMPLEMENTED. The gateway sends every
+   configured actuator, idle ones included, so a P0 run with `torque.body` steps cleanly.
 4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
    otherwise OUT_OF_RANGE, checked before executing.
 5. For n > 0, write the request's command (command n-1) into the actuator input messages
@@ -385,7 +386,14 @@ module defines `KIND`; `PARAMETERS` and `OUTPUTS`, which map each key to its `De
 case; `check(values, invalid)`, its range checks; and `build(device, random_seed, inputs)`,
 its Argus sensor, whose `output()` returns the output map. `devices.build_sensors` and
 `validation.py` walk `KINDS`. Adding a kind is one module plus one registration. Every
-parameter key is required, and no kind has a default or an initial state.
+parameter key is required, and no sensor kind has a default or an initial state.
+
+The actuator kinds (`ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`;
+CON-2, #34) are registered the same way, with `ROLE = ACTUATOR`, `COMMANDS` and `IDLE` in place
+of `OUTPUTS`, and no `build` until BSK-8 (#21) builds their effectors. Their keys are in
+[device-model.md](../docs/device-model.md) §2; `momentum_wheel` has an initial state,
+`speed_rad_per_s`. An actuator has `sample_period_ns` 0, no `controller_visible` and an
+identity `mount.device_to_body`, or ConfigureRun returns INVALID_ARGUMENT.
 
 Common: `C_SB = EP2C([w, x, y, z])` of `mount.device_to_body`; `mount.position_body_m` goes
 to IMU `sensorPos_B`, CSS `r_B` and albedo `r_IB_B`. **Always set the A matrix
@@ -395,6 +403,15 @@ arrays or nested lists, never scalars: the SWIG Eigen typemaps reject a scalar. 
 and `[b, b, b]` in the tables below are shorthand for `np.zeros((3, 3))`, `np.eye(3)` and a
 3-vector; T is the sample period in seconds. Outputs are scale × (true + noise + bias), then
 quantised (IMU only), then clipped.
+
+**IMU quantisation truncates toward zero.** `imuSensor`'s `setLSBs` keeps the whole number of
+LSBs toward zero, not the nearest, so every value within ±1 LSB reads 0: a dead band two LSBs
+wide. On a recorded P0 orbit, 27% of gyro samples and 8.5% of accelerometer samples are exactly
+0, as truncation predicts (rounding would give 14% and 4.2%). The noise comes out narrower than
+configured: σ 0.33 mrad/s instead of 0.38 for the gyro, and 5.45 mm/s² instead of 5.69 for the
+accelerometer. A small rate below one LSB reads 0. DATA-1 (#67) confirms whether the flight
+IMU rounds or truncates before the P0 resolutions are set; if it rounds, the service has to
+quantise itself instead of using `setLSBs`.
 
 Every module's required input messages must be linked, or `InitializeSimulation` raises
 `BasiliskError`: IMU (both modules) and CSS `scStateInMsg` / `stateInMsg` from
@@ -411,14 +428,14 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 | `gyroscope.constant_bias_sensor_rad_per_s` | vector3 | `senRotBias` |
 | `gyroscope.scale_factor_per_axis` | vector3 | `gyroScale`; each > 0 |
 | `gyroscope.range_rad_per_s` | number | `senRotMax`; > 0 |
-| `gyroscope.resolution_rad_per_s` | number | `setLSBs(accelerometer LSB, this)`; 0 = no quantisation; < range |
+| `gyroscope.resolution_rad_per_s` | number | `setLSBs(accelerometer LSB, this)`; 0 = no quantisation; < range; truncates toward zero |
 | `accelerometer.noise_density_m_per_s2_per_sqrt_hz` | number | `PMatrixAccel = N / √T I`; `setAMatrixAccel(0)` |
 | `accelerometer.bias_random_walk_m_per_s2_per_sqrt_s` | number | `PMatrixAccel = K √T I`; `setAMatrixAccel(I)` |
 | `accelerometer.bias_random_walk_bound_m_per_s2` | number | `setWalkBoundsAccel([b, b, b])` |
 | `accelerometer.constant_bias_sensor_m_per_s2` | vector3 | `senTransBias` |
 | `accelerometer.scale_factor_per_axis` | vector3 | `accelScale` |
 | `accelerometer.range_m_per_s2` | number | `senTransMax` |
-| `accelerometer.resolution_m_per_s2` | number | `setLSBs(this, gyroscope LSB)` |
+| `accelerometer.resolution_m_per_s2` | number | `setLSBs(this, gyroscope LSB)`; truncates toward zero |
 
 The accelerometer keys follow the gyroscope rules. Noise density and random walk exclude each
 other per channel.
@@ -576,7 +593,8 @@ Details name the field path and the bad value.
 - 100 steps, Reset, 100 steps: bit-identical.
 - For 2025-01-15T00:00Z with `argus-2026-09-25`, Step(0) Earth `J20002Pfix` and
   `J20002Pfix_dot` equal the t = 0 `rotation` and `rotation_rate` of
-  `origin/spice-integration:Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json`
+  `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json` at `f2e9fc8`
+  (`git fetch origin pull/5/head`; the same file the deleted `spice-integration` branch had)
   to 1e-12, and Sun − Earth equals its `sun_position_j2000_m` to 1e-3 m. These are the
   inputs of Core `BasiliskStateMapperTests`.
 - `dotnet run --project headless/Host/Argus.Simulation.Host.csproj` runs clean against the
