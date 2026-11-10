@@ -71,7 +71,7 @@ types directly.
   `using PbBasilisk = Argus.Contracts.Basilisk.V1;` and never imports those namespaces
   unqualified, because their type names collide with Core. (`Pb` alone clashes with a
   namespace inside Google.Protobuf.) Core never references Protobuf or gRPC, and Unity
-  uses the separate generated contract assembly described below; `StateStreamClient` (G2) consumes `argus.stream.v1`,
+  uses the separate generated contract assembly described below; `StateStreamClient` (UNITY-5) consumes `argus.stream.v1`,
   never `argus.basilisk.v1` (D8).
 - **Python:** `Argus.Basilisk/scripts/generate_protos.py` writes into the gitignored
   `Argus.Basilisk/generated/`.
@@ -193,9 +193,14 @@ dotnet build Argus.Contracts/Unity/Argus.Stream.Contracts.csproj
 
 This pinned Grpc.Tools 2.84.0 project compiles shared sim messages and the stream client
 into a netstandard2.1 assembly, with Google.Protobuf 3.36.2 and Grpc.Core.Api 2.84.0.
-It generates no Basilisk messages or server stub. UNITY-5 imports this built assembly and
-its compatible runtime dependencies into a dedicated Unity plugin assembly; do not import
-Grpc.Tools itself. Core never references these assemblies. Host keeps its own internal
+It generates no Basilisk messages or server stub. The build copies that assembly and its
+managed runtime (Grpc.Net.Client 2.84.0 and its dependencies, plus System.IO.Pipelines and
+System.Runtime.CompilerServices.Unsafe for the handler) into the git-ignored
+`Assets/ArgusSimulation/Plugins/Stream/`, leaving out the netstandard2.0 shims Unity's
+.NET Standard 2.1 profile already provides. Grpc.Tools itself is never imported.
+YetAnotherHttpHandler comes from `Packages/manifest.json`, pinned to the 1.11.7 git tag.
+Core never references these assemblies; `Unity/Runtime/StateStreamMapper.cs` maps them to Core
+in the Unity runtime assembly (UNITY-5). Host keeps its own internal
 generation; HOST-3 enables server generation for stream only.
 
 Headless CI builds the managed contract assembly in Release configuration. Installing/pinning the Unity HTTP handler,

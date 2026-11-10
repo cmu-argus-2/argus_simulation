@@ -71,7 +71,7 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 | Implemented sensor models | `IdealBodyRateSensorModel`; camera base `CameraModel` and the Argus-computed `BodyCameraModel` (the Arducam IMX708 is its P0 parameter set) and `NadirGroundTruthCameraModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile` |
 | Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame`; camera profiles `CameraProfile`, `CameraDistortion`, `CameraExtrinsicsProvenance` (in `Core/Sensors/Camera`) |
-| Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource` |
+| Unity runtime bridge | `SimulationRunner`, `AnalyticStateSource`; the host's state stream `StateStreamClient`, `StateStreamMapper` |
 | Unity camera system | `CubeSatCameraRig`, `NadirTilePriority` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
 | Export | `NavigationEpisodeExporter`, `CesiumReferenceMapExporter` |
@@ -95,7 +95,8 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 - Put pinhole intrinsics and frame formats in `Core/Imaging`, camera profiles (calibration values and their
   provenance) in `Core/Sensors/Camera`, and Unity rasterization in `Unity/Cameras`.
 - Put C# gRPC and Protobuf code in `headless/Host`, with generated code `Access=Internal`; the
-  planned exceptions are the Unity ends of `argus/stream/v1` (`StateStreamClient`, G2) and
+  exceptions are the Unity ends of `argus/stream/v1` (`StateStreamClient` and
+  `StateStreamMapper`, UNITY-5, over the git-ignored plugin in `Plugins/Stream/`) and, planned,
   `argus/render/v1` (D5, G3). Core never references Google.Protobuf or Grpc, and
   Basilisk-native Core types are internal. Future transports go in `headless/Host`, those Unity
   endpoints or top-level packages such as `Argus.Hardware/`, never in Unity UI classes.
@@ -122,7 +123,6 @@ Core/Sensors/
 ├── PowerTelemetrySensor.cs, ThermalSensor.cs
 └── RadioLinkSensor.cs, RadiationSensor.cs
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
-Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)

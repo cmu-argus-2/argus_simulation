@@ -98,6 +98,16 @@ The `.env` file is ignored by Git.
 
 ### Open the project
 
+Unity's state-stream client needs its gRPC plugin, which is generated and never committed.
+Build it once after cloning, and again when the contracts change (it needs the .NET SDK):
+
+```bash
+dotnet build Argus.Contracts/Unity/Argus.Stream.Contracts.csproj
+```
+
+It writes `Assets/ArgusSimulation/Plugins/Stream/` (git-ignored). Without it, Unity reports
+missing `Grpc`, `Google.Protobuf` and `Argus.Contracts` namespaces.
+
 From a terminal:
 
 ```bash
