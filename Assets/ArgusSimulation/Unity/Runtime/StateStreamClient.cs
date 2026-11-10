@@ -21,9 +21,8 @@ namespace Argus.Simulation.Unity
 
     // Follows the headless host's state stream (CON-1, G2): native gRPC over cleartext HTTP/2 with
     // YetAnotherHttpHandler, subscribed on a background task. Received pairs are published on the
-    // main thread, in order: StateProduced with each SimulationState (ISimulationStateSource, so a
-    // SimulationRunner can follow it, UNITY-6) and OutputProduced with its latest-per-sensor
-    // SensorOutputSet. When the host stops or restarts, the client reconnects and reports Status
+    // main thread, in order: StateProduced with each SimulationState (ISimulationStateSource, which
+    // SimulationRunner follows) and OutputProduced with its latest-per-sensor SensorOutputSet. When the host stops or restarts, the client reconnects and reports Status
     // instead of throwing. The endpoint is -stream-endpoint, then $ARGUS_STREAM_ENDPOINT, then the
     // Inspector value (Argus.Contracts/README.md Endpoints).
     public sealed class StateStreamClient : MonoBehaviour, ISimulationStateSource
@@ -50,8 +49,8 @@ namespace Argus.Simulation.Unity
         public event Action<SensorOutputSet> OutputProduced;
 
         // Raised before the first pair of a new subscription or run generation: interpolation and
-        // trail history from before it must be cleared.
-        public event Action<string> HistoryReset;
+        // trail history from before it must be cleared. RunGeneration names the new one.
+        public event Action HistoryReset;
 
         public StateStreamStatus Status => (StateStreamStatus)Volatile.Read(ref _status);
 
@@ -94,7 +93,7 @@ namespace Argus.Simulation.Unity
                     _publishedSubscription = received.Subscription;
                     RunGeneration = received.Pair.RunGeneration;
                     _lastSequence = -1;
-                    HistoryReset?.Invoke(RunGeneration);
+                    HistoryReset?.Invoke();
                 }
 
                 // Sequence only increases within a generation; a repeat is never published twice.

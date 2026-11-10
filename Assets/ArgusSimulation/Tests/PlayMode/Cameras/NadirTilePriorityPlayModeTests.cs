@@ -10,75 +10,58 @@ namespace Argus.Simulation.Tests
     public sealed class NadirTilePriorityPlayModeTests
     {
         [UnityTest]
-        public IEnumerator WarmUpLoadsOnlyNadirViewsThenRestoresEveryView()
+        public IEnumerator WarmUpLoadsOnlyNadirViewsUntilLoadedThenRestoresEveryView()
         {
             NadirScene scene = new NadirScene();
 
-            // One frame for Start, one for both cameras to sync their poses.
+            // One frame for Start. With no state from the host yet, the nadir view waits for one.
             yield return null;
             yield return null;
 
-            Camera groundTruth = scene.CameraRig.GroundTruthCamera;
             Assert.That(scene.Priority.IsWarmingUp, Is.True);
-            Assert.That(scene.Runner.IsRunning, Is.False);
-            Assert.That(scene.Runner.HasState, Is.True);
-            Assert.That(scene.CameraManager.useMainCamera, Is.False);
-            Assert.That(scene.CameraManager.additionalCameras, Has.Member(groundTruth));
-            Assert.That(scene.CameraManager.additionalCameras, Has.Member(scene.Priority.LookaheadCamera));
+            scene.AssertOnlyNadirViews();
             Assert.That(scene.Priority.LookaheadCamera.enabled, Is.False);
-            foreach (Camera camera in scene.CameraRig.Cameras)
-            {
-                if (camera != groundTruth)
-                {
-                    Assert.That(scene.CameraManager.additionalCameras, Has.No.Member(camera));
-                }
-            }
 
-            // Four wall-clock seconds at 1x is roughly 30 km along the ground track.
-            float leadMeters = Vector3.Distance(
-                scene.Priority.LookaheadCamera.transform.position,
-                groundTruth.transform.position);
-            Assert.That(leadMeters, Is.InRange(20_000f, 40_000f));
-
-            // With no tilesets in the scene, loading is complete and the gate opens.
-            for (int frame = 0; frame < 60 && scene.Priority.IsWarmingUp; frame++)
-            {
-                yield return null;
-            }
+            // With a state and no tilesets in the scene, loading is complete and the gate opens.
+            scene.Source.Publish(0);
+            yield return scene.WaitForWarmUp();
 
             Assert.That(scene.Priority.IsWarmingUp, Is.False);
-            Assert.That(scene.Runner.IsRunning, Is.True);
+            Assert.That(scene.Runner.HasState, Is.True);
             scene.AssertEveryViewRestored();
 
             yield return scene.Destroy();
             LogAssert.NoUnexpectedReceived();
         }
 
+        // The host owns the run, so a new run or subscription jumps the pose: the nadir view loads
+        // first again, without holding anything.
         [UnityTest]
-        public IEnumerator ResumeDuringWarmUpSkipsTheWaitAndRestoresEveryView()
+        public IEnumerator ANewRunWarmsUpTheNadirViewAgain()
         {
             NadirScene scene = new NadirScene();
             yield return null;
+            scene.Source.Publish(0);
+            yield return scene.WaitForWarmUp();
+            Assert.That(scene.Priority.IsWarmingUp, Is.False);
+
+            scene.Source.ResetHistory();
             yield return null;
             Assert.That(scene.Priority.IsWarmingUp, Is.True);
-            Assert.That(scene.CameraManager.useMainCamera, Is.False);
+            Assert.That(scene.Runner.HasState, Is.False);
+            scene.AssertOnlyNadirViews();
 
-            // What the dashboard's RESUME button does.
-            scene.Runner.IsRunning = true;
-            yield return null;
-
-            // The gate needs 10 stable frames to open on its own, so ending one frame after RESUME
-            // means RESUME ended it.
+            scene.Source.Publish(0);
+            yield return scene.WaitForWarmUp();
             Assert.That(scene.Priority.IsWarmingUp, Is.False);
-            Assert.That(scene.Runner.IsRunning, Is.True);
             scene.AssertEveryViewRestored();
 
             yield return scene.Destroy();
             LogAssert.NoUnexpectedReceived();
         }
 
-        // A georeference with a camera manager, the main camera, an analytic runner set to run, and
-        // the spacecraft with its camera rig and NadirTilePriority. No tilesets.
+        // A georeference with a camera manager, the main camera, a runner following a test source,
+        // and the spacecraft with its camera rig and NadirTilePriority. No tilesets.
         private sealed class NadirScene
         {
             private readonly GameObject _geospatialWorld;
@@ -97,10 +80,9 @@ namespace Argus.Simulation.Tests
                 _mainCamera.AddComponent<Camera>();
 
                 _simulation = new GameObject("Simulation");
-                AnalyticStateSource source = _simulation.AddComponent<AnalyticStateSource>();
+                Source = _simulation.AddComponent<TestStateSource>();
                 Runner = _simulation.AddComponent<SimulationRunner>();
-                Runner.Configure(source);
-                Runner.IsRunning = true;
+                Runner.Configure(Source);
 
                 _spacecraft = new GameObject("CubeSat Truth Pose");
                 _spacecraft.transform.SetParent(_geospatialWorld.transform, false);
@@ -112,9 +94,33 @@ namespace Argus.Simulation.Tests
             }
 
             public CesiumCameraManager CameraManager { get; }
+            public TestStateSource Source { get; }
             public SimulationRunner Runner { get; }
             public CubeSatCameraRig CameraRig { get; }
             public NadirTilePriority Priority { get; }
+
+            public IEnumerator WaitForWarmUp()
+            {
+                for (int frame = 0; frame < 60 && Priority.IsWarmingUp; frame++)
+                {
+                    yield return null;
+                }
+            }
+
+            public void AssertOnlyNadirViews()
+            {
+                Camera groundTruth = CameraRig.GroundTruthCamera;
+                Assert.That(CameraManager.useMainCamera, Is.False);
+                Assert.That(CameraManager.additionalCameras, Has.Member(groundTruth));
+                Assert.That(CameraManager.additionalCameras, Has.Member(Priority.LookaheadCamera));
+                foreach (Camera camera in CameraRig.Cameras)
+                {
+                    if (camera != groundTruth)
+                    {
+                        Assert.That(CameraManager.additionalCameras, Has.No.Member(camera));
+                    }
+                }
+            }
 
             public void AssertEveryViewRestored()
             {

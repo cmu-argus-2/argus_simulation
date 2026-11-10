@@ -5,6 +5,7 @@
     "Argus.Simulation.Core",
     "Argus.Simulation.Unity",
     "CesiumForUnity",
+    "Unity.Mathematics",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"
   ],

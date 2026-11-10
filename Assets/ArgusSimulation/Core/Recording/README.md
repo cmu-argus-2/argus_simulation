@@ -12,7 +12,7 @@ write-only archive. It never feeds data back into the run and never blocks the s
   (`SimulationGateway.RunStarted`), then `RecordState` (`StateProduced`), `RecordSensorOutput`
   (`SensorOutputProduced`), `RecordCommand` (`CommandLogged`) and `RecordTermination`
   (`RunTerminated`), and `Close` at the end. `headless/Host` subscribes exactly these five
-  events; Unity-driven runs will call the same methods (UNITY-9, #63).
+  events.
 - **Off the step loop:** the calls only queue. One writer thread formats the JSON, encodes PNGs
   (`PngEncoder`, no Unity) and writes the files, so a stalled disk never delays
   `SimulationGateway.Step` (`RunRecorderTests`).
@@ -108,7 +108,7 @@ consumer that feeds an agent or controller uses only frames whose sensor has `co
 | `velocity_ecef_m_s` | [3] | `VelocityEcefMetersPerSecond`, relative to the Earth-fixed frame |
 | `body_to_ecef_xyzw` | [4] | `BodyToEcef` |
 | `angular_velocity_body_rad_s` | [3] | `AngularVelocityBodyRadiansPerSecond`: the body rate relative to inertial, in body axes. In analytic runs (`AnalyticEarthFixed`) it is the fixture's (0, n, 0) instead until CORE-2 (PR #83) lands, a known issue (`CircularOrbitModel` TODO; `target-architecture.md`). |
-| `producing_command` | object or `null` | `AppliedCommands` (a `DeviceCommandSet`): `sequence`, `apply_at_simulation_time_s` and `devices`, which maps each commanded actuator's device ID to its values in the manifest's value forms (`{}` while no actuator exists). The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0, and in runs that apply no commands (Unity's `AnalyticStateSource`). The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `outcome` is not `Rejected`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
+| `producing_command` | object or `null` | `AppliedCommands` (a `DeviceCommandSet`): `sequence`, `apply_at_simulation_time_s` and `devices`, which maps each commanded actuator's device ID to its values in the manifest's value forms (`{}` while no actuator exists). The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0. The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `outcome` is not `Rejected`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
 | `environment` | object or `null` | `EnvironmentState`: `sun_position_itrf93_m`, `j2000_to_itrf93_xyzw`, `earth_angular_velocity_itrf93_rad_s`, `spacecraft_shadow_factor` (Basilisk's illumination factor: 1 is fully sunlit, 0 is umbra). `null` in analytic runs (D9). |
 
 Backend sensor measurements (`SensorMeasurements`) are not repeated here. They appear in
@@ -158,8 +158,7 @@ an invalid value, the wrong sequence or time, or a step after the run ended is `
 reason. `Applied` means the gateway accepted the command for the engine. If the run ended at that
 step (the manifest's `termination` has that `last_sequence`), the engine may not have run it; state
 k+1's `producing_command` is the confirmation that it did. `Clamped` arrives with actuator limits (CORE-10, #46). The file
-is created in every run directory, so it is empty when no command was received, as in
-Unity-driven runs, which bypass the gateway (G1).
+is created in every run directory, so it is empty when no command was received.
 
 | field | type | source |
 |---|---|---|
@@ -205,20 +204,21 @@ A reader rejects a dataset in which:
 ## Which process writes the dataset
 
 The recorder is Core code with no Unity references (D1). DATA-4 places it in the process that owns
-the step loop, so both run types write the same format with the same code:
+the step loop, which is always `headless/Host`: Unity runs no simulation of its own and only follows
+the host's state stream (UNITY-6), so every run records there.
 
 | run | owns the step loop | recorder runs in | images come from |
 |---|---|---|---|
 | Basilisk run | `headless/Host` (`BasiliskEngine`) | `headless/Host` | Unity, through Core's `IImageRenderer`, over the render link (UNITY-10 #64, G3) |
-| Unity-driven analytic run (`AnalyticStateSource`) | Unity | Unity, as the same `RunRecorder` | the in-process `UnityImageRenderer` (UNITY-4 #57). Analytic runs have no `EnvironmentState`, so their frames have no `sun_position_ecef_m` (CORE-3 #38) |
 
-`manifest.writer.process` records which one. In Unity-driven runs the recorder takes sensor frames
-from the temporary sensor bridge (`Unity/Sensors/`). G2 moves the sensors and the recorder into the
-headless core, and from then on every run records there. Dashboard attitude nudges change only the
-live dashboard feeds, not the recorded state. Recorded images are rendered at the pose in each
+`manifest.writer.process` records which process wrote the dataset. Unity-driven analytic runs, and
+the temporary sensor bridge that fed them, were removed with Unity's analytic source (UNITY-6); the
+analytic engine stays a Core test fixture (D9).
+
+Recorded images are rendered at the pose in each
 `RenderRequest`, which the camera model takes from the recorded state (D5, CORE-3 #38), so they match
 `body_to_ecef_xyzw`.
-UNITY-9 (#63) points the dashboard's Capture at the recorder in the Unity process.
+UNITY-9 (#63) moves the dashboard's Capture onto the host's recorder.
 
 ## Replacing `NavigationEpisodeExporter` (D6)
 
