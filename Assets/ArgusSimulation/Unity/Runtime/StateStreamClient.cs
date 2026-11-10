@@ -175,7 +175,8 @@ namespace Argus.Simulation.Unity
             if ((status == StateStreamStatus.Streaming || status == StateStreamStatus.Disconnected) &&
                 Interlocked.Exchange(ref _lastLogged, line) != line)
             {
-                Debug.Log(line);
+                // A status line, not an error: its call stack would only bury it.
+                Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", line);
             }
         }
 

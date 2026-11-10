@@ -4,10 +4,18 @@
   "references": [
     "Argus.Simulation.Core",
     "Argus.Simulation.Unity",
-    "CesiumForUnity"
+    "CesiumForUnity",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
   ],
-  "optionalUnityReferences": [
-    "TestAssemblies"
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll",
+    "Google.Protobuf.dll",
+    "Argus.Stream.Contracts.dll"
+  ],
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
   ],
   "autoReferenced": false
 }
