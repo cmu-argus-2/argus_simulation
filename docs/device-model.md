@@ -185,8 +185,8 @@ itself:
   devices) and sends the resolved devices to the service, which never reads files.
 - The dataset manifest records `profileId`, the path as written, and the resolved body and
   devices, so a dataset stands alone.
-- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 12 P0 devices: the 8 sensors
-  Basilisk models and the 4 body cameras) and a run file that names it (HOST-9).
+- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 16 P0 devices: the 11 sensors
+  Basilisk models, the 4 body cameras and the ideal body torque) and a run file that names it (HOST-9).
 
 ## 5. Wire
 

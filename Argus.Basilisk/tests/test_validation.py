@@ -128,7 +128,11 @@ def light_sensor(device_id, position, sensor_x, sensor_y, sensor_z):
 
 
 def p0_default_request():
-    """headless/Host/runs/p0-default.json as BasiliskProtoMapper sends it."""
+    """The P0 request as BasiliskProtoMapper sends it, with fixed test values.
+
+    A baseline for these tests, not a copy of headless/Host/runs/p0-default.json, which holds the
+    DATA-1 (#67) values.
+    """
     configuration = run_configuration_pb2.RunConfiguration(
         run_id="p0-default",
         fixed_step_ns=100_000_000,

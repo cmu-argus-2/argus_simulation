@@ -129,12 +129,10 @@ file; the host gives each run its own.
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
-light-sensor noise are 0 until DATA-1 (#67) gives the sigmas; the service accepts both
-(`Argus.Basilisk/README.md` §9).
-TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
-light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
-and epoch.
+`runs/p0-default.json` holds the DATA-1 (#67) values. The IMU, magnetometer and light-sensor
+parts come from datasheets and flight code. The 2U body (mass, inertia, light-sensor positions),
+the epoch and the orbit are team estimates, not measured or launch-contract numbers; real
+numbers are a change to this file.
 
 ## Rules
 

@@ -415,12 +415,14 @@ quantised (IMU only), then clipped.
 
 **IMU quantisation truncates toward zero.** `imuSensor`'s `setLSBs` keeps the whole number of
 LSBs toward zero, not the nearest, so every value within ±1 LSB reads 0: a dead band two LSBs
-wide. On a recorded P0 orbit, 27% of gyro samples and 8.5% of accelerometer samples are exactly
-0, as truncation predicts (rounding would give 14% and 4.2%). The noise comes out narrower than
-configured: σ 0.33 mrad/s instead of 0.38 for the gyro, and 5.45 mm/s² instead of 5.69 for the
-accelerometer. A small rate below one LSB reads 0. DATA-1 (#67) confirms whether the flight
-IMU rounds or truncates before the P0 resolutions are set; if it rounds, the service has to
-quantise itself instead of using `setLSBs`.
+wide. In a recorded 600 s run of the P0 file, 33% of accelerometer samples are exactly 0, as
+truncation predicts (33.2%; rounding would give 17.0%). The P0 gyro never reads 0 while the body
+turns at 10 °/s; the same file started at zero rate gives 14–15% gyro zeros (predicted 13.7%;
+rounding would give 6.9%). The noise comes out narrower than configured: σ 0.36 mrad/s instead
+of 0.386 for the gyro at zero rate, and 4.7 mm/s² instead of 5.58 for the accelerometer. A small
+rate below one LSB reads 0. Whether the flight IMU rounds or truncates is unconfirmed, and
+DATA-1 (#67) keeps `setLSBs`: the half-LSB shift is about 6.9 °/h at ±125 °/s, small next to the
+uncorrected zero-rate offset of up to ±3 °/s.
 
 Every module's required input messages must be linked, or `InitializeSimulation` raises
 `BasiliskError`: IMU (both modules) and CSS `scStateInMsg` / `stateInMsg` from

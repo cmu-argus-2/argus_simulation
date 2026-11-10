@@ -1,31 +1,31 @@
 {
-  "epochUtc": "2025-01-15T00:00:00Z",
+  "epochUtc": "2026-06-01T12:00:00Z",
   "fixedStepSeconds": 0.1,
   "randomSeed": 1,
   "kernelSetId": "argus-2026-11-02",
   "initialOrbit": {
-    "semiMajorAxisMeters": 6878137.0,
+    "semiMajorAxisMeters": 6958137.0,
     "eccentricity": 0.0,
-    "inclinationDegrees": 51.6,
-    "raanDegrees": 0.0,
+    "inclinationDegrees": 97.75,
+    "raanDegrees": 234.06,
     "argumentOfPeriapsisDegrees": 0.0,
     "trueAnomalyDegrees": 0.0
   },
   "spacecraft": {
-    "massKilograms": 1.33,
+    "massKilograms": 2.6,
     "inertiaBodyKilogramSquareMeters": [
-      [0.002536, 0.0, 0.0],
-      [0.0, 0.002536, 0.0],
-      [0.0, 0.0, 0.002217]
+      [0.01906, 0.0, 0.0],
+      [0.0, 0.01931, 0.0],
+      [0.0, 0.0, 0.00824]
     ],
     "initialBodyToJ2000": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
-    "initialAngularVelocityBodyRadiansPerSecond": [0.0, 0.0, 0.0]
+    "initialAngularVelocityBodyRadiansPerSecond": [0.1, -0.08, 0.12]
   },
   "devices": [
     {
       "deviceId": "imu.main",
       "kind": "imu",
-      "modelName": "placeholder-mems-imu",
+      "modelName": "bosch-bmx160-gyro125dps-accel8g",
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
       "controllerVisible": true,
@@ -35,29 +35,29 @@
       },
       "parameters": {
         "gyroscope": {
-          "noise_density_rad_per_s_per_sqrt_hz": 0.00012,
+          "noise_density_rad_per_s_per_sqrt_hz": 0.00012217,
           "bias_random_walk_rad_per_s_per_sqrt_s": 0.0,
           "bias_random_walk_bound_rad_per_s": 0.0,
           "constant_bias_sensor_rad_per_s": [0.0, 0.0, 0.0],
           "scale_factor_per_axis": [1.0, 1.0, 1.0],
-          "range_rad_per_s": 4.363,
-          "resolution_rad_per_s": 0.000133
+          "range_rad_per_s": 2.18166,
+          "resolution_rad_per_s": 6.6514e-05
         },
         "accelerometer": {
-          "noise_density_m_per_s2_per_sqrt_hz": 0.0018,
+          "noise_density_m_per_s2_per_sqrt_hz": 0.0017652,
           "bias_random_walk_m_per_s2_per_sqrt_s": 0.0,
           "bias_random_walk_bound_m_per_s2": 0.0,
           "constant_bias_sensor_m_per_s2": [0.0, 0.0, 0.0],
           "scale_factor_per_axis": [1.0, 1.0, 1.0],
-          "range_m_per_s2": 19.61,
-          "resolution_m_per_s2": 0.0006
+          "range_m_per_s2": 78.4532,
+          "resolution_m_per_s2": 0.0023942
         }
       }
     },
     {
       "deviceId": "mag.main",
       "kind": "magnetometer",
-      "modelName": "placeholder-magnetometer",
+      "modelName": "bosch-bmx160-bmm150-high-accuracy",
       "frameId": "mag_main",
       "samplePeriodSeconds": 0.1,
       "controllerVisible": true,
@@ -66,7 +66,7 @@
         "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
       },
       "parameters": {
-        "noise_std_tesla": 0.0,
+        "noise_std_tesla": 3e-07,
         "constant_bias_sensor_tesla": [0.0, 0.0, 0.0],
         "scale_factor": 1.0,
         "range_tesla": 0.0013
@@ -75,9 +75,9 @@
     {
       "deviceId": "light.px",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_px",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.05, 0.0, 0.0],
@@ -86,17 +86,17 @@
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1.0,
-        "noise_std_w_per_m2": 0.0,
+        "noise_std_w_per_m2": 1.0,
         "bias_w_per_m2": 0.0,
-        "saturation_w_per_m2": 2000.0
+        "saturation_w_per_m2": 1460.0
       }
     },
     {
       "deviceId": "light.mx",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_mx",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [-0.05, 0.0, 0.0],
@@ -105,17 +105,17 @@
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1.0,
-        "noise_std_w_per_m2": 0.0,
+        "noise_std_w_per_m2": 1.0,
         "bias_w_per_m2": 0.0,
-        "saturation_w_per_m2": 2000.0
+        "saturation_w_per_m2": 1460.0
       }
     },
     {
       "deviceId": "light.py",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_py",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.05, 0.0],
@@ -124,17 +124,17 @@
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1.0,
-        "noise_std_w_per_m2": 0.0,
+        "noise_std_w_per_m2": 1.0,
         "bias_w_per_m2": 0.0,
-        "saturation_w_per_m2": 2000.0
+        "saturation_w_per_m2": 1460.0
       }
     },
     {
       "deviceId": "light.my",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_my",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, -0.05, 0.0],
@@ -143,47 +143,104 @@
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1.0,
-        "noise_std_w_per_m2": 0.0,
+        "noise_std_w_per_m2": 1.0,
         "bias_w_per_m2": 0.0,
-        "saturation_w_per_m2": 2000.0
-      }
-    },
-    {
-      "deviceId": "light.pz",
-      "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
-      "frameId": "light_pz",
-      "samplePeriodSeconds": 0.1,
-      "controllerVisible": true,
-      "mount": {
-        "positionBodyMeters": [0.0, 0.0, 0.05675],
-        "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
-      },
-      "parameters": {
-        "field_of_view_half_angle_rad": 1.5707963267948966,
-        "scale_factor": 1.0,
-        "noise_std_w_per_m2": 0.0,
-        "bias_w_per_m2": 0.0,
-        "saturation_w_per_m2": 2000.0
+        "saturation_w_per_m2": 1460.0
       }
     },
     {
       "deviceId": "light.mz",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_mz",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "controllerVisible": true,
       "mount": {
-        "positionBodyMeters": [0.0, 0.0, -0.05675],
+        "positionBodyMeters": [0.0, 0.0, -0.1135],
         "deviceToBody": { "x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0 }
       },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1.0,
-        "noise_std_w_per_m2": 0.0,
+        "noise_std_w_per_m2": 1.0,
         "bias_w_per_m2": 0.0,
-        "saturation_w_per_m2": 2000.0
+        "saturation_w_per_m2": 1460.0
+      }
+    },
+    {
+      "deviceId": "light.zp_xp",
+      "kind": "light_sensor",
+      "modelName": "ti-opt4003-q1-uson",
+      "frameId": "light_zp_xp",
+      "samplePeriodSeconds": 1.0,
+      "controllerVisible": true,
+      "mount": {
+        "positionBodyMeters": [0.01, 0.0, 0.1135],
+        "deviceToBody": { "x": 0.0, "y": 0.3826834, "z": 0.0, "w": 0.9238795 }
+      },
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 1.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 1460.0
+      }
+    },
+    {
+      "deviceId": "light.zp_ym",
+      "kind": "light_sensor",
+      "modelName": "ti-opt4003-q1-uson",
+      "frameId": "light_zp_ym",
+      "samplePeriodSeconds": 1.0,
+      "controllerVisible": true,
+      "mount": {
+        "positionBodyMeters": [0.0, -0.01, 0.1135],
+        "deviceToBody": { "x": 0.3826834, "y": 0.0, "z": 0.0, "w": 0.9238795 }
+      },
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 1.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 1460.0
+      }
+    },
+    {
+      "deviceId": "light.zp_xm",
+      "kind": "light_sensor",
+      "modelName": "ti-opt4003-q1-uson",
+      "frameId": "light_zp_xm",
+      "samplePeriodSeconds": 1.0,
+      "controllerVisible": true,
+      "mount": {
+        "positionBodyMeters": [-0.01, 0.0, 0.1135],
+        "deviceToBody": { "x": 0.0, "y": -0.3826834, "z": 0.0, "w": 0.9238795 }
+      },
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 1.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 1460.0
+      }
+    },
+    {
+      "deviceId": "light.zp_yp",
+      "kind": "light_sensor",
+      "modelName": "ti-opt4003-q1-uson",
+      "frameId": "light_zp_yp",
+      "samplePeriodSeconds": 1.0,
+      "controllerVisible": true,
+      "mount": {
+        "positionBodyMeters": [0.0, 0.01, 0.1135],
+        "deviceToBody": { "x": -0.3826834, "y": 0.0, "z": 0.0, "w": 0.9238795 }
+      },
+      "parameters": {
+        "field_of_view_half_angle_rad": 1.5707963267948966,
+        "scale_factor": 1.0,
+        "noise_std_w_per_m2": 1.0,
+        "bias_w_per_m2": 0.0,
+        "saturation_w_per_m2": 1460.0
       }
     },
     {
@@ -209,10 +266,24 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
-        "noise": { "source": "none" },
+        "distortion": {
+          "model": "brown-conrady-5",
+          "k1": 0.0,
+          "k2": 0.0,
+          "p1": 0.0,
+          "p2": 0.0,
+          "k3": 0.0,
+          "source": "none"
+        },
+        "noise": {
+          "source": "none"
+        },
         "exposure_duration_s": 0.0005,
-        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+        "extrinsics": {
+          "source": "argus-2-config",
+          "origin": "assumed-com",
+          "orientation_verified": false
+        }
       }
     },
     {
@@ -238,10 +309,24 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
-        "noise": { "source": "none" },
+        "distortion": {
+          "model": "brown-conrady-5",
+          "k1": 0.0,
+          "k2": 0.0,
+          "p1": 0.0,
+          "p2": 0.0,
+          "k3": 0.0,
+          "source": "none"
+        },
+        "noise": {
+          "source": "none"
+        },
         "exposure_duration_s": 0.0005,
-        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+        "extrinsics": {
+          "source": "argus-2-config",
+          "origin": "assumed-com",
+          "orientation_verified": false
+        }
       }
     },
     {
@@ -267,10 +352,24 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
-        "noise": { "source": "none" },
+        "distortion": {
+          "model": "brown-conrady-5",
+          "k1": 0.0,
+          "k2": 0.0,
+          "p1": 0.0,
+          "p2": 0.0,
+          "k3": 0.0,
+          "source": "none"
+        },
+        "noise": {
+          "source": "none"
+        },
         "exposure_duration_s": 0.0005,
-        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+        "extrinsics": {
+          "source": "argus-2-config",
+          "origin": "assumed-com",
+          "orientation_verified": false
+        }
       }
     },
     {
@@ -296,10 +395,24 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
-        "noise": { "source": "none" },
+        "distortion": {
+          "model": "brown-conrady-5",
+          "k1": 0.0,
+          "k2": 0.0,
+          "p1": 0.0,
+          "p2": 0.0,
+          "k3": 0.0,
+          "source": "none"
+        },
+        "noise": {
+          "source": "none"
+        },
         "exposure_duration_s": 0.0005,
-        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
+        "extrinsics": {
+          "source": "argus-2-config",
+          "origin": "assumed-com",
+          "orientation_verified": false
+        }
       }
     },
     {
