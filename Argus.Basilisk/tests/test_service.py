@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -27,6 +28,7 @@ from Basilisk.utilities import RigidBodyKinematics as rbk  # noqa: E402
 
 from argus_basilisk import scenario as scenario_module  # noqa: E402
 from argus_basilisk import servicer as servicer_module  # noqa: E402
+from argus_basilisk.__main__ import build_server  # noqa: E402
 from argus_basilisk.contracts import service_grpc, service_pb  # noqa: E402
 from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, load_kernel_set  # noqa: E402
 from argus_basilisk.devices import KINDS, is_actuator, of_kind  # noqa: E402
@@ -72,9 +74,9 @@ SUN_FROM_EARTH_J2000_M = [61571146677.18358, -122621156753.13065, -53154573837.4
 
 @pytest.fixture
 def service():
+    # The server the service ships (BSK-16), so the tests exercise its construction.
     servicer = servicer_module.BasiliskSimulationServicer()
-    server = grpc.server(ThreadPoolExecutor(max_workers=2))
-    service_grpc.add_BasiliskSimulationServiceServicer_to_server(servicer, server)
+    server = build_server(servicer)
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
@@ -124,8 +126,9 @@ def step_request(sequence, run_id="p0-default", sim_time_ns=None):
 
 
 def status_of(call, request):
+    # A deadline, so a call that never returns (a lock that waits) fails the test instead of hanging it.
     with pytest.raises(grpc.RpcError) as error:
-        call(request)
+        call(request, timeout=30)
     return error.value.code(), error.value.details()
 
 
@@ -219,6 +222,105 @@ def test_concurrent_call_is_resource_exhausted(service):
     servicer, stub = service
     with servicer._lock:
         assert status_of(stub.Step, step_request(0))[0] == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
+SEQUENTIAL = (grpc.StatusCode.RESOURCE_EXHAUSTED, "another call is in progress; calls are sequential")
+
+
+def test_every_rpc_is_refused_while_another_call_holds_the_lock(service):
+    """Every RPC goes through the servicer's lock, so none can run beside another (BSK-16)."""
+    servicer, stub = service
+    methods = service_pb.DESCRIPTOR.services_by_name["BasiliskSimulationService"].methods
+    assert [method.name for method in methods] == ["ConfigureRun", "Reset", "Step"]
+    with servicer._lock:
+        for method in methods:
+            request = getattr(service_pb, method.input_type.name)()
+            assert status_of(getattr(stub, method.name), request) == SEQUENTIAL, method.name
+
+
+def test_a_call_overlapping_a_running_one_is_refused():
+    """A second worker lets an overlapping call reach the lock and be refused, not queue (BSK-16)."""
+    servicer = servicer_module.BasiliskSimulationServicer()
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking_reset(request):
+        entered.set()
+        release.wait(10)
+        return service_pb.ResetResponse(run_id=request.run_id)
+
+    servicer._reset = blocking_reset
+    server = build_server(servicer)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = service_grpc.BasiliskSimulationServiceStub(channel)
+            first = stub.Reset.future(service_pb.ResetRequest(run_id="r"), timeout=10)
+            assert entered.wait(5)
+            with pytest.raises(grpc.RpcError) as error:
+                stub.Step(step_request(0), timeout=3)
+            assert (error.value.code(), error.value.details()) == SEQUENTIAL
+            release.set()
+            assert first.result().run_id == "r"
+    finally:
+        release.set()
+        server.stop(None)
+
+
+class SlowToFree:
+    """A response that takes 0.2 s to free. gRPC frees a response after sending it and before it counts the call
+    done, so this widens the gap in which a sequential client's next call arrives (BSK-16: 7.5 ms under load)."""
+
+    def __init__(self, freed):
+        self._freed = freed
+
+    def __del__(self):
+        time.sleep(0.2)
+        self._freed.release()
+
+
+def reset_statuses_after_slow_pings(server, rounds):
+    """Adds a test-only Ping to an unstarted server, then sends Ping and at once Reset, `rounds` times.
+
+    Returns each Reset's (code, details), after checking that every Ping's response was freed slowly.
+    """
+    freed = threading.Semaphore(0)  # this server's responses only
+    ping_handler = grpc.unary_unary_rpc_method_handler(
+        lambda request, context: SlowToFree(freed),
+        request_deserializer=lambda data: data,
+        response_serializer=lambda response: b"")
+    server.add_generic_rpc_handlers((grpc.method_handlers_generic_handler("test.Slow", {"Ping": ping_handler}),))
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = service_grpc.BasiliskSimulationServiceStub(channel)
+            ping = channel.unary_unary(
+                "/test.Slow/Ping", request_serializer=lambda data: data, response_deserializer=lambda data: data)
+            statuses = []
+            for _ in range(rounds):
+                ping(b"", timeout=10)
+                statuses.append(status_of(stub.Reset, service_pb.ResetRequest(run_id="r")))
+            for _ in range(rounds):
+                assert freed.acquire(timeout=5), "a Ping's response was not freed"
+            return statuses
+    finally:
+        server.stop(None)
+
+
+def test_sequential_calls_are_not_refused_while_grpc_finishes_the_previous_one():
+    """A strictly sequential client is never refused because gRPC still counts its previous call (BSK-16)."""
+    statuses = reset_statuses_after_slow_pings(build_server(), rounds=3)
+    assert statuses == [(grpc.StatusCode.FAILED_PRECONDITION, "no run is configured; call ConfigureRun")] * 3
+
+
+def test_grpcs_concurrent_rpc_limit_refuses_them():
+    """The control: built with gRPC's limit, as before BSK-16, the server refuses that call, so the test above can
+    fail. If a gRPC upgrade closes the gap, this fails and the test above needs another way in."""
+    server = grpc.server(ThreadPoolExecutor(max_workers=1), maximum_concurrent_rpcs=1)
+    service_grpc.add_BasiliskSimulationServiceServicer_to_server(servicer_module.BasiliskSimulationServicer(), server)
+    statuses = reset_statuses_after_slow_pings(server, rounds=1)
+    assert statuses == [(grpc.StatusCode.RESOURCE_EXHAUSTED, "Concurrent RPC limit exceeded!")]
 
 
 def test_building_a_scenario_never_downloads(tmp_path):
