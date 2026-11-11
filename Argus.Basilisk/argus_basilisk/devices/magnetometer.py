@@ -22,7 +22,7 @@ OUTPUTS = {
 
 
 def check(values, invalid: Invalid) -> None:
-    # Noise > 0 is seeded in the service, since bsk 2.11.1 ignores the module's RNGSeed (README §9).
+    # Noise > 0 is white noise added in the service (README §9, §10).
     non_negative(values, invalid, "noise_std_tesla")
     positive(values, invalid, "scale_factor")
     positive(values, invalid, "range_tesla")
@@ -37,10 +37,9 @@ def build(device, random_seed: int, inputs) -> "Magnetometer":
 class Magnetometer:
     """One Argus magnetometer (TAM) reading the MagneticFieldWMM field at the spacecraft.
 
-    tam_S = scale (C_SB C_BN B_N + noise + bias), clipped to +-range. bsk 2.11.1 seeds the
-    module's noise generator once in its constructor and ignores RNGSeed, so the module runs
-    noise-free and unclipped, and output() adds the seeded noise from the "mag" stream and clips
-    (§9, BSK-9 #22).
+    tam_S = scale (C_SB C_BN B_N + noise + bias), clipped to +-range. The module runs noise-free
+    and unclipped, and output() adds the seeded noise from the "mag" stream and clips (§9, §10,
+    BSK-9 #22).
     """
 
     def __init__(self, device, random_seed: int, spacecraft_state_msg, magnetic_field_msg):

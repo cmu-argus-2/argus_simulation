@@ -49,5 +49,8 @@ namespace Argus.Simulation.Core
 
         protected override LightSensorMeasurement Read(DeviceValues output) =>
             new LightSensorMeasurement(output.Number(Irradiance));
+
+        protected override DeviceValues Write(LightSensorMeasurement measurement) =>
+            new DeviceValues.Builder().Add(Irradiance, measurement.IrradianceWattsPerSquareMeter).Build();
     }
 }

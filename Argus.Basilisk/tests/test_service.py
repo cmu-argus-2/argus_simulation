@@ -1,7 +1,7 @@
 """Service acceptance (README §13) over a real in-process gRPC server: BSK-3, the IMU (BSK-4) and
 the magnetometer (BSK-5).
 
-Needs bsk==2.11.1 (the basilisk extra). The live-run tests also need the P0 kernel set
+Needs the basilisk extra. The live-run tests also need the P0 kernel set
 argus-2026-11-02 in kernels/, and the SPICE reference test needs argus-2026-09-25
 (scripts/fetch_kernels.py); each is skipped without its files.
 """
@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import grpc
@@ -191,7 +192,7 @@ def test_configure_run_echoes_device_ids_in_request_order(service, monkeypatch, 
     window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
     kernel_set = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
     monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: kernel_set)
-    monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set: SimpleNamespace(
+    monkeypatch.setattr(servicer_module, "Scenario", lambda configuration, kernel_set, real_time_factor: SimpleNamespace(
         spice_earth_frame="ITRF93"))
     request = p0_default_request()
     response = stub.ConfigureRun(request)
@@ -221,7 +222,7 @@ def test_concurrent_call_is_resource_exhausted(service):
 
 
 def test_building_a_scenario_never_downloads(tmp_path):
-    """bsk 2.11.1 fetches de430 through pooch when SpiceInterface is built with defaults (D3)."""
+    """bsk fetches de430 through pooch when SpiceInterface is built with defaults (D3)."""
     script = """
 import sys
 from types import SimpleNamespace
@@ -266,7 +267,7 @@ def test_configure_run_echoes_every_field(service):
     assert response.kernel_set_id == P0_KERNEL_SET
     assert response.fixed_step_ns == STEP_NS
     assert list(response.configured_device_ids) == []
-    assert response.basilisk_version == "2.11.1"
+    assert response.basilisk_version == "2.12.2"
     assert response.spice_earth_frame == "ITRF93"
     assert servicer.state == servicer_module.READY
 
@@ -820,8 +821,8 @@ def orbit_after(stub, step_s, duration_s):
 
 
 # HOST-8 (#32) found the orbit converging at second order: with the central body (Earth, also SPICE's zero base)
-# reading its planet message, bsk 2.11.1 drifted 1.45 m a day at 1 s steps. RK4 at fourth order moves a 1 h orbit by
-# micrometres when the step halves; the second-order path moved it by centimetres.
+# reading its planet message, the orbit drifted 1.45 m a day at 1 s steps (bsk 2.11.1; 2.12.2 behaves the same). RK4
+# at fourth order moves a 1 h orbit by micrometres when the step halves; the second-order path moved it by centimetres.
 @real_kernels
 def test_halving_the_step_barely_moves_a_one_hour_orbit(service):
     _, stub = service
@@ -844,3 +845,67 @@ def test_a_scenario_whose_zero_base_is_not_the_central_body_is_refused(monkeypat
     configuration = configure_request().configuration
     with pytest.raises(ValueError, match="zero base"):
         scenario_module.Scenario(configuration, load_kernel_set(configuration.kernel_set_id))
+
+
+# --- Pacing (BSK-7) --------------------------------------------------------------------------
+
+
+# ClockSynch can release a tick up to its accuracy before its target ("about", §5).
+PACING_TOLERANCE_S = scenario_module.PACING_ACCURACY_NS / 1e9
+
+
+def paced_request(real_time_factor):
+    request = imu_request()
+    request.real_time_factor = real_time_factor
+    return request
+
+
+@real_kernels
+def test_paced_steps_hold_an_absolute_schedule_from_step_zero(service):
+    """Step(n) returns no earlier than start + t_n / factor; a gap before Step(0) is not counted."""
+    _, stub = service
+    factor = 4.0
+    stub.ConfigureRun(paced_request(factor))
+    time.sleep(0.3)  # ClockSynch starts at its first tick, Step(0), not at ConfigureRun.
+    start = time.monotonic()
+    elapsed = []
+    for n in range(13):
+        stub.Step(step_request(n))
+        elapsed.append(time.monotonic() - start)
+    for n, seconds in enumerate(elapsed):
+        assert seconds >= n * STEP_NS / 1e9 / factor - PACING_TOLERANCE_S
+    # Loose: OS sleep jitter can add tens of milliseconds, but the 0.3 s gap is never paid back.
+    assert elapsed[-1] < 12 * STEP_NS / 1e9 / factor + 0.25
+
+
+@real_kernels
+def test_paced_responses_match_unpaced_ones_bit_for_bit(service):
+    _, stub = service
+
+    def run(real_time_factor):
+        stub.ConfigureRun(paced_request(real_time_factor))
+        return [stub.Step(step_request(n)).SerializeToString(deterministic=True) for n in range(20)]
+
+    assert run(50.0) == run(0.0)
+
+
+@real_kernels
+def test_late_steps_count_overruns_and_reset_rearms_the_schedule(service):
+    _, stub = service
+    factor = 10.0  # 10 ms of wall time per 100 ms step.
+    stub.ConfigureRun(paced_request(factor))
+    for n in range(3):
+        stub.Step(step_request(n))
+    time.sleep(0.2)  # A client 200 ms late: the next steps start behind the schedule.
+    late = [stub.Step(step_request(n)).pacing_overrun_count for n in range(3, 6)]
+    assert late[0] >= 1
+    assert late == sorted(late)  # Counted since ConfigureRun.
+
+    # Reset builds a new ClockSynch: the count restarts and the schedule starts again at Step(0).
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    time.sleep(0.2)
+    start = time.monotonic()
+    assert stub.Step(step_request(0)).pacing_overrun_count == 0
+    for n in range(1, 4):
+        stub.Step(step_request(n))
+    assert time.monotonic() - start >= 3 * STEP_NS / 1e9 / factor - PACING_TOLERANCE_S

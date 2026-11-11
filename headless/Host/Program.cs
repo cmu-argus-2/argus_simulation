@@ -6,9 +6,9 @@ using Argus.Simulation.Core;
 namespace Argus.Simulation.Host
 {
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine, recording
-    // dataset v1 with Core RunRecorder when --record is given (D6).
+    // dataset v1 with Core RunRecorder when --record is given (D6), and streaming decimated states
+    // and sensor frames to Unity through Streaming/StateStreamServer (CON-1).
     // TODO(D7, G1): serve the gateway to HIL and external controllers through Gateway/GatewayServer.
-    // TODO(G2): stream decimated states to Unity through Streaming/StateStreamServer.
     public static class Program
     {
         public static int Main(string[] args)
@@ -95,6 +95,36 @@ namespace Argus.Simulation.Host
 
         private static void Run(HostOptions options, SimulationConfiguration configuration, RunRecorder recorder, CancellationToken cancellation)
         {
+            // Bound before the service is configured, so a busy port fails the run before it starts.
+            StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamPeriod)
+                .GetAwaiter().GetResult();
+            bool ranToEnd = false;
+            try
+            {
+                Run(options, configuration, recorder, stream, cancellation);
+                ranToEnd = true;
+            }
+            finally
+            {
+                try
+                {
+                    stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                catch (Exception exception) when (!ranToEnd)
+                {
+                    // The run's own failure is the one to report; this one is only logged.
+                    Console.Error.WriteLine($"Stopping the state stream also failed: {exception.Message}");
+                }
+            }
+        }
+
+        private static void Run(
+            HostOptions options,
+            SimulationConfiguration configuration,
+            RunRecorder recorder,
+            StateStreamServer stream,
+            CancellationToken cancellation)
+        {
             using BasiliskEngine engine = new BasiliskEngine(options.BasiliskAddress, options.RealTimeFactor, cancellation);
             SimulationGateway gateway = new SimulationGateway(engine);
 
@@ -104,6 +134,12 @@ namespace Argus.Simulation.Host
             long frameCount = 0;
             gateway.StateProduced += produced => state = produced;
             gateway.SensorOutputProduced += output => frameCount += output.Frames.Count;
+
+            // The stream only replaces its latest pair on this thread, so a slow client never delays
+            // a step.
+            gateway.RunStarted += (run, sensors) => stream.Publisher.BeginGeneration(run);
+            gateway.StateProduced += stream.Publisher.PublishState;
+            gateway.SensorOutputProduced += stream.Publisher.PublishSensorOutput;
 
             // The recorder only queues on this thread, so a slow disk never delays a step.
             if (recorder != null)
@@ -118,7 +154,9 @@ namespace Argus.Simulation.Host
             Observation observation = gateway.Reset(configuration.RandomSeed, configuration);
             Console.WriteLine(
                 $"Basilisk {engine.BasiliskVersion}, kernel set {configuration.KernelSetId}, " +
-                $"{configuration.Devices.Count} devices, run {configuration.RunId}");
+                $"{configuration.Devices.Count} devices, run {configuration.RunId}, " +
+                $"state stream on {stream.Endpoint} at {options.StreamRateHz:R} Hz " +
+                $"(every {options.StreamPeriod.TotalMilliseconds:R} ms)");
 
             long lastSequence = (long)Math.Round(options.DurationSeconds / configuration.FixedStepSeconds);
             long stepsPerReport = Math.Max(1L, (long)Math.Round(1.0 / configuration.FixedStepSeconds));

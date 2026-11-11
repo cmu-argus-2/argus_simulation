@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 4 (§12): spacecraft, SPICE, eclipse and the P0 sensors (IMU, magnetometer, light sensors); magnetometer and light-sensor noise are drawn in the service; pacing is UNIMPLEMENTED, and Step accepts only the empty command set until actuator kinds exist
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 5 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors) and ClockSynch pacing; magnetometer and light-sensor noise are drawn in the service; Step accepts only the empty command set until actuator kinds exist
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -59,7 +59,7 @@ Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version fork
   .venv/bin/pip install --require-hashes -r requirements.txt
   ```
 
-- Supported platforms are the ones with a `bsk==2.11.1` wheel: macOS arm64, Linux x86_64 and
+- Supported platforms are the ones with a `bsk==2.12.2` wheel: macOS arm64, Linux x86_64 and
   aarch64, and Windows x86_64. Intel Macs have none, so `uv sync` refuses them, and pip installs
   nothing from `requirements.txt` there, since every line's platform marker is false.
 - To change a dependency, edit `pyproject.toml`, then regenerate both files and commit them
@@ -73,8 +73,14 @@ Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version fork
   `uv lock --upgrade-package <name>` moves one pinned package. CI fails when `pyproject.toml`,
   `uv.lock` and `requirements.txt` disagree.
 - The kernels are pinned separately, by SHA-256 in `kernel_sets/` (§8).
+- The service runs on bsk 2.12.2 (BSK-15, #126), and every bsk attribute in §4 to §10 is
+  checked against it. Where this README or a code comment describes bsk behaviour without a
+  version, it means the pinned one. With every noise σ at 0, a full P0 orbit (6000 s, through
+  penumbra and umbra) matches bsk 2.11.1 to rounding: at most 8.4 nm in position, 7.3e-12 m/s
+  in velocity and 2.2e-9 in shadow factor. The 2.12.1 eclipse and albedo fixes change nothing
+  beyond that. With noise on, only the IMU gyroscope samples differ (§10).
 
-- The service needs the `basilisk` extra (`bsk==2.11.1`); `validation.py`, `kernels.py` and
+- The service needs the `basilisk` extra (`bsk==2.12.2`); `validation.py`, `kernels.py` and
   their tests run without it.
 - The endpoint comes from `--endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
   `127.0.0.1:50051`. v1 is an insecure channel, so non-loopback hosts are refused.
@@ -103,14 +109,14 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      `DeviceValue` case and finite; an unknown key, a missing key, another case or no case
      is INVALID_ARGUMENT. `initial_state` is empty, since no sensor kind has state;
    - the kind's own range checks (§9): a light-sensor half-angle is at most π/2, since
-     `coarseSunSensor` and `albedo` do not clamp negative cosines; plus Basilisk 2.11.1
+     `coarseSunSensor` and `albedo` do not clamp negative cosines; plus the `imuSensor`
      limits: an IMU channel
      cannot have both noise density and random walk > 0 (one Gauss-Markov state per axis),
      and a walk bound > 0 needs random walk > 0 (the same bound would clip white noise);
-   - `noise_std_tesla ≥ 0`; noise > 0 is added by the service from the `mag` seed stream,
-     because bsk 2.11.1 ignores the magnetometer's `RNGSeed` (§9, BSK-9 #22);
+   - `noise_std_tesla ≥ 0`; noise > 0 is white noise added by the service from the `mag` seed
+     stream (§9, §10, BSK-9 #22);
    - `noise_std_w_per_m2 ≥ 0`; noise > 0 is white noise added by the service from the `css`
-     seed stream, because bsk 2.11.1's would be a random walk (§9, BSK-13 #116);
+     seed stream (§9, §10, BSK-13 #116);
    - `epoch_utc` is inside the kernel set's `coverage_utc`, and inside WMM2025 validity
      (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
@@ -126,7 +132,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    Device checks walk `devices.KINDS`. A device problem names its path, for example
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
-   Pacing stays UNIMPLEMENTED until BSK-7 (#20). The actuator kinds are registered (CON-2,
+   `real_time_factor > 0` is accepted and paced (§5, BSK-7 #20), as long as one paced step
+   lasts at most 3600 s of wall time. The actuator kinds are registered (CON-2,
    #34) but build nothing, so only idle commands run until BSK-8 (#21) applies the rest. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
@@ -140,10 +147,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
 
 - Requires the stored `run_id`; allowed from FAILED. The response echoes `run_id`.
 - MUST construct a new `SimBaseClass` and new modules from the stored request, then re-arm
-  pacing. Reusing modules is wrong in bsk 2.11.1: `ImuSensor::Reset` keeps `NominalReady`,
+  pacing. Reusing modules is wrong: `ImuSensor::Reset` keeps `NominalReady`,
   `PreviousTime` and the previous state (the next t = 0 sample underflows a uint64 time
-  difference), Gauss-Markov states carry over, and the magnetometer's own generator is never
-  re-seeded (the service keeps it off and draws magnetometer noise itself, §9).
+  difference), and Gauss-Markov states carry over.
 - Acceptance: 100 steps, Reset, 100 steps again gives bit-identical responses.
 
 ### Step(n)
@@ -204,11 +210,19 @@ TDB-TT error of up to about 3.3 ms, under 30 µs per day of run).
 ## 5. Pacing
 
 - `real_time_factor == 0`: no ClockSynch; Step returns as fast as Basilisk runs.
-- `real_time_factor > 0`: add `simSynch.ClockSynch` with `accelFactor = real_time_factor`
-  and `accuracyNanos` set, on its own task at `fixed_step_ns`, highest priority. `Step(n)`
-  returns no earlier than about start + t_n / factor, on an absolute schedule from Step(0).
-  Report `clockOutMsg.overrunCounter` in `pacing_overrun_count`.
-- Until ClockSynch is built, `real_time_factor > 0` is UNIMPLEMENTED at ConfigureRun.
+- `real_time_factor > 0` (BSK-7, #20): `Scenario` adds `simSynch.ClockSynch` with
+  `accelFactor = real_time_factor` and `accuracyNanos = 5 ms` (`PACING_ACCURACY_NS`) on its
+  own task `pacing` at `fixed_step_ns`, priority 1000, so it runs first at every t_n (§6).
+  ClockSynch starts its wall clock at its first tick, in Step(0), so time spent between
+  ConfigureRun and Step(0) is not counted, and then holds every tick to start + t_n / factor:
+  `Step(n)` returns no earlier than about that time (it can release up to the 5 ms accuracy
+  early). The schedule is absolute, so a client that falls behind catches up
+  without sleeping instead of shifting every later step. Reset builds a new ClockSynch,
+  which re-arms the schedule and zeroes the count.
+- An overrun is a tick that starts more than `accuracyNanos` behind its target.
+  `pacing_overrun_count` reports `clockOutMsg.overrunCounter` since ConfigureRun or Reset;
+  overruns are counted only and never fail the run. Measured: the full P0 run at factor 1
+  for 60 s holds 10 Hz (61 s of wall time) with 0 overruns; unpaced, it takes 2 s.
 
 ## 6. Tick order and message freshness (required)
 
@@ -238,7 +252,7 @@ when it is linked, so an unread CSS would report a zero payload that still passe
 |---|---|
 | `spacecraft` | `spacecraft.scStateOutMsg`: `r_BN_N`, `v_BN_N`, `sigma_BN` as written, `omega_BN_B` |
 | `earth`, `sun` | `spiceInterface.planetStateOutMsgs`: `PlanetName`, `PositionVector`, `VelocityVector`, `J20002Pfix`, `J20002Pfix_dot`, `computeOrient` |
-| `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0]` read through its reader (1 sunlit, 0 umbra); always set. In bsk 2.11.1 the reader returns the `eclipse` module's payload, whose only field is the C name `shadowFactor` and reads without a warning; `illuminationFactor` is a Python alias that exists only on `messaging.EclipseMsgPayload` |
+| `spacecraft_shadow_factor` | `eclipse.eclipseOutMsgs[0]` read through its reader (1 sunlit, 0 umbra); always set. The reader returns the `eclipse` module's payload, whose only field is the C name `shadowFactor` and reads without a warning; `illuminationFactor` is a Python alias that exists only on `messaging.EclipseMsgPayload` |
 | `device_samples` | One `BasiliskDeviceSample` per sensor device whose period divides `sim_time_ns`, in configuration order, with `sample_time_ns` from the subscribed reader's `timeWritten()` and `output` keyed by the kind's output keys (§9); `output` is empty when the sensor ran without data |
 | `pacing_overrun_count` | `clockSynch.clockOutMsg.overrunCounter`; 0 when unpaced |
 
@@ -303,8 +317,8 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
   otherwise FAILED_PRECONDITION. Never download during ConfigureRun; `scripts/fetch_kernels.py`
   (below) puts the files there beforehand.
 - Build `spiceInterface.SpiceInterface(auto_configure_kernels=False)` directly and call
-  `addKernelPaths` with the manifest files in order. In bsk 2.11.1 the plain constructor
-  fetches its default kernels (de430 and others, about 120 MB) through pooch, and the
+  `addKernelPaths` with the manifest files in order. The plain constructor fetches its
+  default kernels (de430 and others, about 120 MB) through pooch, and the
   `createSpiceInterface` defaults do the same. Do not import `simIncludeGravBody` either: it
   imports `dataFetcher`, which sends a request to github.com at import time; `scenario.py`
   builds the two point-mass `GravBodyData` itself.
@@ -352,6 +366,27 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
   offline). `argus_basilisk` never imports it or the tools, so the service's only SPICE
   source stays `spiceInterface` (D3).
 - A copy placed in `kernels/` by hand is accepted when its hash matches.
+
+### Kernels in CI (BSK-11, #24)
+
+The **Basilisk service and host run** job (`.github/workflows/headless.yml`) uses the set
+named by `kernelSetId` in `headless/Host/runs/p0-default.json`.
+
+- **Cache first.** `kernels/` is cached under `spice-kernels-<kernel_set_id>`. A set's ID is
+  immutable, so the ID is the whole key. `fetch_kernels.py` still hashes every cached file.
+- **NAIF on a miss.** On a cache miss, `fetch_kernels.py` downloads from the manifest's URLs,
+  NAIF first, then the fallbacks (about 45 MB). Downloads are allowed in CI but happen only
+  on a miss: a cache created on `main` serves every pull request, and GitHub keeps it while CI
+  uses it at least once a week.
+- **A file NAIF deletes** keeps working from the cache. Once the cache is evicted, the job
+  fails at this step naming the file, until P0 moves to a set NAIF still serves (below).
+- **TLS.** NAIF's certificate chains to Sectigo Public Server Authentication Root R46. Ubuntu
+  24.04's CA bundle has it. Python on macOS reads `/etc/ssl/cert.pem`, which may not, so a
+  local fetch can fail with `CERTIFICATE_VERIFY_FAILED`; pointing `SSL_CERT_FILE` at a current
+  Mozilla bundle such as certifi's fixes it.
+- `argus-2026-09-25` cannot be fetched (its Earth PCK is gone), so its two tests are the only
+  skips CI allows. Any other skip fails the job, since it means the live service tests did
+  not run.
 
 ### Choosing the Earth PCK
 
@@ -416,12 +451,11 @@ identity `mount.device_to_body`, or ConfigureRun returns INVALID_ARGUMENT.
 
 Common: `C_SB = EP2C([w, x, y, z])` of `mount.device_to_body`; `mount.position_body_m` goes
 to IMU `sensorPos_B`, CSS `r_B` and albedo `r_IB_B`. **Always set the A matrix
-explicitly**: the defaults differ per module (IMU gyroscope, magnetometer and CSS default
-to a random walk; the IMU accelerometer to white noise). Pass matrices and vectors as NumPy
-arrays or nested lists, never scalars: the SWIG Eigen typemaps reject a scalar. The `0`, `I`
-and `[b, b, b]` in the tables below are shorthand for `np.zeros((3, 3))`, `np.eye(3)` and a
-3-vector; T is the sample period in seconds. Outputs are scale × (true + noise + bias), then
-quantised (IMU only), then clipped.
+explicitly**; never rely on a module default (bsk defaults every A to 0, white noise). Pass
+matrices and vectors as NumPy arrays or nested lists, never scalars: the SWIG Eigen typemaps
+reject a scalar. The `0`, `I` and `[b, b, b]` in the tables below are shorthand for
+`np.zeros((3, 3))`, `np.eye(3)` and a 3-vector; T is the sample period in seconds. Outputs are
+scale × (true + noise + bias), then quantised (IMU only), then clipped.
 
 **IMU quantisation truncates toward zero.** `imuSensor`'s `setLSBs` keeps the whole number of
 LSBs toward zero, not the nearest, so every value within ±1 LSB reads 0: a dead band two LSBs
@@ -464,10 +498,10 @@ other per channel.
 | `angular_velocity_sensor_rad_per_s` | vector3 | Gyroscope module `sensorOutMsg.AngVelPlatform`: body relative to inertial, sensor axes |
 | `specific_force_sensor_m_per_s2` | vector3 | Accelerometer module `sensorOutMsg.AccelPlatform` |
 
-- bsk 2.11.1 seeds the gyroscope and accelerometer from one `RNGSeed`, so build two modules
-  per Argus IMU: one with gyroscope noise only (stream `gyro`) and one with accelerometer
-  noise only (stream `accel`), with the same `dcm_PB`, `sensorPos_B` and task. Both modules
-  take every parameter above.
+- One `imuSensor` draws both channels from its one `RNGSeed`, so build two modules per Argus
+  IMU, and changing one stream's seed never changes the other's (§10): one with gyroscope noise
+  only (stream `gyro`) and one with accelerometer noise only (stream `accel`), with the same
+  `dcm_PB`, `sensorPos_B` and task. Both modules take every parameter above.
 - Never call `setErrorBounds*`: it is the same Gauss-Markov bound. A walk bound of 0 leaves
   the walk unbounded, as the module default of −1 does.
 - `devices.imu.Imu` builds the two modules. The channel a module does not report gets P = 0
@@ -508,8 +542,8 @@ other per channel.
   `support_files` entry of `argus-2026-10-20` and later sets, checked before the build, and
   never downloaded during ConfigureRun. NOAA ships it only inside `WMM2025COF.zip`, so the entry lists
   Basilisk v2.11.1's byte-identical copy (the file `dataFetcher` would download).
-- bsk 2.11.1 ignores the magnetometer's `RNGSeed`, so the service adds the noise (BSK-9,
-  #22): the module runs noise-free and unclipped, and `Magnetometer.output()` returns
+- The service adds the noise (BSK-9, #22; §10 says why it is not the module's own): the
+  module runs noise-free and unclipped, and `Magnetometer.output()` returns
   `clip(tam_S + scale σ z_k, −R, +R)`, bsk's formula with σ moved out of the module. `z_k` is
   `sample_normals(seed, "mag", k)` (§10). `tamDataOutMsg` therefore holds the noise-free,
   unclipped field: its reader is for freshness checks only, and the sensor's output is
@@ -557,15 +591,11 @@ other per channel.
   `OutputData = scale (cos θ × shadow × (1 AU / d)² + albedoAtInstrument) + bias`, where θ
   is the angle between the boresight and the Sun and d the spacecraft–Sun distance. The
   output is irradiance at the real distance, not at 1 AU.
-- In bsk 2.11.1, `setAMatrix` cannot be called from Python: its SWIG binding takes an
-  `Eigen::VectorXd` and has no typemap for it, so `[0.0]`, `np.array([0.0])` and `[[0.0]]`
-  all raise `TypeError`, and the default A makes the module's noise a random walk (lag-1
-  autocorrelation 0.997). So the service adds the noise (BSK-13, #116):
+- The service adds the noise (BSK-13, #116; §10 says why it is not the module's own):
   `LightSensor.output()` returns `clip(OutputData + σ z_k, 0, saturation)`, with `z_k`
   from `sample_normals(seed, "css", k)` (§10). `cssDataOutMsg` therefore holds the
   noise-free, unclipped irradiance: its reader is for freshness checks only, and the sensor's
-  output is `output()`. Once a bsk release can set A from Python, the module's own
-  noise can replace this.
+  output is `output()`.
 
 ## 10. Seeds
 
@@ -574,7 +604,7 @@ Every noisy module gets
 with stream `gyro`, `accel`, `mag` or `css`. Never use Python `hash()` or the shared default
 `0x1badcad1`. Acceptance: changing one seed changes exactly that module's noise stream.
 
-A stream bsk 2.11.1 cannot seed or make white (`mag` and `css`, §9) is drawn by the service, one sample at a time:
+The `mag` and `css` streams (§9) are drawn by the service, one sample at a time:
 `seeds.sample_normals(seed, stream, k)` returns standard normals from PCG64 seeded with
 `SeedSequence([tag, seed, k])`, where `tag` is the first 4 bytes, little-endian, of
 `sha256(f"sample:{stream}")` and `k = seeds.sample_index(t, sample_period_ns)`. A sample
@@ -582,15 +612,23 @@ depends only on its seed, stream and index; the tag keeps it apart from any gene
 with `seed` alone, and an off-grid sample time raises (INTERNAL) instead of reusing an index.
 The draws are fixed by the `numpy` pin in `uv.lock`.
 
+bsk 2.12.2's `magnetometer` and `coarseSunSensor` can make white, seeded noise themselves, but
+the service keeps its own draws: a sample depends only on its seed, stream and index, never on
+how many samples the module drew before, and the `mag` and `css` noise does not change with
+the bsk version. The `gyro` and `accel` streams are `imuSensor`'s own, so their samples are
+fixed by the `bsk` pin: bsk 2.12 changed how `imuSensor` seeds its streams, which changed the
+`gyro` samples but not the `accel` ones. On the P0 run, σ, the share of zero samples and the
+lag-1 autocorrelation are the same on both versions.
+
 ## 11. Error codes
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A command for a configured actuator after Step(0) (none can be configured yet); `real_time_factor > 0` before ClockSynch |
+| UNIMPLEMENTED | A command for a configured actuator after Step(0) (none can be configured yet) |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 
@@ -618,3 +656,6 @@ Details name the field path and the bad value.
   inputs of Core `BasiliskStateMapperTests`.
 - `dotnet run --project headless/Host/Argus.Simulation.Host.csproj` runs clean against the
   service.
+
+CI runs these on every pull request and push to `main` (BSK-11, #24): `tests/` with the P0
+kernel set, then a 60 s P0 host run against the service, which fails on any non-zero exit.
