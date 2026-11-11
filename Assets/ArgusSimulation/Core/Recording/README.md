@@ -212,10 +212,11 @@ the step loop, so both run types write the same format with the same code:
 
 `manifest.writer.process` records which one. In Unity-driven runs the recorder takes sensor frames
 from the temporary sensor bridge (`Unity/Sensors/`). G2 moves the sensors and the recorder into the
-headless core, and from then on every run records there. Dashboard attitude nudges change only the
-live dashboard feeds, not the recorded state. Recorded images are rendered at the pose in each
-`RenderRequest`, which the camera model takes from the recorded state (D5, CORE-3 #38), so they match
-`body_to_ecef_xyzw`.
+headless core, and from then on every run records there. Dashboard attitude nudges edit the visual
+pose. The engine state remains authoritative for dataset v1. Its images use the pose in each
+`RenderRequest`, which the camera model takes from the recorded state (D5, CORE-3 #38).
+The temporary navigation exporter records the rendered pose and engine state separately in
+metadata version 2, as described in the migration notes below.
 UNITY-9 (#63) points the dashboard's Capture at the recorder in the Unity process.
 
 ## Replacing `NavigationEpisodeExporter` (D6)

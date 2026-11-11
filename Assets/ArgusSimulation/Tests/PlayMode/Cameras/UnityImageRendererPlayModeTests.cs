@@ -147,7 +147,7 @@ namespace Argus.Simulation.Tests
         [UnityTest]
         public IEnumerator SerialRequestsCompleteAndFailureDoesNotStrandTheNextRequest()
         {
-            _renderer.Configure(_rig, _reference); // no light, but ResolveScene can still find ours
+            _renderer.Configure(_rig, _reference); // ResolveScene can still discover the test light.
             Object.Destroy(_light.gameObject);
             yield return null;
             Task<ImageFrame> failed = _renderer.RenderAsync(Request(withSun: true), CancellationToken.None);
@@ -340,7 +340,7 @@ namespace Argus.Simulation.Tests
         [UnityTest]
         public IEnumerator RecordedResetPoseRendersAllViewsWithoutFrustumErrors()
         {
-            // Replay the five views from the manual reset acceptance run at 232.3 seconds.
+            // Regression fixture of five orbital views at simulation time 232.3 seconds.
             // This Earth-fixed pose is far from Foundation's Denver georeference origin.
             _world.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
             _reference.SetOriginLongitudeLatitudeHeight(-105.25737, 39.736401, 2250);

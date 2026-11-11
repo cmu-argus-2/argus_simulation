@@ -73,8 +73,8 @@ not add Core's missing end/reset drain path (CORE-21 #119).
 
 `NavigationEpisodeExporter` temporarily uses the same renderer and PNG conversion until UNITY-9
 retires it. Tile-wait and pixel readback live here in one place. Readback currently uses Unity
-`ReadPixels` after `Camera.Render`; it synchronizes the GPU at capture time. It is not a promise
-of asynchronous GPU readback throughput or a full Host-to-Unity rendering RPC.
+`ReadPixels` after `Camera.Render`, with synchronous GPU readback at capture time.
+Host-to-Unity render transport is tracked in UNITY-10 (#64).
 
 ## Verification
 
@@ -145,7 +145,7 @@ capture with identical state sequence and exposure time across all nine records.
 
 The recorded five-camera reset pose reproduced Unity's frustum error before the precision fix;
 the same replay now passes with the georeference and display light restored. A separate
-far-origin red/green marker test verifies actual pixel projection after rebasing. The user's
-five manual captures produced 24 readable PNGs with matching metadata, including 350 km and
-reset-to-500 km states; these files predate the projection fix. The final code was not subjected
-to another full network/Cesium capture run.
+far-origin red/green marker test verifies actual pixel projection after rebasing. A five-capture
+manual validation batch contained 24 readable PNGs with matching metadata, including 350 km and
+reset-to-500 km states. These files predate the projection fix. Verification of the latest changes
+used offline GPU regression tests. Full network/Cesium validation of these changes is pending.

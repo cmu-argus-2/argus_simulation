@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace Argus.Simulation.Editor
 {
-    // Manual scene acceptance uses the production capture path; these commands don't fake readiness.
+    // Editor capture commands use the production renderer and its terrain-readiness checks.
     public static class CameraCaptureTools
     {
         private const string Root = "Argus Simulation/Cameras/";

@@ -285,8 +285,8 @@ for provenance and the offline GPU validation command.
 - The scene's Sun light is fixed.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
-- Attitude nudges change what the cameras render but not the recorded `BodyToEcef`, so
-  exported images can disagree with the exported attitude.
+- Attitude nudges are scene edits. Their physical integration through engine commands remains
+  planned (G1). The temporary navigation exporter records rendered and engine poses separately.
 
 ## 8. Teammate branches that diverge from these decisions
 
