@@ -127,12 +127,13 @@ class Scenario:
 
         # Gravity bodies in PLANET_NAMES order; Earth central. Earth is also SPICE's zero base, so its position and
         # velocity are zero, and its gravity body reads no planet message. Earth's message also carries the ITRF93
-        # orientation and its rate, and bsk 2.11.1 steps that orientation linearly inside each step, which isn't a
-        # rotation: the point-mass orbit then converges at second order (1.45 m a day at 1 s steps; HOST-8 #32).
+        # orientation and its rate, and bsk (2.11.1 and 2.12.2 alike) steps that orientation linearly inside each
+        # step, which isn't a rotation: the point-mass orbit then converges at second order (1.45 m a day at 1 s steps;
+        # HOST-8 #32).
         # _unsubscribed_body refuses any other zero base, which would leave Earth's gravity at the origin.
         # The Sun reads its SPICE state. Its IAU_SUN frame turns at about 2.9e-6 rad/s, against Earth's 7.3e-5, and is
-        # stepped the same way. It stays: with it, R1 still holds the orbit over 24 h to 3e-5 m at 0.1 s steps and
-        # 5.9e-5 m at 1 s, far inside 1 cm (HOST-8 #32; #137 review).
+        # stepped the same way. It stays: with it, R1 still holds the orbit over 24 h to 4.1e-5 m at 0.1 s steps and
+        # 7.7e-5 m at 1 s, far inside 1 cm (HOST-8 #32; #137 review).
         # TODO(basilisk-team): a J2 or spherical-harmonics Earth needs that orientation, and would meet the same error.
         unsubscribed = _unsubscribed_body(self.spice.zeroBase)
         self._gravity_bodies = [

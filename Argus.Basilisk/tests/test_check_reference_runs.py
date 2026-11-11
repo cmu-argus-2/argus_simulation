@@ -21,8 +21,8 @@ check = importlib.util.module_from_spec(spec)
 sys.modules["check_reference_runs"] = check  # dataclasses look their module up here
 spec.loader.exec_module(check)
 
-MU_EARTH = 3.98600436e14  # bsk 2.11.1 astroConstants.MU_EARTH, m^3/s^2
-MU_SUN = 1.3271244002331e20  # bsk 2.11.1 astroConstants.MU_SUN, m^3/s^2
+MU_EARTH = 3.98600436e14  # bsk 2.12.2 astroConstants.MU_EARTH (as in 2.11.1), m^3/s^2
+MU_SUN = 1.3271244002331e20  # bsk 2.12.2 astroConstants.MU_SUN (as in 2.11.1), m^3/s^2
 
 
 def quat(axis, angle_rad):
@@ -142,7 +142,7 @@ def good_manifest(states=6001, sensors=6001):
         "schema_version": "argus-dataset/1",
         "complete": True,
         "termination": None,
-        "dynamics_backend": {"name": "basilisk", "version": "2.11.1"},
+        "dynamics_backend": {"name": "basilisk", "version": "2.12.2"},
         "earth_fixed_frame": "Itrf93",
         "configuration": {"fixed_step_s": 0.1, "kernel_set_id": "argus-2026-11-02"},
         "files": {"states.jsonl": {"lines": states}, "sensors.jsonl": {"lines": sensors}},
@@ -174,7 +174,7 @@ def test_a_complete_matching_dataset_passes_the_gate():
     (lambda m: m.pop("overflow"), "overflow"),                                   # no block is not zero drops
     (lambda m: m["overflow"].pop("dropped_commands"), "dropped_commands"),
     (lambda m: m.update(dynamics_backend={"name": "analytic", "version": "1"}), "dynamics_backend"),
-    (lambda m: m["dynamics_backend"].update(version="2.12.0"), "dynamics_backend"),  # the μ constants are 2.11.1's
+    (lambda m: m["dynamics_backend"].update(version="2.11.1"), "dynamics_backend"),  # the pin is 2.12.2's, not another bsk
 ])
 def test_the_gate_names_each_reason_a_dataset_is_refused(change, fragment):
     manifest = good_manifest()
@@ -318,7 +318,7 @@ def write_dataset(directory, run, states, frames=()):
     q = sc["initialBodyToJ2000"]
     manifest = {
         "schema_version": "argus-dataset/1", "complete": True, "termination": None, "earth_fixed_frame": "Itrf93",
-        "dynamics_backend": {"name": "basilisk", "version": "2.11.1"},
+        "dynamics_backend": {"name": "basilisk", "version": "2.12.2"},
         "configuration": {
             "epoch_utc": run["epochUtc"].replace("Z", ".0000000Z"), "fixed_step_s": run["fixedStepSeconds"],
             "random_seed": run["randomSeed"], "kernel_set_id": run["kernelSetId"],

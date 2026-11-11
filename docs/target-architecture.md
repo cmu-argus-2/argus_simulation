@@ -329,22 +329,25 @@ references over up to 24 h:
 - **Cases:** frozen in `headless/Host/runs/reference/`; its README gives each value's source.
 - **Checker:** `Argus.Basilisk/scripts/check_reference_runs.py` compares a recording with its case.
 - **What it shows:** the references use the service's own physics (Earth and the Sun as point
-  masses with bsk 2.11.1's μ, and a torque-free rigid body). So these results show the configured
+  masses with bsk's μ, and a torque-free rigid body). So these results show the configured
   physics is solved and mapped correctly, not that it is realistic.
 - **Tolerances:** the error budgets of the plan on #32 (7 Nov 2026), far below a camera pixel
   (58″, or 163 m at nadir).
 
-Measured 8 Nov 2026 with HOST-8's service fix: epoch 2026-06-01T12:00Z, kernel set `argus-2026-11-02`, bsk 2.11.1.
-The recordings stamp `66911d4`, the commit before the fix, because the fix wasn't yet committed; at `66911d4` itself,
-R1 at 1 s drifts 1.45 m.
+Measured 11 Nov 2026 with HOST-8's service fix on bsk 2.12.2 (BSK-15, #140): epoch 2026-06-01T12:00Z, kernel set
+`argus-2026-11-02`. The recordings stamp `00396f5`, the branch head before its last merge with `main`. Each manifest
+records the bsk the service ran, 2.12.2. One day-long run at 0.1 s needed BSK-16's (#144) server change to finish;
+that change leaves the physics untouched. On bsk 2.11.1 (8 Nov), R1 was 3.0e-5 m and 5.9e-5 m, R1e 2.5e-6 m and R2's
+accelerometer 4.3e-12 m/s². Every other figure is unchanged. Before the fix (`66911d4`, bsk 2.11.1), R1 at 1 s
+drifted 1.45 m.
 
 | Case | Checks | Worst over the run | Tolerance |
 |---|---|---|---|
-| R1 orbit, 24 h | orbit integration and the J2000 → ITRF93 mapping | 3.0e-5 m and 3.2e-8 m/s at 0.1 s steps; 5.9e-5 m and 6.4e-8 m/s at 1 s | 1 cm, 10 µm/s |
-| R1e eccentric, 2 h | the element conversion (e = 0.01, generic angles) | 2.5e-6 m, 2.5e-9 m/s | 1 cm, 10 µm/s |
+| R1 orbit, 24 h | orbit integration and the J2000 → ITRF93 mapping | 4.1e-5 m and 4.5e-8 m/s at 0.1 s steps; 7.7e-5 m and 8.4e-8 m/s at 1 s | 1 cm, 10 µm/s |
+| R1e eccentric, 2 h | the element conversion (e = 0.01, generic angles) | 2.4e-6 m, 2.2e-9 m/s | 1 cm, 10 µm/s |
 | all ten | the frame, the Sun's position and the Earth rate, at every step | 2.2e-16 rad; 1.2e-15 and 5.7e-16 relative | 1e-10 |
 | R2 spin, 600 s | attitude conventions: a tilted start spinning at 20.17°/s about +Y | 2.7e-8 rad; ω exact | 1e-6 rad, 1e-6 relative |
-| R2, its IMU | a noise-free IMU on a skewed, offset mount, from step 1 | gyro 5.6e-17 rad/s, accelerometer 4.3e-12 m/s² | 1e-14 rad/s, 1e-9 m/s² |
+| R2, its IMU | a noise-free IMU on a skewed, offset mount, from step 1 | gyro 5.6e-17 rad/s, accelerometer 8.7e-19 m/s² | 1e-14 rad/s, 1e-9 m/s² |
 | R3 tumble, 600 s | products of inertia and Euler's equations | 4.3e-8 rad, ω 3.4e-8 relative; momentum 3.3e-9, energy 5.4e-10 | 1e-6 each |
 | R5 Sun-pointing, 60 s | a light sensor on a 35° mount, its boresight on the Sun, reading 1361 × (1 AU/d)² W/m² | 2.1e-10 relative | 1e-3, which catches a pointing error above about 2.6°; an ignored or inverted mount is 34° or 68° off |
 | R2-long, 24 h at 20°/s | attitude drift against the step size | 0.88° (identity start) and 2.19° (R2's start) at 1 s steps, or 55 and 136 IMX708 pixels; 0.3″ and 0.8″ at 0.1 s | the start: 1e-6 rad; the drift: measured only |
@@ -362,13 +365,14 @@ R1 at 1 s drifts 1.45 m.
 - **Defect found and fixed in HOST-8.**
   - **What it was:** Earth's gravity body read its SPICE planet message. Earth is the central body
     and SPICE's zero base.
-  - **Why it mattered:** bsk 2.11.1 steps the message's orientation linearly inside each step, so
+  - **Why it mattered:** bsk (2.11.1 and 2.12.2 alike) steps the message's orientation linearly inside each step, so
     the orbit converged at second order. It drifted 1.45 m a day at 1 s steps, and halving the step
-    cut the error 4×. A message with the orientation but no rate leaves the orbit exact.
+    cut the error 4×. A message with the orientation but no rate leaves the orbit exact. bsk 2.12.2 behaves the same
+    (#137 review).
   - **The fix:** Earth's gravity body now reads no message (`Argus.Basilisk/README.md`, scenario
     notes).
   - **Effect on HOST-5:** its 14 µm orbit figure (G4) was this defect. The 600 s cases here, R2 and
-    R3, gave 1.4e-5 m before the fix, and 3.4e-8 and 3.5e-8 m after.
+    R3, gave 1.4e-5 m before the fix, and 3.4e-8 m after.
 - **R4, the analytic fixture (development only, D9).** It starts on Basilisk's orbit at t = 0, in
   ITRF93 axes frozen at t = 0. It deviates by up to 27.5 m, at 11.6 h:
 

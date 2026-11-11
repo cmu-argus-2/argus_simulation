@@ -23,8 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-# bsk 2.11.1 astroConstants, converted to SI. The reference uses the service's own constants, because HOST-8 checks
-# the implementation, not the physics' realism.
+# bsk 2.12.2 astroConstants (2.11.1's were identical), converted to SI. The reference uses the service's own
+# constants, because HOST-8 checks the implementation, not the physics' realism.
 MU_EARTH = 3.98600436e14  # m^3/s^2 (MU_EARTH 398600.436 km^3/s^2)
 MU_SUN = 1.3271244002331e20  # m^3/s^2 (MU_SUN 132712440023.31 km^3/s^2)
 AU_M = 149597870.693e3  # m (AU 149597870.693 km)
@@ -35,7 +35,7 @@ REFERENCE_RUNS = REPO / "headless" / "Host" / "runs" / "reference"
 
 SCHEMA_VERSION = "argus-dataset/1"
 EARTH_FIXED_FRAME = "Itrf93"
-DYNAMICS_BACKEND = {"name": "basilisk", "version": "2.11.1"}  # the μ constants above are this version's
+DYNAMICS_BACKEND = {"name": "basilisk", "version": "2.12.2"}  # the μ constants above are this version's (BSK-15, #140)
 DROPPED_COUNTERS = ("dropped_states", "dropped_frames", "dropped_commands")
 COUNTED_FILES = ("states.jsonl", "sensors.jsonl")
 
@@ -151,7 +151,7 @@ def dataset_problems(manifest: dict, lines_read: dict, case: dict) -> list[str]:
 
 # ----------------------------------------------------------------------------------------------------------------
 # Cases and tolerances (the plan on #32, 7 Nov 2026). Each tolerance is an error budget, far below what the camera
-# resolves (one pixel is 58″, or 163 m at nadir). On 8 Nov bsk 2.11.1 met each one by at least 23× (attitude); frames,
+# resolves (one pixel is 58″, or 163 m at nadir). On 11 Nov bsk 2.12.2 met each one by at least 23× (attitude); frames,
 # the Sun and irradiance by 10⁴–10⁶×. docs/target-architecture.md, "G4 results", lists both.
 
 _EVERY_CASE = ("position_m", "velocity_m_s", "frame_rad", "sun_position_rel", "earth_rate_rel")
@@ -206,7 +206,7 @@ TOLERANCES = {
     "attitude_start_rad": 1e-6,
     "omega_rel": 1e-6,
     "gyro_rad_s": 1e-14,
-    "accel_m_s2": 1e-9,  # the live R2 run measured 4.25e-12 m/s² (8 Nov); the lever-arm signal is about 6e-3
+    "accel_m_s2": 1e-9,  # live R2: 8.7e-19 m/s² on bsk 2.12.2 (4.25e-12 on 2.11.1); the lever-arm signal is about 6e-3
     "momentum_rel": 1e-6,
     "energy_rel": 1e-6,
     "irradiance_rel": 1e-3,  # catches any attitude misreading above about 2.6°
