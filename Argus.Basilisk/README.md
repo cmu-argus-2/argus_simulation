@@ -348,6 +348,27 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
   imports it or the tool, so the service's only SPICE source stays `spiceInterface` (D3).
 - A copy placed in `kernels/` by hand is accepted when its hash matches.
 
+### Kernels in CI (BSK-11, #24)
+
+The **Basilisk service and host run** job (`.github/workflows/headless.yml`) uses the set
+named by `kernelSetId` in `headless/Host/runs/p0-default.json`.
+
+- **Cache first.** `kernels/` is cached under `spice-kernels-<kernel_set_id>`. A set's ID is
+  immutable, so the ID is the whole key. `fetch_kernels.py` still hashes every cached file.
+- **NAIF on a miss.** On a cache miss, `fetch_kernels.py` downloads from the manifest's URLs,
+  NAIF first, then the fallbacks (about 45 MB). Downloads are allowed in CI but happen only
+  on a miss: a cache created on `main` serves every pull request, and GitHub keeps it while CI
+  uses it at least once a week.
+- **A file NAIF deletes** keeps working from the cache. Once the cache is evicted, the job
+  fails at this step naming the file, until P0 moves to a set NAIF still serves (below).
+- **TLS.** NAIF's certificate chains to Sectigo Public Server Authentication Root R46. Ubuntu
+  24.04's CA bundle has it. Python on macOS reads `/etc/ssl/cert.pem`, which may not, so a
+  local fetch can fail with `CERTIFICATE_VERIFY_FAILED`; pointing `SSL_CERT_FILE` at a current
+  Mozilla bundle such as certifi's fixes it.
+- `argus-2026-09-25` cannot be fetched (its Earth PCK is gone), so its two tests are the only
+  skips CI allows. Any other skip fails the job, since it means the live service tests did
+  not run.
+
 ### Choosing the Earth PCK
 
 - NAIF replaces its daily high-precision Earth PCK (`earth_000101_*`) every few days and
@@ -616,3 +637,6 @@ Details name the field path and the bad value.
   inputs of Core `BasiliskStateMapperTests`.
 - `dotnet run --project headless/Host/Argus.Simulation.Host.csproj` runs clean against the
   service.
+
+CI runs these on every pull request and push to `main` (BSK-11, #24): `tests/` with the P0
+kernel set, then a 60 s P0 host run against the service, which fails on any non-zero exit.

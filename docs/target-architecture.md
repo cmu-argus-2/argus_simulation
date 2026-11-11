@@ -520,7 +520,7 @@ the gateway.
   - unit and gateway tests keep the analytic fixture (D9).
 
   So SIL tests in CI need the bsk install and the kernels: about 45 MB, mostly `de440s.bsp` and the
-  Earth PCK. They belong in BSK-11's (#24) job, not HOST-2's.
+  Earth PCK. They run in BSK-11's (#24) job, **Basilisk service and host run**, not HOST-2's.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6) Answered by DATA-4 (#69) with the navigation owner: no.
   Dataset v1 replaces it, and the one reader moves to dataset v1. Layout and field mapping:

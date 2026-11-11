@@ -79,3 +79,104 @@ jobs:
           uv lock --check
           uv export --frozen --all-extras --no-emit-project --format requirements-txt -o requirements.txt
           git diff --exit-code -- uv.lock requirements.txt
+
+  basilisk:
+    name: Basilisk service and host run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      BASILISK_ENDPOINT: 127.0.0.1:50051
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install uv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uv"
+          "$RUNNER_TEMP/uv/bin/pip" install --quiet "uv==0.13.4"
+          echo "$RUNNER_TEMP/uv/bin" >> "$GITHUB_PATH"
+
+      # Argus.Basilisk/README.md §2: the locked packages, bsk included, then the Python
+      # contract code.
+      - name: Install the service and generate the protos
+        working-directory: Argus.Basilisk
+        run: |
+          uv sync --frozen --all-extras
+          .venv/bin/python scripts/generate_protos.py
+
+      # The P0 run file names the kernel set. A set's ID is immutable (Argus.Basilisk/README.md §8),
+      # so the ID is the whole cache key; fetch_kernels.py still verifies every cached file.
+      - name: Read the P0 kernel set
+        id: kernel-set
+        run: echo "id=$(jq -er .kernelSetId headless/Host/runs/p0-default.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the kernels
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: Argus.Basilisk/kernels
+          key: spice-kernels-${{ steps.kernel-set.outputs.id }}
+
+      # On a cache miss this downloads from the manifest's URLs, NAIF first
+      # (Argus.Basilisk/README.md §8 "Kernels in CI").
+      - name: Fetch and verify the kernels
+        working-directory: Argus.Basilisk
+        run: .venv/bin/python scripts/fetch_kernels.py "${{ steps.kernel-set.outputs.id }}"
+
+      # Only the tests of argus-2026-09-25 may skip: NAIF has deleted its Earth PCK, so CI cannot
+      # fetch it. Any other skip means the live service tests did not run, and fails the job.
+      - name: Run the service tests
+        working-directory: Argus.Basilisk
+        run: |
+          .venv/bin/python -m pytest -q -rs | tee "$RUNNER_TEMP/pytest.txt"
+          if grep '^SKIPPED' "$RUNNER_TEMP/pytest.txt" | grep -v 'argus-2026-09-25'; then
+            echo "::error::Service tests skipped that must run in CI (above)."
+            exit 1
+          fi
+
+      - name: Build headless host
+        run: dotnet build headless/Host/Argus.Simulation.Host.csproj --configuration Release
+
+      - name: Start the Basilisk service
+        working-directory: Argus.Basilisk
+        run: |
+          nohup .venv/bin/python -m argus_basilisk --endpoint "$BASILISK_ENDPOINT" \
+            > "$RUNNER_TEMP/basilisk.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/basilisk.pid"
+          for _ in $(seq 120); do
+            if ! kill -0 "$(cat "$RUNNER_TEMP/basilisk.pid")" 2> /dev/null; then
+              echo "::error::The Basilisk service exited before it was listening."
+              exit 1
+            fi
+            if (exec 3<> "/dev/tcp/${BASILISK_ENDPOINT%:*}/${BASILISK_ENDPOINT##*:}") 2> /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The Basilisk service was not listening on $BASILISK_ENDPOINT after 120 s."
+          exit 1
+
+      # Host and service each build their side from Argus.Contracts, so a contract change that
+      # breaks either side fails here: a mapper, period or freshness error exits 1.
+      - name: Run the host against the service (P0, 60 s)
+        run: |
+          dotnet run --project headless/Host/Argus.Simulation.Host.csproj --configuration Release --no-build -- \
+            --duration-s 60 --real-time-factor 0 --basilisk-endpoint "$BASILISK_ENDPOINT"
+
+      - name: Stop the Basilisk service
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/basilisk.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/basilisk.pid")" 2> /dev/null || true
+          fi
+          if [ -f "$RUNNER_TEMP/basilisk.log" ]; then
+            echo "Service log:"
+            cat "$RUNNER_TEMP/basilisk.log"
+          fi
