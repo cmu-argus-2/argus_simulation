@@ -76,6 +76,18 @@ no mapper, period or freshness error. HOST-5 (#29) checked its output against CS
 independent orbit propagation (target-architecture G4), so the Basilisk path is verified and
 v1 is additive only (`Argus.Contracts/README.md`).
 
+The host also serves the state stream to Unity (`argus/stream/v1`, CON-1,
+`Argus.Contracts/README.md` "State stream"). It listens on `--stream-endpoint`, then
+`ARGUS_STREAM_ENDPOINT`, then `127.0.0.1:50052`, a loopback `host:port` only, in cleartext
+HTTP/2. Each client receives at most `--stream-rate-hz` (then `ARGUS_STREAM_RATE_HZ`, then 10)
+pairs per second of wall-clock time: the latest state with the latest frame of each non-camera
+sensor. The rate must be above 0 and at most 1000 Hz, and its period is rounded up to whole
+milliseconds (400 Hz sends every 3 ms). The web host reads no `appsettings.json` or
+`ASPNETCORE_`/`DOTNET_` variables, so nothing but `--stream-endpoint` opens a listener. The step
+loop only replaces that latest pair, so a slow or stalled client never delays a step; it just
+receives fewer pairs. A port already in use exits 1 before the host configures the service. An
+unpaced run may finish before a client connects.
+
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
 including ground-truth sensors, and every command the gateway logged, applied or rejected

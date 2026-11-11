@@ -67,5 +67,10 @@ namespace Argus.Simulation.Core
         // The typed measurement of a non-empty output map (an empty map is Unavailable). Throws
         // ArgumentException naming the key when the map is not exactly the declared keys and types.
         object ReadOutput(DeviceValues output);
+
+        // The output map of a measurement of this kind, under its declared keys: the inverse of
+        // ReadOutput, for links that carry frames as value maps (the state stream, HOST-3). Throws
+        // ArgumentException for a measurement of another type.
+        DeviceValues WriteOutput(object measurement);
     }
 }

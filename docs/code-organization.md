@@ -46,7 +46,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 ├── Host/                         # Headless host: BasiliskEngine gRPC client, run configuration files
 │   ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
 │   ├── Gateway/                  # GatewayServer (placeholder)
-│   ├── Streaming/                # StateStreamServer (placeholder)
+│   ├── Streaming/                # StateStreamServer, StateStreamPublisher, StateStreamMapper (argus/stream/v1)
 │   └── runs/                     # Run configuration files (p0-default.json: placeholder data)
 └── Host.Tests/                   # Host tests (NUnit)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
@@ -65,7 +65,7 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 | Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry), `DeviceSource` (a device's `basilisk` or `argus` label, from its kind); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases; actuators `IActuatorKind`, `ActuatorLimitPolicy`, `ActuatorGeometry`, and `IdealBodyTorqueKind`, `MomentumWheelKind`, `MagneticTorquerKind` and `ThrusterKind` with their profiles, on `ActuatorKind<TProfile>` (in `Core/Actuators`) |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
 | Headless orchestration | `SimulationGateway` |
-| Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program` |
+| Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program`; the state stream to Unity `StateStreamServer`, `StateStreamPublisher`, `StateStreamMapper` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorSlot`, `SensorManager`, `SensorFrame<TPayload>` |
 | Implemented sensor models | `IdealBodyRateSensorModel`; camera base `CameraModel` and the Argus-computed `BodyCameraModel` (the Arducam IMX708 is its P0 parameter set) and `NadirGroundTruthCameraModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
@@ -124,9 +124,8 @@ Core/Sensors/
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Runtime/StateStreamClient.cs                       # TODO(G2)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
-headless/Host/Streaming/StateStreamServer.cs             # TODO(G2)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
-Argus.Contracts/proto/argus/{stream,gateway,render}/v1/  # TODO(G2), TODO(D7, G1), TODO(D5, G3)
+Argus.Contracts/proto/argus/{gateway,render}/v1/         # TODO(D7, G1), TODO(D5, G3)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
 
