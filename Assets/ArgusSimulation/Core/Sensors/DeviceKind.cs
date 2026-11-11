@@ -174,6 +174,12 @@ namespace Argus.Simulation.Core
             return Read(output);
         }
 
+        public DeviceValues WriteOutput(object measurement) => measurement is TMeasurement typed
+            ? Write(typed)
+            : throw new ArgumentException(
+                $"A {Name} output is a {typeof(TMeasurement).Name}, not a {measurement?.GetType().Name ?? "null"}.",
+                nameof(measurement));
+
         public ISensorFrame CreateFrame(
             string runId,
             string sensorId,
@@ -199,5 +205,7 @@ namespace Argus.Simulation.Core
         }
 
         protected abstract TMeasurement Read(DeviceValues output);
+
+        protected abstract DeviceValues Write(TMeasurement measurement);
     }
 }

@@ -26,7 +26,7 @@ Python.
 
 ## Set up and run the Basilisk service
 
-Supported platforms are the ones with a `bsk==2.11.1` wheel: macOS on Apple silicon, Linux
+Supported platforms are the ones with a `bsk==2.12.2` wheel: macOS on Apple silicon, Linux
 x86_64 and aarch64, and Windows x86_64. Intel Macs aren't supported.
 
 From `Argus.Basilisk/`:

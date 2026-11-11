@@ -2,7 +2,8 @@
 
 **Status:** Basilisk and state-stream schemas defined; gateway and renderer schemas planned
 
-HOST-3 and UNITY-5 implement the state-stream server and client.
+`headless/Host` serves the state stream (HOST-3, `Streaming/StateStreamServer.cs`); the Unity
+client is UNITY-5.
 
 Versioned Protobuf schemas for every message that crosses a process boundary. Nothing here
 is generated or compiled into a committed artifact; each consumer generates its own code.
@@ -87,14 +88,14 @@ protoc -I Argus.Contracts/proto -I "$(brew --prefix)/include" --descriptor_set_o
 | Link | Server | Client | Variable | Default | Transport | Stream rate |
 |---|---|---|---|---|---|---|
 | Basilisk | `Argus.Basilisk` | `headless/Host` (`BasiliskEngine`) | `ARGUS_BASILISK_ENDPOINT` | `127.0.0.1:50051` | insecure h2c, loopback only in v1 | Not applicable |
-| State stream (HOST-3 implements) | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
+| State stream | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
 
 For every endpoint, precedence is command-line flag, then environment, then default.
 Basilisk uses `--basilisk-endpoint` > `ARGUS_BASILISK_ENDPOINT` > `127.0.0.1:50051`.
 The stream endpoint uses `--stream-endpoint`, then `ARGUS_STREAM_ENDPOINT`, then the
 default above. Stream rate uses `--stream-rate-hz`, then `ARGUS_STREAM_RATE_HZ`, default
-10 Hz of wall-clock time. These settings are the contract for HOST-3/UNITY-5, not options
-implemented by this schema-only change. Both endpoint settings take bare `host:port`
+10 Hz of wall-clock time; `headless/Host` implements all three (HOST-3) and accepts only a
+loopback stream endpoint. Both endpoint settings take bare `host:port`
 (bracket IPv6 addresses, e.g. `[::1]:50052`), with no URI scheme or path. The stream
 client adds `http://` when constructing its channel URI; the server parses host/port.
 
@@ -104,7 +105,8 @@ Added with the PR that first needs them:
 
 - the gateway link for HIL flight computers and other external controllers (observations
   out, commands in);
-- runtime state-stream server (HOST-3) and Unity client (UNITY-5); schema is defined below;
+- the runtime state-stream Unity client (UNITY-5); the schema is below and `headless/Host`
+  serves it (HOST-3);
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
   pixel buffers may use shared memory plus a metadata message (system-architecture.md §12).
 
@@ -121,7 +123,8 @@ is distinct from the original per-step SensorManager output used by the recorder
 ### Delivery rules
 
 - Cap sends at 10 Hz of **wall-clock** time by default. Host rate precedence is
-  `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > 10; require a finite positive value.
+  `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > 10; require a finite value above 0 and at most 1000 Hz.
+  `headless/Host` rounds the period up to whole milliseconds, so a client never receives faster than the rate.
   This configures delivery, never the physics or sensor sample period. No runtime tuning RPC.
 - Host keeps the latest frame per non-camera sensor in the current generation. Every
   produced frame updates that sensor's slot, including Unavailable/Invalid (which must
@@ -201,7 +204,7 @@ System.Runtime.CompilerServices.Unsafe for the handler) into the git-ignored
 YetAnotherHttpHandler comes from `Packages/manifest.json`, pinned to the 1.11.7 git tag.
 Core never references these assemblies; `Unity/Runtime/StateStreamMapper.cs` maps them to Core
 in the Unity runtime assembly (UNITY-5). Host keeps its own internal
-generation; HOST-3 enables server generation for stream only.
+generation and generates the server side for `argus/stream/v1` only (HOST-3).
 
 Headless CI builds the managed contract assembly in Release configuration. Installing/pinning the Unity HTTP handler,
 Grpc.Net.Client and their dependencies, then verifying Editor/player cancellation and

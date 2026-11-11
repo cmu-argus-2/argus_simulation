@@ -69,6 +69,11 @@ namespace Argus.Simulation.Core
         // ArgumentException naming the key when the map is not exactly the declared keys and types.
         object ReadOutput(DeviceValues output);
 
+        // The output map of a measurement of this kind, under its declared keys: the inverse of
+        // ReadOutput, for links that carry frames as value maps (the state stream, HOST-3). Throws
+        // ArgumentException for a measurement of another type.
+        DeviceValues WriteOutput(object measurement);
+
         // A frame of this kind from a link that carries its payload as the output map, such as the
         // state stream in Unity (UNITY-5). Valid and Stale frames read the map as ReadOutput does;
         // Unavailable and Invalid frames carry no payload, so their map must be empty.

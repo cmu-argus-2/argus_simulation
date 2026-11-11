@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Headless simulation host: runs the gateway and sensors over BasiliskEngine, the gRPC client
-       of the Argus.Basilisk service. The only project that references gRPC or Protobuf; generated
-       code is internal and never committed. -->
+       of the Argus.Basilisk service, and serves the state stream to Unity (HOST-3). The only
+       project that references gRPC or Protobuf; generated code is internal and never committed. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -13,15 +13,28 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Kestrel for the state stream server (StateStreamServer). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.36.2" />
+    <PackageReference Include="Grpc.AspNetCore.Server" Version="2.84.0" />
     <PackageReference Include="Grpc.Net.Client" Version="2.84.0" />
     <PackageReference Include="Grpc.Tools" Version="2.84.0" PrivateAssets="All" />
   </ItemGroup>
 
+  <!-- Every link is a client except argus/stream/v1, which the host serves to Unity (HOST-3). The
+       Basilisk protos stay client-only. -->
   <ItemGroup>
     <Protobuf Include="$(ArgusContractsDir)proto/argus/**/*.proto"
+              Exclude="$(ArgusContractsDir)proto/argus/stream/v1/*.proto"
               ProtoRoot="$(ArgusContractsDir)proto"
               GrpcServices="Client"
+              Access="Internal" />
+    <Protobuf Include="$(ArgusContractsDir)proto/argus/stream/v1/*.proto"
+              ProtoRoot="$(ArgusContractsDir)proto"
+              GrpcServices="Server"
               Access="Internal" />
   </ItemGroup>
 
