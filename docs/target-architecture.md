@@ -336,10 +336,16 @@ references over up to 24 h:
 
 Measured 11 Nov 2026 with HOST-8's service fix on bsk 2.12.2 (BSK-15, #140): epoch 2026-06-01T12:00Z, kernel set
 `argus-2026-11-02`. The recordings stamp `00396f5`, the branch head before its last merge with `main`. Each manifest
-records the bsk the service ran, 2.12.2. One day-long run at 0.1 s needed BSK-16's (#144) server change to finish;
-that change leaves the physics untouched. On bsk 2.11.1 (8 Nov), R1 was 3.0e-5 m and 5.9e-5 m, R1e 2.5e-6 m and R2's
-accelerometer 4.3e-12 m/s². Every other figure is unchanged. Before the fix (`66911d4`, bsk 2.11.1), R1 at 1 s
-drifted 1.45 m.
+records the bsk the service ran, 2.12.2. The merged code reproduces R1 at 1 s, R1e, R2, R3 and R5 bit for bit.
+R2-long from the identity start at 0.1 s stopped early three times on the stock server, with ResourceExhausted
+(#144). It finished with BSK-16's server change, which leaves the physics untouched: its orbit, frame, Sun and
+Earth-rate metrics are bit-identical to R1 at 0.1 s, which ran on the stock server. Its manifest can't show that
+change.
+
+On bsk 2.11.1 (8 Nov), the orbit figures differed slightly: R1 was 3.0e-5 m and 3.2e-8 m/s at 0.1 s and 5.9e-5 m and
+6.4e-8 m/s at 1 s, R1e 2.5e-6 m and 2.5e-9 m/s, and R3's 600 s orbit 3.5e-8 m (HOST-5 below). R2's accelerometer read
+4.3e-12 m/s². The attitude, gyro, frame, Sun, Earth-rate, irradiance, drift and R4 figures are the same. Before the
+fix (`66911d4`, bsk 2.11.1), R1 at 1 s drifted 1.45 m.
 
 | Case | Checks | Worst over the run | Tolerance |
 |---|---|---|---|
@@ -366,9 +372,9 @@ drifted 1.45 m.
   - **What it was:** Earth's gravity body read its SPICE planet message. Earth is the central body
     and SPICE's zero base.
   - **Why it mattered:** bsk (2.11.1 and 2.12.2 alike) steps the message's orientation linearly inside each step, so
-    the orbit converged at second order. It drifted 1.45 m a day at 1 s steps, and halving the step
-    cut the error 4×. A message with the orientation but no rate leaves the orbit exact. bsk 2.12.2 behaves the same
-    (#137 review).
+    the orbit converged at second order. It drifted about 1.4 m a day at 1 s steps (1.45 m on 2.11.1,
+    1.35 m on 2.12.2), and halving the step cut the error 4×. A message with the orientation but no rate leaves the
+    orbit exact.
   - **The fix:** Earth's gravity body now reads no message (`Argus.Basilisk/README.md`, scenario
     notes).
   - **Effect on HOST-5:** its 14 µm orbit figure (G4) was this defect. The 600 s cases here, R2 and

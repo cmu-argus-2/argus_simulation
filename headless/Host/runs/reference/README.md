@@ -32,4 +32,8 @@ R5's start came from a one-off script that used SPICE and the checker's own elem
 part of the repo. To reproduce it, take the Sun's J2000 unit vector ŝ from Earth's centre at the epoch
 (`spkpos("SUN", et, "J2000", "NONE", "EARTH")`). q_s is then the rotation by acos(ŝ_z) about +Z × ŝ, and the start is q_s ⊗ q_mount*. The values are frozen here.
 
-Tolerances, and what each case measured on 8 Nov 2026, are in `docs/target-architecture.md`, "G4 results".
+Tolerances, and what each case measured on 11 Nov 2026 (bsk 2.12.2), are in `docs/target-architecture.md`, "G4
+results".
+
+Until BSK-16 (#144) lands, any run may stop early with `Concurrent RPC limit exceeded!` from the service, most
+often a day-long one. The checker refuses the truncated recording; rerun the case.

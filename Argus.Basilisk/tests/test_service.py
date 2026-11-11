@@ -821,8 +821,9 @@ def orbit_after(stub, step_s, duration_s):
 
 
 # HOST-8 (#32) found the orbit converging at second order: with the central body (Earth, also SPICE's zero base)
-# reading its planet message, the orbit drifted 1.45 m a day at 1 s steps (bsk 2.11.1; 2.12.2 behaves the same). RK4
-# at fourth order moves a 1 h orbit by micrometres when the step halves; the second-order path moved it by centimetres.
+# reading its planet message, the orbit drifted about 1.4 m a day at 1 s steps (1.45 m on bsk 2.11.1, 1.35 m on 2.12.2).
+# RK4 at fourth order moves a 1 h orbit by micrometres when the step halves; the second-order path moved it by
+# centimetres.
 @real_kernels
 def test_halving_the_step_barely_moves_a_one_hour_orbit(service):
     _, stub = service

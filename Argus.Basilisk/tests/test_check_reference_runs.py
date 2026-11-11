@@ -1,8 +1,9 @@
 """check_reference_runs.py (HOST-8 #32): the checker's own math and its dataset gate, offline.
 
-Nothing here imports Basilisk, and only the SPICE test reads kernels. The checker must not share code with the
-run it checks, so each function is tested against an independent property: a closed form, an invariant, or a known
-geometric fact. The checker needs numpy, which the `test` extra doesn't install, so without it these tests skip.
+Only the pin test imports Basilisk (it skips without it), and only the SPICE test reads kernels. The checker must
+not share code with the run it checks, so each function is tested against an independent property: a closed form, an
+invariant, or a known geometric fact. The checker needs numpy, which the `test` extra doesn't install, so without it
+these tests skip.
 """
 
 import importlib.util
@@ -962,3 +963,14 @@ def test_ric_splits_a_position_error_into_radial_along_track_and_cross_track():
     r, v = np.array([7.0e6, 0.0, 0.0]), np.array([0.0, 7.5e3, 0.0])
     radial, along, cross = check.ric(np.array([7.0e6 + 3.0, -2.0, 5.0]), r, v)
     assert (radial, along, cross) == pytest.approx((3.0, -2.0, 5.0), abs=1e-9)
+
+
+def test_the_checkers_pin_and_constants_match_the_installed_basilisk():
+    """The service's gravity uses bsk's μ, and the checker hard-codes them with the version they came from (#140)."""
+    basilisk = pytest.importorskip("Basilisk")
+    from Basilisk.architecture import astroConstants
+
+    assert check.DYNAMICS_BACKEND["version"] == basilisk.__version__
+    assert check.MU_EARTH == astroConstants.MU_EARTH * 1e9
+    assert check.MU_SUN == astroConstants.MU_SUN * 1e9
+    assert check.AU_M == astroConstants.AU * 1e3
