@@ -35,8 +35,7 @@ def check(values, invalid: Invalid) -> None:
         # field adds negative irradiance from behind the aperture.
         invalid("field_of_view_half_angle_rad", "must be in (0, pi/2]", half_angle)
     positive(values, invalid, "scale_factor")
-    # Noise > 0 is white noise added in the service, since bsk 2.11.1's would be a random walk
-    # (README §9).
+    # Noise > 0 is white noise added in the service (README §9, §10).
     non_negative(values, invalid, "noise_std_w_per_m2")
     positive(values, invalid, "saturation_w_per_m2")
 
@@ -68,9 +67,8 @@ class LightSensor:
 
     OutputData = scale (cos(theta) x shadow + albedo + bias) + noise, clipped to [0, saturation],
     with scale = scale_factor x 1361 W/m2 and theta the angle between the boresight and the Sun.
-    bsk 2.11.1 cannot make coarseSunSensor noise white from Python, so the module runs noise-free
-    and unclipped, and output() adds the seeded noise from the "css" stream and clips (§9,
-    BSK-13 #116).
+    The module runs noise-free and unclipped, and output() adds the seeded noise from the "css"
+    stream and clips (§9, §10, BSK-13 #116).
     """
 
     def __init__(self, device, random_seed: int, spacecraft_state_msg, sun_msg, eclipse_msg, albedo_msg):
@@ -97,8 +95,7 @@ class LightSensor:
         self.module.r_B = position_body
         self.module.scaleFactor = scale
         # The bias is in units of the unscaled output, so the W/m2 value is divided by the scale.
-        # Noise and clipping are applied in output(): setAMatrix cannot be called from Python in
-        # bsk 2.11.1, and the default A makes the module's noise a random walk.
+        # Noise and clipping are applied in output(), so a sample depends only on its index (§10).
         self.module.senNoiseStd = 0.0
         self.module.senBias = parameters["bias_w_per_m2"].number / scale
         self.module.maxOutput = math.inf

@@ -389,7 +389,7 @@ star-tracker, power, thermal, radio and radiation models are unavailable until t
 and hardware profiles are implemented. The body cameras (CORE-6) and the nadir ground-truth camera (CORE-8) are built, but their frames are
 `Unavailable` until a renderer exists (UNITY-4). The v1
 Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's
-pacing and actuators, the other network transports and the physical hardware adapters are not
+actuators, the other network transports and the physical hardware adapters are not
 implemented yet.
 
 ## References

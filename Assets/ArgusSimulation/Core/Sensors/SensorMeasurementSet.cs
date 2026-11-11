@@ -61,6 +61,14 @@ namespace Argus.Simulation.Core
             sensorId != null &&
             (_measurements.ContainsKey(sensorId) || _unavailableSensorIds.Contains(sensorId));
 
+        // The stored payload whatever its type, for links that carry it as its kind's value map
+        // (IBackendSensorKind.WriteOutput, the state stream). False when not measured this step.
+        public bool TryGetUntypedMeasurement(string sensorId, out object measurement)
+        {
+            measurement = null;
+            return sensorId != null && _measurements.TryGetValue(sensorId, out measurement);
+        }
+
         // Throws when the stored payload has another type, which is a backend mapping bug.
         public bool TryGetMeasurement<TMeasurement>(string sensorId, out TMeasurement measurement)
             where TMeasurement : struct

@@ -342,6 +342,28 @@ namespace Argus.Simulation.Tests
         // Both camera kinds share CameraProfileKind's keys and checks.
         private static readonly CameraProfileKind[] CameraKinds = { CameraKind.Instance, NadirGroundTruthCameraKind.Instance };
 
+        // WriteOutput is ReadOutput's inverse under each Basilisk-modelled kind's keys, so the state
+        // stream sends the keys the service sent (HOST-3).
+        [Test]
+        public void BackendSensorKindsWriteTheOutputTheyRead()
+        {
+            object[] measurements =
+            {
+                new ImuMeasurement(new Vector3d(1e-3, -2e-3, 3e-3), new Vector3d(0.0, 0.1, -0.2)),
+                new MagnetometerMeasurement(new Vector3d(2.1e-5, -1.0e-6, 4.4e-5)),
+                new LightSensorMeasurement(1361.0)
+            };
+            IBackendSensorKind[] kinds = { ImuKind.Instance, MagnetometerKind.Instance, LightSensorKind.Instance };
+            for (int i = 0; i < kinds.Length; i++)
+            {
+                DeviceValues output = kinds[i].WriteOutput(measurements[i]);
+                Assert.That(output.Keys, Is.EquivalentTo(kinds[i].OutputKeys.Select(key => key.Name)), kinds[i].Name);
+                Assert.That(kinds[i].ReadOutput(output), Is.EqualTo(measurements[i]), kinds[i].Name);
+            }
+
+            Assert.Throws<System.ArgumentException>(() => ImuKind.Instance.WriteOutput(measurements[1]));
+        }
+
         // A spacecraft whose only actuator is one ideal body torque device is valid. Each actuator
         // kind rejects bad limits, axes and keys, an actuator has no period and an unrotated mount,
         // and device IDs are unique across sensors and actuators (CON-2).

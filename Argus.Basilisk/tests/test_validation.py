@@ -11,6 +11,7 @@ import pytest
 from argus_basilisk.contracts import service_pb
 from argus_basilisk.devices import KINDS
 from argus_basilisk.validation import (
+    MAXIMUM_PACED_STEP_SECONDS,
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
@@ -261,6 +262,7 @@ INVALID_CASES = [
      "configuration.kernel_set_id"),
     ("negative real_time_factor", lambda r: setattr(r, "real_time_factor", -1.0), "real_time_factor"),
     ("NaN real_time_factor", lambda r: setattr(r, "real_time_factor", math.nan), "real_time_factor"),
+    ("paced step over an hour", lambda r: setattr(r, "real_time_factor", 1e-6), "real_time_factor"),
     ("bad timestamp nanos", lambda r: setattr(r.configuration.epoch_utc, "nanos", 1_000_000_000),
      "configuration.epoch_utc.nanos"),
     # Required messages and oneofs.
@@ -337,14 +339,14 @@ INVALID_CASES = [
      'configuration.devices[1].parameters["range_tesla"]: must be finite and > 0'),
     ("zero light saturation", lambda r: setattr(parameter(r, 4, "saturation_w_per_m2"), "number", 0.0),
      'configuration.devices[4].parameters["saturation_w_per_m2"]: must be finite and > 0'),
-    # bsk 2.11.1 limits.
+    # imuSensor limits.
     ("gyro noise and random walk",
      lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"), "number", 1e-6),
-     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: bsk 2.11.1 cannot combine'),
+     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: imuSensor cannot combine'),
     ("accel noise and random walk",
      lambda r: setattr(parameter(r, 0, "accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"), "number", 1e-5),
      'configuration.devices[0].parameters["accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"]: '
-     'bsk 2.11.1 cannot combine'),
+     'imuSensor cannot combine'),
     ("walk bound without random walk",
      lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_bound_rad_per_s"), "number", 1e-3),
      'configuration.devices[0].parameters["gyroscope.bias_random_walk_bound_rad_per_s"]: needs'),
@@ -428,22 +430,28 @@ def test_an_unknown_kind_skips_the_parameter_checks():
     assert problem.details.startswith("configuration.devices[1].kind")
 
 
-def test_pacing_is_unimplemented():
+@pytest.mark.parametrize("real_time_factor", [1.0, 0.1 / MAXIMUM_PACED_STEP_SECONDS])
+def test_pacing_is_valid_up_to_an_hour_per_step(real_time_factor):
+    request = p0_default_request()  # 0.1 s steps.
+    request.real_time_factor = real_time_factor
+    assert problems_of(request) == []
+
+
+def test_a_paced_step_over_an_hour_is_invalid():
     request = p0_default_request()
-    request.real_time_factor = 1.0
+    request.real_time_factor = 0.1 / MAXIMUM_PACED_STEP_SECONDS * 0.999
     problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("real_time_factor")
+    assert problem.code == "INVALID_ARGUMENT"
+    assert problem.details.startswith("real_time_factor: would pace each step to over 3600 s")
 
 
-def test_invalid_argument_outranks_unimplemented_and_out_of_range():
+def test_invalid_argument_outranks_out_of_range():
     request = p0_default_request()
-    request.real_time_factor = 2.0
     request.configuration.epoch_utc.FromDatetime(datetime(2027, 1, 1, tzinfo=timezone.utc))
     request.configuration.spacecraft.mass_kg = -1.0
 
     codes = [problem.code for problem in problems_of(request)]
-    assert codes == ["INVALID_ARGUMENT", "UNIMPLEMENTED", "OUT_OF_RANGE"]
+    assert codes == ["INVALID_ARGUMENT", "OUT_OF_RANGE"]
     with pytest.raises(ValidationError) as error:
         validate_configure_run(request, coverage_utc=COVERAGE)
     assert error.value.code == "INVALID_ARGUMENT"
