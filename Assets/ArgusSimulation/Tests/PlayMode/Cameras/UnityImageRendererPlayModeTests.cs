@@ -331,6 +331,335 @@ namespace Argus.Simulation.Tests
         private static int ReadPngInteger(byte[] png, int start) =>
             (png[start] << 24) | (png[start + 1] << 16) | (png[start + 2] << 8) | png[start + 3];
 
+        [UnityTest]
+        public IEnumerator PreviewMetadataMatchesManualEditsAndTheFrozenRenderedViews()
+        {
+            yield return CheckManualCaptureMetadata(false);
+        }
+
+        [UnityTest]
+        public IEnumerator RecordedResetPoseRendersAllViewsWithoutFrustumErrors()
+        {
+            // Replay the five views from the manual reset acceptance run at 232.3 seconds.
+            // This Earth-fixed pose is far from Foundation's Denver georeference origin.
+            _world.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            _reference.SetOriginLongitudeLatitudeHeight(-105.25737, 39.736401, 2250);
+            var overlay = new GameObject("Reset pose HUD", typeof(RectTransform), typeof(Canvas),
+                typeof(UnityEngine.UI.GraphicRaycaster));
+            overlay.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            _owned.Add(overlay);
+            var panel = new GameObject("HUD panel", typeof(RectTransform), typeof(UnityEngine.UI.Image));
+            panel.transform.SetParent(overlay.transform, false);
+            var rect = panel.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+            Quaternion originalLight = _light.transform.rotation;
+            var position = new Vector3d(6669499.986476071, 973548.0208930476, 1370672.1029271013);
+            var rotations = new[]
+            {
+                new Quaterniond(0.6382918480800766, 0.6866951498117172, -0.14769006275151164, 0.31499354479741065),
+                new Quaterniond(-0.14769004201057487, -0.3149935329333351, -0.6382918646554196, 0.6866951443077183),
+                new Quaterniond(0.34690786338135904, 0.2628327692454482, -0.5557731505396608, 0.7083008364206335),
+                new Quaterniond(0.5557731349894838, 0.7083008674467147, 0.34690783392611174, -0.2628327573931485),
+                new Quaterniond(0.5067443556893242, 0.5860841482498785, -0.4782521512346324, -0.4135098656461203)
+            };
+            for (int i = 0; i < rotations.Length; i++)
+            {
+                double focalLength = i == 4 ? 2744.540223013736 : 591.333346142287;
+                var request = new RenderRequest("reset-view-" + i, i, 2323, 232.3,
+                    new DateTimeOffset(2025, 1, 15, 0, 3, 52, TimeSpan.Zero), 0,
+                    position, rotations[i], new CameraIntrinsics(768, 432, focalLength, focalLength, 383.5, 215.5));
+                Task<ImageFrame> task = _renderer.RenderAsync(request, CancellationToken.None);
+                yield return Wait(task);
+                ImageFrame result = task.GetAwaiter().GetResult();
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(result.CameraPositionEcefMeters, Is.EqualTo(position));
+                Assert.That(result.CameraToEcef, Is.EqualTo(rotations[i]));
+                Assert.That(_reference.longitude, Is.EqualTo(-105.25737).Within(1e-9));
+                Assert.That(_reference.latitude, Is.EqualTo(39.736401).Within(1e-9));
+                Assert.That(_reference.height, Is.EqualTo(2250).Within(1e-6));
+                Assert.That(_reference.originAuthority, Is.EqualTo(CesiumGeoreferenceOriginAuthority.LongitudeLatitudeHeight));
+                Assert.That(Quaternion.Angle(_light.transform.rotation, originalLight), Is.LessThan(0.01));
+                Assert.That(overlay.GetComponent<Canvas>().enabled, Is.True, "Restore the display HUD after readback.");
+                LogAssert.NoUnexpectedReceived();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator DashboardPauseKeepsPreviewAndFullResolutionAtTheSameState()
+        {
+            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(exporter, "unity4-paused-test-" + Guid.NewGuid().ToString("N"));
+            var dashboardObject = new GameObject("Pause acceptance dashboard");
+            _owned.Add(dashboardObject);
+            var dashboard = dashboardObject.AddComponent<SimulatorDashboard>();
+            // Dashboard creates this outside its own hierarchy.
+            var pauseText = (UnityEngine.UI.Text)typeof(SimulatorDashboard)
+                .GetField("_pauseButtonText", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(dashboard);
+            _owned.Add(pauseText.canvas.gameObject);
+            _owned.Add(GameObject.Find("Orbit Visualization"));
+            runner.IsRunning = true;
+            pauseText.GetComponentInParent<UnityEngine.UI.Button>().onClick.Invoke();
+            Assert.That(runner.IsRunning, Is.False);
+            Assert.That(runner.StepOnce(), Is.True);
+            SpacecraftState paused = runner.LastState.Spacecraft;
+            try
+            {
+                Assert.That(exporter.RequestCapture(), Is.True);
+                for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                Assert.That(runner.IsRunning, Is.False);
+                Assert.That(exporter.RequestFullResolutionCapture(), Is.True);
+                for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                Assert.That(runner.IsRunning, Is.False);
+                Assert.That(runner.LastState.Spacecraft.Sequence, Is.EqualTo(paused.Sequence));
+                string[] rows = File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl"));
+                Assert.That(rows.Length, Is.EqualTo(9));
+                foreach (string json in rows)
+                {
+                    SavedCapture row = JsonUtility.FromJson<SavedCapture>(json);
+                    Assert.That(row.sequence, Is.EqualTo(paused.Sequence));
+                    Assert.That(row.simulation_time_seconds, Is.EqualTo(paused.SimulationTimeSeconds));
+                    Assert.That(row.timestamp_utc, Is.EqualTo(paused.TimestampUtc.ToString("O")));
+                }
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator FarFromOriginPixelsMatchRequestedPoseAndIntrinsics()
+        {
+            _reference.SetOriginLongitudeLatitudeHeight(-105.25737, 39.736401, 2250);
+            var position = new Vector3d(6669499.986476071, 973548.0208930476, 1370672.1029271013);
+            var rotation = new Quaterniond(0.6382918480800766, 0.6866951498117172, -0.14769006275151164, 0.31499354479741065);
+            var request = new RenderRequest("far-origin-markers", 0, 2323, 232.3,
+                new DateTimeOffset(2025, 1, 15, 0, 3, 52, TimeSpan.Zero), 0.025,
+                position, rotation, new CameraIntrinsics(64, 48, 70, 60, 27, 19),
+                position + new Vector3d(1e10, 2e10, 3e10));
+            Vector3d[] markers = { new Vector3d(-0.8, -0.6, 10), new Vector3d(0.8, 0.6, 10) };
+            Color[] colours = { Color.red, Color.green };
+            for (int i = 0; i < markers.Length; i++)
+            {
+                GameObject marker = AddMarker(request, markers[i], colours[i]);
+                marker.transform.SetParent(_world.transform, true);
+                var anchor = marker.AddComponent<CesiumGlobeAnchor>();
+                anchor.adjustOrientationForGlobeWhenMoving = false;
+                anchor.detectTransformChanges = false;
+                Vector3d ecef = position + rotation.Rotate(markers[i]);
+                anchor.positionGlobeFixed = new double3(ecef.X, ecef.Y, ecef.Z);
+            }
+            Task<ImageFrame> task = _renderer.RenderAsync(request, CancellationToken.None);
+            yield return Wait(task);
+            ImageFrame image = task.GetAwaiter().GetResult();
+            AssertPixel(image, 21, 15, 0);
+            AssertPixel(image, 33, 23, 1);
+            Assert.That(_reference.longitude, Is.EqualTo(-105.25737).Within(1e-9));
+            Assert.That(_reference.latitude, Is.EqualTo(39.736401).Within(1e-9));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [UnityTest]
+        public IEnumerator FullResolutionMetadataMatchesManualEditsAndTheFrozenRenderedViews()
+        {
+            yield return CheckManualCaptureMetadata(true);
+        }
+
+        private IEnumerator CheckManualCaptureMetadata(bool fullResolution)
+        {
+            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            runner.IsRunning = false;
+            var anchor = _rig.GetComponent<CesiumGlobeAnchor>();
+            var poseDriver = _rig.gameObject.AddComponent<CesiumSpacecraftPoseDriver>();
+            poseDriver.Configure(runner, anchor);
+            // Exercise the same source/pose operations as Dashboard phase, altitude and P/Y/R.
+            source.PhaseDegrees = 15;
+            source.AltitudeMeters = 550000;
+            Assert.That(runner.StepOnce(), Is.True);
+            poseDriver.NudgeAttitude(new Vector3(20, 30, 40));
+            _rig.Cameras[0].fieldOfView = 47;
+            _rig.Cameras[0].transform.localPosition += new Vector3(0.02f, 0.03f, 0.04f);
+            _rig.Cameras[0].transform.localRotation *= Quaternion.Euler(3, 5, 7);
+            SpacecraftState sourceState = runner.LastState.Spacecraft;
+            // Keep the local float transforms close to the exposure while checking ECEF doubles.
+            Vector3d origin = sourceState.PositionEcefMeters;
+            _reference.SetOriginEarthCenteredEarthFixed(origin.X, origin.Y, origin.Z);
+            float4 bodyRotation = anchor.rotationGlobeFixed.value;
+            var expectedBody = new Quaterniond(bodyRotation.x, bodyRotation.y, bodyRotation.z, bodyRotation.w).Normalized();
+            Assert.That(Math.Abs(expectedBody.X - sourceState.BodyToEcef.X), Is.GreaterThan(0.01));
+            double3 expectedPosition = anchor.positionGlobeFixed;
+            var expectedCameraPositions = new List<double3>();
+            var expectedCameraForwards = new List<Vector3>();
+            var expectedCameraDowns = new List<Vector3>();
+            var expectedFocalLengths = new List<double>();
+            int count = fullResolution ? 4 : 5;
+            // Let LateUpdate align the independent nadir camera before snapshotting it.
+            yield return null;
+            for (int i = 0; i < count; i++)
+            {
+                Camera view = _rig.Cameras[i];
+                Vector3 local = _reference.transform.InverseTransformPoint(view.transform.position);
+                expectedCameraPositions.Add(_reference.TransformUnityPositionToEarthCenteredEarthFixed(
+                    new double3(local.x, local.y, local.z)));
+                expectedCameraForwards.Add(view.transform.forward);
+                expectedCameraDowns.Add(-view.transform.up);
+                expectedFocalLengths.Add(0.5 * _rig.RenderTextures[i].height /
+                    Math.Tan(0.5 * view.fieldOfView * Math.PI / 180));
+            }
+            var renderedPositions = new List<Vector3>();
+            var renderedForwards = new List<Vector3>();
+            var renderedDowns = new List<Vector3>();
+            Camera.CameraCallback callback = view =>
+            {
+                if (view != _rig.RequestCamera) return;
+                renderedPositions.Add(view.transform.position);
+                renderedForwards.Add(view.transform.forward);
+                renderedDowns.Add(-view.transform.up);
+            };
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(exporter, "unity4-pose-test-" + Guid.NewGuid().ToString("N"));
+            Camera.onPreRender += callback;
+            try
+            {
+                Assert.That(fullResolution ? exporter.RequestFullResolutionCapture() : exporter.RequestCapture(), Is.True);
+                // Edits during tile waiting must not alter any view in this already-started capture.
+                source.PhaseDegrees = 45;
+                source.AltitudeMeters = 600000;
+                poseDriver.NudgeAttitude(new Vector3(-10, 15, -20));
+                _rig.Cameras[0].fieldOfView = 65;
+                for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                Assert.That(renderedForwards.Count, Is.EqualTo(count));
+                string[] rows = File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl"));
+                Assert.That(rows.Length, Is.EqualTo(count));
+                for (int i = 0; i < count; i++)
+                {
+                    SavedCapture row = JsonUtility.FromJson<SavedCapture>(rows[i]);
+                    Assert.That(row.metadata_version, Is.EqualTo(2));
+                    Assert.That(row.sequence, Is.EqualTo(sourceState.Sequence));
+                    Assert.That(row.simulation_time_seconds, Is.EqualTo(sourceState.SimulationTimeSeconds));
+                    Assert.That(row.timestamp_utc, Is.EqualTo(sourceState.TimestampUtc.ToString("O")));
+                    AssertVector(row.position_ecef_m, new Vector3d(expectedPosition.x, expectedPosition.y, expectedPosition.z), 0.001);
+                    AssertVector(row.source_position_ecef_m, sourceState.PositionEcefMeters, 0.001);
+                    Quaterniond body = ReadQuaternion(row.rotation_body_to_ecef_xyzw);
+                    AssertVector(new[] { body.X, body.Y, body.Z }, new Vector3d(expectedBody.X, expectedBody.Y, expectedBody.Z), 1e-6);
+                    Assert.That(body.W, Is.EqualTo(expectedBody.W).Within(1e-6));
+                    Quaterniond engineBody = ReadQuaternion(row.source_rotation_body_to_ecef_xyzw);
+                    Assert.That(engineBody.X, Is.EqualTo(sourceState.BodyToEcef.X).Within(1e-10));
+                    Vector3d rateInEcef = sourceState.BodyToEcef.Rotate(sourceState.AngularVelocityBodyRadiansPerSecond);
+                    Vector3d savedRate = new Vector3d(row.angular_velocity_body_truth_rad_per_s[0],
+                        row.angular_velocity_body_truth_rad_per_s[1], row.angular_velocity_body_truth_rad_per_s[2]);
+                    AssertVector(row.source_angular_velocity_body_truth_rad_per_s, sourceState.AngularVelocityBodyRadiansPerSecond, 1e-10);
+                    Vector3d savedRateInEcef = body.Rotate(savedRate);
+                    Assert.That((savedRateInEcef - rateInEcef).Magnitude, Is.LessThan(1e-8));
+                    Quaterniond camera = ReadQuaternion(row.camera_to_ecef_xyzw);
+                    Quaterniond relative = ReadQuaternion(row.camera_to_body_xyzw);
+                    Vector3d forward = camera.Rotate(new Vector3d(0, 0, 1));
+                    Assert.That(((body * relative).Rotate(new Vector3d(0, 0, 1)) - forward).Magnitude, Is.LessThan(1e-6));
+                    Vector3 savedForward = ToWorldDirection(forward);
+                    Vector3 savedDown = ToWorldDirection(camera.Rotate(new Vector3d(0, 1, 0)));
+                    Assert.That(Vector3.Angle(savedForward, expectedCameraForwards[i]), Is.LessThan(0.05));
+                    Assert.That(Vector3.Angle(savedDown, expectedCameraDowns[i]), Is.LessThan(0.05));
+                    Assert.That(Vector3.Angle(savedForward, renderedForwards[i]), Is.LessThan(0.05));
+                    Assert.That(Vector3.Angle(savedDown, renderedDowns[i]), Is.LessThan(0.05));
+                    double3 p = expectedCameraPositions[i];
+                    AssertVector(row.camera_position_ecef_m, new Vector3d(p.x, p.y, p.z), 0.001);
+                    double3 local = _reference.TransformEarthCenteredEarthFixedPositionToUnity(new double3(
+                        row.camera_position_ecef_m[0], row.camera_position_ecef_m[1], row.camera_position_ecef_m[2]));
+                    Vector3 worldPosition = _reference.transform.TransformPoint(new Vector3((float)local.x, (float)local.y, (float)local.z));
+                    Assert.That(Vector3.Distance(worldPosition, renderedPositions[i]), Is.LessThan(0.01));
+                    Assert.That(row.exposure_duration_s, Is.Zero);
+                    Assert.That(row.has_sun_position, Is.False);
+                    Assert.That(row.renderer, Is.Not.Empty);
+                    Assert.That(row.image_width_px, Is.EqualTo(fullResolution ? 4608 : 768));
+                    Assert.That(row.image_height_px, Is.EqualTo(fullResolution ? 2592 : 432));
+                    double expectedFy = fullResolution ? 3548 : expectedFocalLengths[i];
+                    Assert.That(row.fy_px, Is.EqualTo(expectedFy).Within(0.001));
+                }
+
+                // The next capture must take fresh state after new orbit edits and a pose reset.
+                poseDriver.ResetManualAttitude();
+                Assert.That(runner.StepOnce(), Is.True);
+                SpacecraftState nextState = runner.LastState.Spacecraft;
+                Assert.That((nextState.PositionEcefMeters - sourceState.PositionEcefMeters).Magnitude, Is.GreaterThan(1000));
+                Assert.That(fullResolution ? exporter.RequestFullResolutionCapture() : exporter.RequestCapture(), Is.True);
+                for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                rows = File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl"));
+                Assert.That(rows.Length, Is.EqualTo(count * 2));
+                SavedCapture next = JsonUtility.FromJson<SavedCapture>(rows[count]);
+                Assert.That(next.sequence, Is.EqualTo(nextState.Sequence));
+                AssertVector(next.position_ecef_m, nextState.PositionEcefMeters, 0.01);
+                Quaterniond nextBody = ReadQuaternion(next.rotation_body_to_ecef_xyzw);
+                Assert.That((nextBody.Rotate(new Vector3d(0, 0, 1)) - nextState.BodyToEcef.Rotate(new Vector3d(0, 0, 1))).Magnitude,
+                    Is.LessThan(1e-6));
+                if (!fullResolution)
+                {
+                    SavedCapture nadir = JsonUtility.FromJson<SavedCapture>(rows[count * 2 - 1]);
+                    AssertVector(nadir.camera_position_ecef_m, nextState.PositionEcefMeters, 1);
+                }
+            }
+            finally
+            {
+                Camera.onPreRender -= callback;
+                if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
+            }
+        }
+
+        [Serializable]
+        private sealed class SavedCapture
+        {
+            public int metadata_version;
+            public long sequence;
+            public double simulation_time_seconds;
+            public string timestamp_utc;
+            public int image_width_px;
+            public int image_height_px;
+            public double fy_px;
+            public double[] position_ecef_m;
+            public double[] rotation_body_to_ecef_xyzw;
+            public double[] angular_velocity_body_truth_rad_per_s;
+            public double[] source_position_ecef_m;
+            public double[] source_rotation_body_to_ecef_xyzw;
+            public double[] source_angular_velocity_body_truth_rad_per_s;
+            public double[] camera_position_ecef_m;
+            public double[] camera_to_ecef_xyzw;
+            public double[] camera_to_body_xyzw;
+            public double exposure_duration_s;
+            public string renderer;
+            public bool has_sun_position;
+        }
+
+        private static Quaterniond ReadQuaternion(double[] values) =>
+            new Quaterniond(values[0], values[1], values[2], values[3]);
+
+        private Vector3 ToWorldDirection(Vector3d direction)
+        {
+            double3 local = _reference.TransformEarthCenteredEarthFixedDirectionToUnity(
+                new double3(direction.X, direction.Y, direction.Z));
+            return _reference.transform.TransformDirection(new Vector3((float)local.x, (float)local.y, (float)local.z));
+        }
+
+        private static void AssertVector(double[] actual, Vector3d expected, double tolerance)
+        {
+            Assert.That(actual, Has.Length.EqualTo(3));
+            Assert.That(actual[0], Is.EqualTo(expected.X).Within(tolerance));
+            Assert.That(actual[1], Is.EqualTo(expected.Y).Within(tolerance));
+            Assert.That(actual[2], Is.EqualTo(expected.Z).Within(tolerance));
+        }
+
         private RenderRequest Request(bool withSun = false)
         {
             Vector3d position = new Vector3d(6378137 + 200, 0, 0);
@@ -341,7 +670,7 @@ namespace Argus.Simulation.Tests
                 withSun ? position + new Vector3d(1e10, 2e10, 3e10) : (Vector3d?)null);
         }
 
-        private void AddMarker(RenderRequest request, Vector3d cameraPosition, Color color)
+        private GameObject AddMarker(RenderRequest request, Vector3d cameraPosition, Color color)
         {
             GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             _owned.Add(marker);
@@ -352,6 +681,7 @@ namespace Argus.Simulation.Tests
             Material material = new Material(Shader.Find("Unlit/Color")) { color = color };
             _owned.Add(material);
             marker.GetComponent<Renderer>().sharedMaterial = material;
+            return marker;
         }
 
         private static void AssertPixel(ImageFrame frame, int x, int y, int channel)

@@ -62,6 +62,7 @@ namespace Argus.Simulation.Unity
         [Serializable]
         private sealed class NavigationRecord
         {
+            public int metadata_version = 2;
             public string timestamp_utc;
             public long sequence;
             public double simulation_time_seconds;
@@ -81,15 +82,30 @@ namespace Argus.Simulation.Unity
             // A later bridge will convert/document the exact Argus convention.
             public double[] rotation_camera_to_body_unity_xyzw;
 
-            // Simulator truth in ECEF.
+            // Exact rendered camera pose, using OpenCV camera axes (right, down, forward).
+            public double[] camera_position_ecef_m;
+            public double[] camera_to_ecef_xyzw;
+            public double[] camera_to_body_xyzw;
+            public double exposure_duration_s;
+            public string renderer;
+            public bool has_sun_position;
+            public double[] sun_position_ecef_m;
+
+            // Rendered spacecraft position; velocity remains the source engine's ECEF velocity.
             public double[] position_ecef_m;
             public double[] velocity_ecef_m_per_s;
 
-            // Simulator truth attitude: body -> ECEF, [x, y, z, w].
+            // Rendered body -> ECEF, [x, y, z, w].
             public double[] rotation_body_to_ecef_xyzw;
 
-            // Truth body angular velocity. This is NOT a noisy gyro yet.
+            // Source angular velocity expressed in the rendered body axes. A manual nudge is
+            // an instantaneous pose edit, not a physically simulated torque or gyro sample.
             public double[] angular_velocity_body_truth_rad_per_s;
+
+            // Preserve the underlying engine state separately from the rendered pose.
+            public double[] source_position_ecef_m;
+            public double[] source_rotation_body_to_ecef_xyzw;
+            public double[] source_angular_velocity_body_truth_rad_per_s;
         }
 
         private void Awake()
@@ -190,8 +206,12 @@ namespace Argus.Simulation.Unity
                 }
                 var requests = new RenderRequest[last - first];
                 var cameraToBody = new Quaternion[last - first];
+                SpacecraftState capturedState;
                 try
                 {
+                    capturedState = SnapshotSpacecraft(state.Spacecraft);
+                    // Orbit edits can precede this frame's LateUpdate, which normally aligns nadir.
+                    cameraRig.UpdateGroundTruthPose();
                     // Snapshot every view before yielding: manual pose changes or a follower's
                     // later states must not change the exposure while terrain is loading.
                     for (int index = first; index < last; index++)
@@ -201,7 +221,12 @@ namespace Argus.Simulation.Unity
                             cameraRig.Cameras[index].transform.rotation;
                     }
                 }
-                catch (Exception exception) { Debug.LogException(exception, this); yield break; }
+                catch (Exception exception)
+                {
+                    LastCaptureError = exception.Message;
+                    Debug.LogException(exception, this);
+                    yield break;
+                }
                 for (int index = first; index < last; index++)
                 {
                     _captureIndex = index - first + 1;
@@ -218,7 +243,7 @@ namespace Argus.Simulation.Unity
                     {
                         ImageFrame frame = task.GetAwaiter().GetResult();
                         EnsureOutputDirectory();
-                        ExportCamera(state.Spacecraft, index, captureNumber, frame, cameraToBody[index - first]);
+                        ExportCamera(capturedState, state.Spacecraft, index, captureNumber, frame, cameraToBody[index - first]);
                     }
                     catch (TimeoutException exception)
                     {
@@ -240,6 +265,23 @@ namespace Argus.Simulation.Unity
                 _captureCancellation = null;
                 CompleteCapture(_resumeSimulation, status);
             }
+        }
+
+        private SpacecraftState SnapshotSpacecraft(SpacecraftState source)
+        {
+            var anchor = cameraRig.GetComponent<CesiumGlobeAnchor>();
+            if (anchor == null)
+                throw new InvalidOperationException("Capture metadata requires a spacecraft CesiumGlobeAnchor.");
+            // Include same-frame Transform edits even when the anchor's change detection is off.
+            anchor.Sync();
+            double3 position = anchor.positionGlobeFixed;
+            float4 rotation = anchor.rotationGlobeFixed.value;
+            var bodyToEcef = new Quaterniond(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
+            var ecefToBody = new Quaterniond(-bodyToEcef.X, -bodyToEcef.Y, -bodyToEcef.Z, bodyToEcef.W);
+            Vector3d angularVelocity = ecefToBody.Rotate(source.BodyToEcef.Rotate(source.AngularVelocityBodyRadiansPerSecond));
+            return new SpacecraftState(source.Sequence, source.SimulationTimeSeconds, source.TimestampUtc,
+                new Vector3d(position.x, position.y, position.z), source.VelocityEcefMetersPerSecond,
+                bodyToEcef, angularVelocity, source.EarthFixedFrame);
         }
 
         private RenderRequest CreateRequest(SimulationState state, int index, bool fullResolution, int captureNumber)
@@ -328,6 +370,7 @@ namespace Argus.Simulation.Unity
 
         private void ExportCamera(
             SpacecraftState state,
+            SpacecraftState sourceState,
             int cameraIndex,
             int captureNumber,
             ImageFrame frame,
@@ -340,14 +383,16 @@ namespace Argus.Simulation.Unity
 
             File.WriteAllBytes(imagePath, UnityImageRenderer.EncodePng(frame));
             CameraIntrinsics intrinsics = frame.Intrinsics;
+            var ecefToBody = new Quaterniond(-state.BodyToEcef.X, -state.BodyToEcef.Y,
+                -state.BodyToEcef.Z, state.BodyToEcef.W);
 
             NavigationRecord record = new NavigationRecord
             {
-                timestamp_utc = state.TimestampUtc.ToString(
+                timestamp_utc = frame.TimestampUtc.ToString(
                     "O",
                     CultureInfo.InvariantCulture),
-                sequence = state.Sequence,
-                simulation_time_seconds = state.SimulationTimeSeconds,
+                sequence = frame.StateSequence,
+                simulation_time_seconds = frame.SimulationTimeSeconds,
 
                 image_file = imageFileName,
                 camera_name = cameraRig.Names[cameraIndex],
@@ -367,20 +412,26 @@ namespace Argus.Simulation.Unity
                     (double)cameraToBody.w
                 },
 
+                camera_position_ecef_m = ToArray(frame.CameraPositionEcefMeters),
+                camera_to_ecef_xyzw = ToArray(frame.CameraToEcef),
+                camera_to_body_xyzw = ToArray((ecefToBody * frame.CameraToEcef).Normalized()),
+                exposure_duration_s = frame.ExposureDurationSeconds,
+                renderer = frame.Renderer,
+                has_sun_position = frame.Request.HasSunPosition,
+                sun_position_ecef_m = frame.Request.HasSunPosition
+                    ? ToArray(frame.Request.SunPositionEcefMeters.Value) : null,
+
                 position_ecef_m = ToArray(state.PositionEcefMeters),
                 velocity_ecef_m_per_s =
                     ToArray(state.VelocityEcefMetersPerSecond),
 
-                rotation_body_to_ecef_xyzw = new[]
-                {
-                    state.BodyToEcef.X,
-                    state.BodyToEcef.Y,
-                    state.BodyToEcef.Z,
-                    state.BodyToEcef.W
-                },
+                rotation_body_to_ecef_xyzw = ToArray(state.BodyToEcef),
 
                 angular_velocity_body_truth_rad_per_s =
-                    ToArray(state.AngularVelocityBodyRadiansPerSecond)
+                    ToArray(state.AngularVelocityBodyRadiansPerSecond),
+                source_position_ecef_m = ToArray(sourceState.PositionEcefMeters),
+                source_rotation_body_to_ecef_xyzw = ToArray(sourceState.BodyToEcef),
+                source_angular_velocity_body_truth_rad_per_s = ToArray(sourceState.AngularVelocityBodyRadiansPerSecond)
             };
 
             File.AppendAllText(
@@ -391,6 +442,11 @@ namespace Argus.Simulation.Unity
         private static double[] ToArray(Vector3d vector)
         {
             return new[] { vector.X, vector.Y, vector.Z };
+        }
+
+        private static double[] ToArray(Quaterniond rotation)
+        {
+            return new[] { rotation.X, rotation.Y, rotation.Z, rotation.W };
         }
 
         private static string MakeSafeFileName(string value)

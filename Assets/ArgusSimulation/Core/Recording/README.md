@@ -240,6 +240,14 @@ converter builds `frame_id` as `unity_sequence_<sequence:06d>` from the exporter
 reader uses the frame's `state_sequence`. Krushna will run one reader-to-downstream check once the
 reader exists. UNITY-9 (#63) retires the exporter once the reader has moved to dataset v1.
 
+The temporary exporter's `metadata_version: 2` records also contain the rendered camera's
+`camera_position_ecef_m` and `camera_to_ecef_xyzw` directly from `ImageFrame.Request`. Its existing
+body position and attitude fields now include manual scene adjustments; the `source_position_ecef_m`,
+`source_rotation_body_to_ecef_xyzw` and `source_angular_velocity_body_truth_rad_per_s` fields retain
+the engine state. Use those source fields when matching dataset v1 truth below. The exported
+angular velocity is expressed in the rendered body axes. Earlier unversioned records may omit
+manual attitude offsets. Capture time now comes from `ImageFrame`, matching the frozen request.
+
 | `navigation_metadata.jsonl` | dataset v1 |
 |---|---|
 | `timestamp_utc`, `sequence`, `simulation_time_seconds` | `timestamp_utc`, `sequence`, `simulation_time_s` in `states.jsonl` at the camera frame's `state_sequence`. The exporter wrote the state's values, not the frame's. v1 writes `timestamp_utc` ending in `Z`, where the exporter wrote `+00:00`. |

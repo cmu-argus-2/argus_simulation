@@ -183,12 +183,31 @@ namespace Argus.Simulation.Unity
                 pending.Token.ThrowIfCancellationRequested();
                 ApplyPose(camera, request);
                 Quaternion originalLightRotation = sunlight == null ? Quaternion.identity : sunlight.transform.rotation;
+                // A far-from-origin view/projection can become singular in Unity's float math,
+                // even though the ECEF request is valid. Rebase only for the synchronous render.
+                bool rebase = camera.transform.position.sqrMagnitude > 100_000f * 100_000f;
+                var originalOrigin = new double3(georeference.ecefX, georeference.ecefY, georeference.ecefZ);
+                var originalLlh = new double3(georeference.longitude, georeference.latitude, georeference.height);
+                var originalAuthority = georeference.originAuthority;
+                var originalPlacement = georeference.originPlacement;
+                Vector3d lightForward = sunlight == null ? default : ToEcefDirection(sunlight.transform.forward);
+                Vector3d lightUp = sunlight == null ? default : ToEcefDirection(sunlight.transform.up);
                 Texture2D image = null;
                 try
                 {
+                    if (rebase)
+                    {
+                        Vector3d p = request.CameraPositionEcefMeters;
+                        georeference.SetOriginEarthCenteredEarthFixed(p.X, p.Y, p.Z);
+                        georeference.originPlacement = CesiumGeoreferenceOriginPlacement.CartographicOrigin;
+                        ApplyPose(camera, request);
+                        if (sunlight != null)
+                            sunlight.transform.rotation = Quaternion.LookRotation(ToWorldDirection(lightForward), ToWorldDirection(lightUp));
+                    }
                     if (towardSun.HasValue)
                     {
                         Vector3 direction = ToWorldDirection(request.SunPositionEcefMeters.Value - request.CameraPositionEcefMeters).normalized;
+                        rasterController?.SetCaptureSunDirection(direction);
                         sunlight.transform.rotation = Quaternion.LookRotation(-direction,
                             Mathf.Abs(Vector3.Dot(direction, Vector3.up)) > 0.99f ? Vector3.right : Vector3.up);
                     }
@@ -202,6 +221,15 @@ namespace Argus.Simulation.Unity
                 }
                 finally
                 {
+                    if (rebase)
+                    {
+                        if (originalAuthority == CesiumGeoreferenceOriginAuthority.LongitudeLatitudeHeight)
+                            georeference.SetOriginLongitudeLatitudeHeight(originalLlh.x, originalLlh.y, originalLlh.z);
+                        else
+                            georeference.SetOriginEarthCenteredEarthFixed(originalOrigin.x, originalOrigin.y, originalOrigin.z);
+                        georeference.originPlacement = originalPlacement;
+                        ApplyPose(camera, request);
+                    }
                     if (sunlight != null) sunlight.transform.rotation = originalLightRotation;
                     if (image != null) Destroy(image);
                 }
@@ -264,6 +292,13 @@ namespace Argus.Simulation.Unity
         {
             double3 local = georeference.TransformEarthCenteredEarthFixedDirectionToUnity(new double3(ecef.X, ecef.Y, ecef.Z));
             return georeference.transform.TransformDirection(new Vector3((float)local.x, (float)local.y, (float)local.z));
+        }
+
+        private Vector3d ToEcefDirection(Vector3 worldDirection)
+        {
+            Vector3 local = georeference.transform.InverseTransformDirection(worldDirection);
+            double3 ecef = georeference.TransformUnityDirectionToEarthCenteredEarthFixed(new double3(local.x, local.y, local.z));
+            return new Vector3d(ecef.x, ecef.y, ecef.z).Normalized();
         }
 
         // Pixel (0,0) is the centre of the top-left pixel; the image edges lie at -0.5.

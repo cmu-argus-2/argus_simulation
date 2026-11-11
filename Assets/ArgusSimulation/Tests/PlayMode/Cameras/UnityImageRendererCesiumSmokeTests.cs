@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using Argus.Simulation.Unity;
@@ -36,6 +37,14 @@ namespace Argus.Simulation.Tests
                 if (Object.FindAnyObjectByType<SimulatorDashboard>() == null)
                     new GameObject("Smoke test dashboard").AddComponent<SimulatorDashboard>();
                 yield return null;
+                Cesium3DTileset[] tilesets = Object.FindObjectsByType<Cesium3DTileset>(FindObjectsInactive.Exclude);
+                Assert.That(Array.Exists(tilesets, tileset => tileset.isActiveAndEnabled), Is.True,
+                    "Real-scene acceptance requires enabled terrain. Check the project .env / Cesium credentials.");
+                // Uncached native-resolution imagery can exceed the production default budget.
+                // The offline suite separately verifies that the configured deadline is enforced.
+                var renderer = Object.FindAnyObjectByType<UnityImageRenderer>();
+                typeof(UnityImageRenderer).GetField("maximumLoadSeconds", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .SetValue(renderer, 600f);
                 var runner = Object.FindAnyObjectByType<SimulationRunner>();
                 var priority = Object.FindAnyObjectByType<NadirTilePriority>();
                 float warmUpDeadline = Time.realtimeSinceStartup + 40f;
@@ -63,6 +72,7 @@ namespace Argus.Simulation.Tests
                     report.error = exporter.LastCaptureError;
                     Assert.That(report.previewStatus, Is.EqualTo("SAVED"), report.error);
                     Assert.That(Directory.GetFiles(report.directory, "*.png").Length, Is.EqualTo(5));
+                    AssertImageHasDetail(Directory.GetFiles(report.directory, "*NADIR*.png")[0]);
                 }
 
                 Assert.That(exporter.RequestFullResolutionCapture(), Is.True);
@@ -86,6 +96,8 @@ namespace Argus.Simulation.Tests
                     }
                 }
                 Assert.That(fullSize, Is.EqualTo(4));
+                string forwardPattern = fullOnly ? "capture_0000*FORWARD*.png" : "capture_0001*FORWARD*.png";
+                AssertImageHasDetail(Directory.GetFiles(report.directory, forwardPattern)[0]);
                 report.passed = true;
             }
             finally
@@ -95,6 +107,23 @@ namespace Argus.Simulation.Tests
                 Application.logMessageReceived -= log;
                 LogAssert.ignoreFailingMessages = previousIgnore;
             }
+        }
+
+        private static void AssertImageHasDetail(string path)
+        {
+            var image = new Texture2D(2, 2, TextureFormat.RGB24, false);
+            try
+            {
+                Assert.That(image.LoadImage(File.ReadAllBytes(path)), Is.True, path);
+                Color32[] pixels = image.GetPixels32();
+                var colours = new HashSet<Color32>();
+                int stride = Math.Max(1, pixels.Length / 4096);
+                for (int i = 0; i < pixels.Length && colours.Count <= 16; i += stride)
+                    colours.Add(pixels[i]);
+                Assert.That(colours.Count, Is.GreaterThan(16),
+                    "The Earth-facing image has no terrain detail; saved background pixels do not establish scene acceptance: " + path);
+            }
+            finally { Object.Destroy(image); }
         }
 
         private static IEnumerator WaitForCapture(NavigationEpisodeExporter exporter, float seconds)

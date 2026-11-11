@@ -31,6 +31,12 @@ the half-pixel boundary for top-left pixel centre (0,0). Raw `Rgb8` output is to
 left-to-right. `ImageFrame.Request` preserves the input calibration, pose and exposure metadata.
 Exposure duration is metadata; this renderer does not integrate motion blur over that interval.
 
+For exposure cameras more than 100 km from Unity's world origin, the synchronous render/readback
+temporarily rebases the Cesium georeference at the requested ECEF position. This avoids float
+view/projection singularities (`Screen position out of view frustum`) for distant orbital views.
+The previous origin, its authority/placement, and display-light rotation are restored in `finally`;
+the `ImageFrame` retains the original ECEF request throughout.
+
 ## Tile readiness and lighting
 
 The readiness check enumerates current enabled tilesets on every check, including ones created
@@ -91,10 +97,33 @@ sends four native 4608×2592 requests (DATA-6 v0 fx=fy=3548, cx=2304, cy=1296), 
 the preview targets. This manual snapshot keeps exposure duration at zero; it is not the
 configured sensor sampling/noise/mount integration owned by CORE-6.
 
+Each new JSONL record has `metadata_version: 2`. At capture start the exporter snapshots the
+rendered spacecraft pose and every camera request before waiting for tiles. Manual phase,
+altitude, pitch, yaw, roll, camera mount and preview-FOV changes made before Capture are included.
+Edits made while capture is loading affect subsequent captures; all views in the current capture
+retain their original snapshot. Full-resolution capture uses its documented native calibration.
+
+`position_ecef_m` and `rotation_body_to_ecef_xyzw` describe that rendered body pose, including manual
+edits. `source_position_ecef_m`, `source_rotation_body_to_ecef_xyzw` and
+`source_angular_velocity_body_truth_rad_per_s` retain the engine state. ECEF velocity remains the
+engine velocity; `angular_velocity_body_truth_rad_per_s` expresses the engine's angular velocity
+in the rendered body axes. Manual pose edits are instantaneous and do not simulate an actuator or
+an angular impulse. Their physical integration remains G1.
+
+`camera_position_ecef_m`, `camera_to_ecef_xyzw`, `camera_to_body_xyzw`, intrinsics, time,
+`exposure_duration_s`, `renderer`, `has_sun_position` and `sun_position_ecef_m` describe the actual
+render request returned with the pixels. Camera quaternions use OpenCV axes (right, down,
+forward); the legacy `rotation_camera_to_body_unity_xyzw` retains Unity's camera convention.
+When `has_sun_position` is false the scene provides the lighting. Older records without
+`metadata_version` lack these pose snapshots and may omit manual attitude offsets.
+
 `UnityImageRendererCesiumSmokeTests` is opt-in. Set `ARGUS_RUN_CESIUM_SMOKE=1` and select its
 `FoundationSavesPreviewAndFourFullResolutionBodyImages` test to exercise the actual Foundation
 scene, existing Cesium credentials, preview export, then four full-size exports. It retains
 images and metadata for inspection. Normal offline test runs skip this network-dependent test.
+The opt-in test requires enabled terrain and checks Earth-facing PNG content as well as file
+counts and sizes. It sets a 600-second per-view total loading budget for uncached imagery;
+the normal renderer default is 240 seconds, with the same 60-second inactivity limit.
 
 ## Local acceptance record — 2026-11-04
 
@@ -105,3 +134,18 @@ unique paths and full-size intrinsics were checked, and Earth-facing images were
 This validates the renderer and manual capture path; it does not validate a remote Host render
 RPC or CORE-6's configured sensor/noise integration. Network and uncached full-size tile loading
 can take minutes; this is not a real-time throughput result.
+
+## Local follow-up acceptance — 2026-11-11
+
+The metadata-v2 and orbital-projection fixes passed 79 EditMode tests and 19 offline PlayMode
+tests on Unity 6000.6.0f1 / Metal. The opt-in network scene test was skipped in that final run.
+The added regressions cover manual orbit/attitude/mount/FOV edits, frozen per-camera metadata,
+fresh captures after reset, and Dashboard pause followed by preview plus native-resolution
+capture with identical state sequence and exposure time across all nine records.
+
+The recorded five-camera reset pose reproduced Unity's frustum error before the precision fix;
+the same replay now passes with the georeference and display light restored. A separate
+far-origin red/green marker test verifies actual pixel projection after rebasing. The user's
+five manual captures produced 24 readable PNGs with matching metadata, including 350 km and
+reset-to-500 km states; these files predate the projection fix. The final code was not subjected
+to another full network/Cesium capture run.

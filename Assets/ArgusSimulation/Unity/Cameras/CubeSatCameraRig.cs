@@ -184,7 +184,7 @@ namespace Argus.Simulation.Unity
                 groundTruthVerticalFieldOfViewDegrees);
         }
 
-        private void UpdateGroundTruthPose()
+        internal void UpdateGroundTruthPose()
         {
             if (_spacecraftAnchor == null || _groundTruthAnchor == null)
             {
