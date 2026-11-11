@@ -29,12 +29,22 @@ code), runs the headless EditMode tests and the host tests, and compiles every `
 `Argus.Contracts/proto` into a temporary descriptor set. Any failed command fails
 the job, including a failing test. Generated output is not committed.
 
+The **Basilisk service and host run** job (BSK-11, #24) checks the two sides of the
+Basilisk link together. It installs the service from `Argus.Basilisk/uv.lock` (bsk
+included), generates its Protobuf code, and fetches and verifies the P0 kernel set
+(cached; `Argus.Basilisk/README.md` §8 "Kernels in CI"). It runs the service tests,
+where only the `argus-2026-09-25` tests may skip, then starts the service and runs the
+host against it for 60 s of the P0 run file. Both sides build from `Argus.Contracts/proto`,
+so a contract change that one side does not follow fails the job: the host build, a
+service test, or the host run (`StepResponse.spacecraft_shadow_factor is unset.`, exit 1).
+
 The workflow also supports manual runs from the Actions tab. New commits replace
-outdated runs for the same pull request. It does not launch the Basilisk service
-or Unity; Basilisk service tests and Unity PlayMode tests are separate work.
+outdated runs for the same pull request. No job launches Unity; Unity PlayMode
+tests are separate work.
 
 To require a passing result before merge, select **Headless build, tests and
-schemas** as a required status check in the repository's branch rules.
+schemas** and **Basilisk service and host run** as required status checks in the
+repository's branch rules.
 
 ## Run
 
