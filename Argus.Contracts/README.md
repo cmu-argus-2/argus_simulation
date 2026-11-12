@@ -215,5 +215,6 @@ with snake_case SI-unit names (e.g. `angular_velocity_sensor_rad_per_s`,
 `magnetic_field_sensor_tesla`, `irradiance_w_per_m2`). Reject unknown kinds, wrong keys,
 missing required keys, unset DeviceValue cases and non-finite/out-of-range values.
 Applied commands list every configured actuator, including idle values, at most once;
-the list is empty when the run configures no actuator. Per-device state is deferred to BSK-8.
+the list is empty when the run configures no actuator. Per-device state is deferred to the
+first stateful actuator, the momentum wheel (`docs/device-model.md` §8).
 HOST-3 should alias generated names as `PbSim` / `PbStream` to avoid Core name collisions.

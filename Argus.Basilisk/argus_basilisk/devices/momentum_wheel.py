@@ -1,7 +1,7 @@
 """The momentum wheel kind: a wheel spun by its motor about a body-fixed axis (D11, CON-2 #34).
 
-BSK-8 (#21) builds it as Basilisk's reactionWheelStateEffector; until then the service builds
-nothing, so only idle commands are accepted.
+Basilisk would model it as reactionWheelStateEffector. P0 carries no wheel (DATA-2, #68), so the
+kind has no builder and ConfigureRun returns UNIMPLEMENTED for it (README §9 "Actuators").
 """
 
 from ._common import ACTUATOR, NUMBER, TEXT, VECTOR3, Invalid, limit_policy, positive, unit_axis

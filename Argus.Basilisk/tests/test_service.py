@@ -32,7 +32,8 @@ from argus_basilisk.kernels import KernelCoverage, KernelSet, KernelSetError, lo
 from argus_basilisk.devices import KINDS, is_actuator, of_kind  # noqa: E402
 from argus_basilisk.seeds import CSS, MAG, rng_seed, sample_normals  # noqa: E402
 from test_validation import (  # noqa: E402
-    p0_default_request, set_parameter, set_quaternion, set_vector, torque_command, zero_command)
+    magnetic_torquer, momentum_wheel, p0_default_request, set_parameter, set_quaternion, set_vector, torque_command,
+    zero_command)
 
 ROOT = Path(__file__).resolve().parents[1]
 STEP_NS = 100_000_000
@@ -98,7 +99,7 @@ def imu_request():
 
 def light_sensor_request():
     """The full P0 set: IMU, magnetometer, six light sensors (all noise-free) and the ideal body
-    torque actuator, which builds no modules until BSK-8."""
+    torque actuator."""
     return p0_default_request()
 
 
@@ -592,7 +593,7 @@ configuration = p0_default_request().configuration
 del configuration.devices[2:]
 scenario = Scenario(configuration, load_kernel_set(configuration.kernel_set_id))
 for n in range(3):
-    scenario.step(n)
+    scenario.step(n, {})
 assert not attempts, attempts
 assert not any("dataFetcher" in name for name in sys.modules), "dataFetcher was imported"
 """
@@ -868,3 +869,169 @@ def test_late_steps_count_overruns_and_reset_rearms_the_schedule(service):
     for n in range(1, 4):
         stub.Step(step_request(n))
     assert time.monotonic() - start >= 3 * STEP_NS / 1e9 / factor - PACING_TOLERANCE_S
+
+
+# --- Actuators (BSK-8) --------------------------------------------------------------------
+
+# A body rate with all three axes, so the gyroscopic term w x Iw takes part.
+SPINNING_RAD_PER_S = (0.01, -0.02, 0.03)
+
+
+def actuator_request(*extra):
+    """The P0 ideal body torque alone, spinning, plus any extra devices."""
+    request = p0_default_request()
+    del request.configuration.devices[:8]
+    request.configuration.devices.extend(extra)
+    set_vector(request.configuration.spacecraft.initial_angular_velocity_body_rad_per_s, SPINNING_RAD_PER_S)
+    return request
+
+
+def commanded(sequence, torque=None, dipoles=None):
+    """Step(n) carrying command n-1: the ideal body torque and the torquers' dipoles by device ID; an
+    actuator left out is idle."""
+    request = step_request(sequence)
+    if torque is not None:
+        command = request.commands.commands.add(device_id="torque.body")
+        set_vector(command.values["torque_body_n_m"].vector3, torque)
+    for device_id, dipole in (dipoles or {}).items():
+        request.commands.commands.add(device_id=device_id).values["dipole_a_m2"].number = dipole
+    return request
+
+
+def inertia_of(request):
+    rows_ = request.configuration.spacecraft.inertia_body_kg_m2
+    return np.array([xyz(rows_.row0), xyz(rows_.row1), xyz(rows_.row2)])
+
+
+def euler_rate(omega, inertia, torque_body, seconds, substeps=1000):
+    """Euler's equation I dw/dt = torque - w x Iw over one step, by RK4 at 1000 substeps: an
+    integration independent of Basilisk's."""
+    inverse = np.linalg.inv(inertia)
+
+    def derivative(w):
+        return inverse @ (torque_body - np.cross(w, inertia @ w))
+
+    w = np.array(omega, dtype=float)
+    h = seconds / substeps
+    for _ in range(substeps):
+        k1 = derivative(w)
+        k2 = derivative(w + h / 2 * k1)
+        k3 = derivative(w + h / 2 * k2)
+        k4 = derivative(w + h * k3)
+        w = w + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    return w
+
+
+@real_kernels
+def test_a_constant_ideal_torque_changes_the_body_rate_as_expected_over_one_step(service):
+    _, stub = service
+    request = actuator_request()
+    stub.ConfigureRun(request)
+    torque = np.array([4e-4, -7e-4, 1e-3])
+    start = xyz(stub.Step(step_request(0)).spacecraft.omega_bn_body_rad_per_s)
+    after = xyz(stub.Step(commanded(1, torque=torque)).spacecraft.omega_bn_body_rad_per_s)
+    expected = euler_rate(start, inertia_of(request), torque, STEP_NS / 1e9)
+    # About 0.055 rad/s of change. Basilisk takes one RK4 step per fixed step, which is 3.7e-11 rad/s
+    # from the 1000-substep reference.
+    assert np.linalg.norm(expected - start) > 0.05
+    assert np.allclose(after, expected, rtol=0.0, atol=1e-10)
+
+
+@real_kernels
+def test_command_n_minus_1_acts_over_t_n_minus_1_to_t_n_only(service):
+    """Step(n) carries command n-1, written before the run to t_n (README §3 Step 5): it shapes the
+    state at t_n, not the one at t_n-1, and the actuator is idle again once a command leaves it out."""
+    _, stub = service
+    request = actuator_request()
+    inertia = inertia_of(request)
+    dt = STEP_NS / 1e9
+    torque = np.array([0.0, 0.0, 1e-3])
+    stub.ConfigureRun(request)
+    omega = [xyz(stub.Step(step_request(0)).spacecraft.omega_bn_body_rad_per_s)]
+    for request_ in (commanded(1), commanded(2, torque=torque), commanded(3)):
+        omega.append(xyz(stub.Step(request_).spacecraft.omega_bn_body_rad_per_s))
+    zero = np.zeros(3)
+    # A step late or early would be off by the torque's 0.045 rad/s.
+    assert np.allclose(omega[1], euler_rate(omega[0], inertia, zero, dt), rtol=0.0, atol=1e-10)
+    assert np.allclose(omega[2], euler_rate(omega[1], inertia, torque, dt), rtol=0.0, atol=1e-10)
+    assert np.allclose(omega[3], euler_rate(omega[2], inertia, zero, dt), rtol=0.0, atol=1e-10)
+
+
+@real_kernels
+def test_magnetic_torquers_push_m_cross_b_against_the_wmm_field(service):
+    """MtbEffector's torque is the sum of m_j a_j x B, with B the MagneticFieldWMM field at t_n-1
+    rotated into body axes, and a torquer left out of the command idle (README §9 "Actuators")."""
+    servicer, stub = service
+    axes = {"mtq.xp": (1.0, 0.0, 0.0), "mtq.xm": (1.0, 0.0, 0.0), "mtq.yp": (0.0, 1.0, 0.0), "mtq.zm": (0.0, 0.0, 1.0)}
+    request = actuator_request(*(magnetic_torquer(device_id, axis) for device_id, axis in axes.items()))
+    stub.ConfigureRun(request)
+    state = stub.Step(step_request(0)).spacecraft
+    field_n = np.array(servicer._run.scenario.readers["magneticFieldWMM.envOutMsgs[0]"]().magField_N)
+    field_b = rbk.MRP2C(np.array(xyz(state.sigma_bn))) @ field_n
+    dipoles = {"mtq.xp": 0.05, "mtq.xm": 0.03, "mtq.zm": -0.0814}
+    torque = sum(dipole * np.cross(axes[device_id], field_b) for device_id, dipole in dipoles.items())
+    after = xyz(stub.Step(commanded(1, dipoles=dipoles)).spacecraft.omega_bn_body_rad_per_s)
+
+    expected = euler_rate(xyz(state.omega_bn_body_rad_per_s), inertia_of(request), torque, STEP_NS / 1e9)
+    without = euler_rate(xyz(state.omega_bn_body_rad_per_s), inertia_of(request), np.zeros(3), STEP_NS / 1e9)
+    # The torquers move the rate by about 5.8e-5 rad/s. The body turns by about 4 mrad in the step,
+    # which turns B in body axes, so the reference, held at t_n-1's attitude, is 0.18 % off; a wrong
+    # sign or axis would be 100 % off.
+    effect = np.linalg.norm(expected - without)
+    assert effect > 5e-5
+    assert np.allclose(after, expected, rtol=0.0, atol=5e-3 * effect)
+
+
+@real_kernels
+def test_commanded_steps_repeat_bit_for_bit_after_reset(service):
+    _, stub = service
+    request = actuator_request(magnetic_torquer("mtq.xp", (1.0, 0.0, 0.0)), magnetic_torquer("mtq.zp", (0.0, 0.0, 1.0)))
+    stub.ConfigureRun(request)
+
+    def run():
+        responses = [stub.Step(step_request(0))]
+        for n in range(1, 100):
+            phase = 2.0 * np.pi * n / 100
+            responses.append(stub.Step(commanded(
+                n, torque=(1e-3 * np.sin(phase), 0.0, -1e-3 * np.cos(phase)),
+                dipoles={"mtq.xp": 0.08 * np.cos(phase), "mtq.zp": -0.04})))
+        return responses
+
+    first = run()
+    stub.Reset(service_pb.ResetRequest(run_id="p0-default"))
+    second = run()
+    assert [r.SerializeToString(deterministic=True) for r in first] == [
+        r.SerializeToString(deterministic=True) for r in second]
+
+
+@real_kernels
+def test_a_command_past_its_devices_limits_is_refused_and_the_run_goes_on(service):
+    servicer, stub = service
+    stub.ConfigureRun(actuator_request(magnetic_torquer()))
+    stub.Step(step_request(0))
+    for request_, key in (
+            (commanded(1, torque=(0.0, 1.1e-3, 0.0)), "torque_body_n_m"),
+            (commanded(1, dipoles={"mtq.xp": -0.09}), "dipole_a_m2")):
+        code, details = status_of(stub.Step, request_)
+        assert code == grpc.StatusCode.INVALID_ARGUMENT
+        assert details.startswith(f'commands.commands[0].values["{key}"]: must be within')
+    # Refused before running, so the run is unchanged and Step(1) still comes next.
+    assert servicer.state == servicer_module.RUNNING
+    assert stub.Step(commanded(1, torque=(0.0, 1e-3, 0.0), dipoles={"mtq.xp": -0.0814})).sequence == 1
+
+
+def test_a_momentum_wheel_is_unimplemented_at_configure_run(service):
+    _, stub = service
+    code, details = status_of(stub.ConfigureRun, actuator_request(momentum_wheel()))
+    assert code == grpc.StatusCode.UNIMPLEMENTED
+    assert details == "configuration.devices[1].kind: is registered but not built by this service, got 'momentum_wheel'"
+
+
+def test_magnetic_torquers_need_the_wmm_file_in_the_kernel_set(service, monkeypatch, tmp_path):
+    _, stub = service
+    window = KernelCoverage(*(datetime(year, 1, 1, tzinfo=timezone.utc) for year in (2000, 2030, 2026)))
+    no_wmm = KernelSet(P0_KERNEL_SET, (tmp_path / "unused.bsp",), window, {})
+    monkeypatch.setattr(servicer_module, "load_kernel_set", lambda kernel_set_id, data_dir=None: no_wmm)
+    code, details = status_of(stub.ConfigureRun, actuator_request(magnetic_torquer()))
+    assert code == grpc.StatusCode.FAILED_PRECONDITION
+    assert "WMM2025.COF" in details and "magnetic torquer" in details

@@ -157,9 +157,10 @@ namespace Argus.Simulation.Tests
             Assert.That(gateway.NextSequence, Is.EqualTo(1));
         }
 
-        // Each command has exactly its kind's keys, and only idle values until an engine applies
-        // commands (BSK-8). The applied command adds every actuator the controller left out, at its
-        // idle values, once each, while the requested command stays as sent (CON-2).
+        // Each command has exactly its kind's keys, and only idle values over an engine that does not
+        // apply commands, such as the analytic fixture (G1). The applied command adds every actuator
+        // the controller left out, at its idle values, once each, while the requested command stays
+        // as sent (CON-2).
         [Test]
         public void ActuatorCommandsAreCheckedByKindAndOmittedActuatorsRunIdle()
         {
@@ -187,7 +188,7 @@ namespace Argus.Simulation.Tests
             Assert.That(log[2].Reason, Is.EqualTo(
                 "Device 'torque.body' command values[\"torque_body_n_m\"]: must be a Vector3, not a Number."));
             Assert.That(log[3].Reason, Is.EqualTo(
-                "Device 'torque.body': applying actuator commands is not built yet (BSK-8, #21)."));
+                "Device 'torque.body': analytic-circular-orbit does not apply actuator commands."));
             for (int index = 0; index < 4; index++)
             {
                 Assert.That((log[index].Outcome, log[index].Applied.HasValue), Is.EqualTo((CommandOutcome.Rejected, false)));
@@ -200,6 +201,25 @@ namespace Argus.Simulation.Tests
             Assert.That(DeviceIds(log[5].Requested), Is.Empty);
             Assert.That(DeviceIds(log[5].Applied.Value), Is.EqualTo(new[] { "torque.body", "mtq.x" }));
             Assert.That(log[5].Applied.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(0.0, 0.0, 0.0)));
+        }
+
+        // Over an engine that applies commands (BasiliskEngine, BSK-8), a non-idle command is applied
+        // as sent, with the actuators it leaves out idle.
+        [Test]
+        public void AnEngineThatAppliesCommandsGetsNonIdleCommands()
+        {
+            ApplyingEngine engine = new ApplyingEngine(Engine());
+            SimulationGateway gateway = new SimulationGateway(engine);
+            List<CommandRecord> log = new List<CommandRecord>();
+            gateway.CommandLogged += log.Add;
+            gateway.Reset(0, Scenario(0.1, IdealBodyTorque("torque.body"), MagneticTorquer("mtq.x")));
+
+            gateway.Step(Torque(0.001));
+
+            Assert.That((log[0].Outcome, log[0].Reason), Is.EqualTo((CommandOutcome.Applied, (string)null)));
+            Assert.That(DeviceIds(log[0].Applied.Value), Is.EqualTo(new[] { "torque.body", "mtq.x" }));
+            Assert.That(engine.LastCommands.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(0.001, 0.0, 0.0)));
+            Assert.That(engine.LastCommands.Value.Commands[1].Values.Number("dipole_a_m2"), Is.EqualTo(0.0));
         }
 
         [Test]
@@ -488,6 +508,27 @@ namespace Argus.Simulation.Tests
         }
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
+
+        // The analytic engine, declaring that it applies commands, and keeping the last it got.
+        private sealed class ApplyingEngine : ISimulationEngine
+        {
+            private readonly ISimulationEngine _inner;
+
+            public ApplyingEngine(ISimulationEngine inner) => _inner = inner;
+
+            public DeviceCommandSet? LastCommands { get; private set; }
+            public string BackendName => _inner.BackendName;
+            public bool IsInitialized => _inner.IsInitialized;
+            public bool AppliesActuatorCommands => true;
+            public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
+            public bool TryReset(out SimulationState state) => _inner.TryReset(out state);
+
+            public bool TryStep(SimulationStepInput input, out SimulationState state)
+            {
+                LastCommands = input.Commands;
+                return _inner.TryStep(input, out state);
+            }
+        }
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
             new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: sensors);

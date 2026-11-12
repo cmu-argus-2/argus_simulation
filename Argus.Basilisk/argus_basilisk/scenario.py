@@ -1,8 +1,8 @@
 """Basilisk simulation build and stepping (README §4 to §8).
 
-Build order steps 1 to 5 (README §12): spacecraft, SPICE, eclipse, the P0 sensors (the IMU, the
-magnetometer with MagneticFieldWMM, and the light sensors with albedo), and ClockSynch pacing
-(§5). Actuators (G1) are rejected by validation before a Scenario is built.
+Build order steps 1 to 6 (README §12): spacecraft, SPICE, eclipse, the P0 sensors (the IMU, the
+magnetometer with MagneticFieldWMM, and the light sensors with albedo), ClockSynch pacing (§5),
+and the actuators that have builders (§9 "Actuators", BSK-8 #21).
 
 The servicer builds a Scenario only after validation (BSK-2) and kernel verification (BSK-1)
 pass. Each Scenario owns a fresh SimBaseClass and fresh modules; Reset builds a new one.
@@ -22,7 +22,7 @@ from Basilisk.utilities import RigidBodyKinematics as rbk
 from Basilisk.utilities import SimulationBaseClass, orbitalMotion
 
 from .contracts import service_pb, types_pb
-from .devices import build_sensors, light_sensor, magnetometer, of_kind
+from .devices import build_actuators, build_sensors, light_sensor, needs_magnetic_field, of_kind
 from .kernels import KernelSet
 
 __all__ = ["BASILISK_VERSION", "KernelLoadError", "Scenario", "StaleMessageError", "format_epoch"]
@@ -50,6 +50,8 @@ DYNAMICS_TASK_PRIORITY = 200
 SENSOR_TASK_PRIORITY = 100
 # §6 tick order within the task: higher priority runs first.
 SPICE_PRIORITY = 300
+# Actuators read command n-1 before the spacecraft integrates [t_n-1, t_n) (§6, §3 Step 5).
+ACTUATOR_PRIORITY = 250
 SPACECRAFT_PRIORITY = 200
 ECLIPSE_PRIORITY = 100
 MAGNETIC_FIELD_PRIORITY = 90
@@ -145,15 +147,17 @@ class Scenario:
         self.eclipse.addSpacecraftToModel(self.spacecraft.scStateOutMsg)
         self.sim.AddModelToTask(TASK_NAME, self.eclipse, ECLIPSE_PRIORITY)
 
-        # Magnetic field (§9), built only for a magnetometer: WMM2025 from the kernel set's
-        # verified support file, with the run epoch and the SPICE Earth. Nothing is downloaded.
+        # Magnetic field (§9), built only for a magnetometer or a magnetic torquer: WMM2025 from the
+        # kernel set's verified support file, with the run epoch and the SPICE Earth. Nothing is
+        # downloaded.
         self.magnetic_field = None
         magnetic_field_msg = None
-        if of_kind(configuration.devices, magnetometer.KIND):
+        if needs_magnetic_field(configuration):
             wmm_path = kernel_set.support_files.get(WMM_FILE)
             if wmm_path is None:
                 raise KernelLoadError(
-                    f"kernel set {kernel_set.kernel_set_id!r} has no {WMM_FILE}, which a magnetometer needs")
+                    f"kernel set {kernel_set.kernel_set_id!r} has no {WMM_FILE}, "
+                    "which a magnetometer or a magnetic torquer needs")
             self.magnetic_field = magneticFieldWMM.MagneticFieldWMM()
             self.magnetic_field.ModelTag = "magneticFieldWMM"
             self.magnetic_field.configureWMMFile(str(wmm_path))
@@ -186,6 +190,15 @@ class Scenario:
             self.sim.AddModelToTask(TASK_NAME, self.albedo, ALBEDO_PRIORITY)
             albedo_msgs = {
                 device.device_id: self.albedo.albOutMsgs[index] for index, device in enumerate(light_sensors)}
+
+        # Actuator devices (§9 "Actuators"), one group per kind, on the dynamics task before the
+        # spacecraft and attached to its hub. Each starts idle.
+        self.actuators = build_actuators(configuration, self.spacecraft.scStateOutMsg, magnetic_field_msg)
+        for group in self.actuators:
+            for module in group.modules:
+                self.sim.AddModelToTask(TASK_NAME, module, ACTUATOR_PRIORITY)
+            for effector in group.effectors:
+                self.spacecraft.addDynamicEffector(effector)
 
         # Sensor devices (§9), built by their kinds, each on the task for its sample period, after
         # dynamics.
@@ -226,18 +239,24 @@ class Scenario:
         """The Earth frame read back from spiceInterface.planetFrames."""
         return self.spice.planetFrames[EARTH_INDEX]
 
-    def step(self, sequence: int) -> service_pb.StepResponse:
+    def step(self, sequence: int, commands) -> service_pb.StepResponse:
         """Run to t_n = sequence x fixed_step_ns and return the state there (§3 Step 5 to 7).
 
-        The caller has checked sequence, time, command and coverage, and fills the echoes.
+        commands is command n-1: the decoded values of every actuator, by device ID
+        (validation.command_values); {} when the run has none. The caller has checked sequence, time, command and coverage,
+        and fills the echoes.
 
         Raises:
             StaleMessageError: a returned message was stale or non-finite.
         """
         t_n = sequence * self.fixed_step_ns
         # Step 5: for n > 0, write the request's commands (command n-1) into the actuator inputs
-        # before running, so they act over [t_n-1, t_n). It starts with the actuator effectors
-        # (G1, BSK-8); until then no actuator is built and validation admits only idle commands.
+        # before running, so they act over [t_n-1, t_n). Written after running, they would act a
+        # step late. Step(0) follows no command, and every actuator starts idle.
+        if sequence > 0:
+            command_time_ns = t_n - self.fixed_step_ns
+            for group in self.actuators:
+                group.write(commands, command_time_ns)
         # A sensor that has not run before t_n runs without data at t_n (imuSensor's first firing).
         was_ready = [sensor.ready for sensor in self.sensors]
         self.sim.ConfigureStopTime(t_n)
