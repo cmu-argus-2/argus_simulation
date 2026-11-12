@@ -56,6 +56,15 @@ namespace Argus.Simulation.Core
             _isReset = true;
         }
 
+        // Ends every sensor's run (ISensor.End), so nothing stays in flight once the run is over.
+        public void End()
+        {
+            for (int index = 0; index < _sensors.Count; index++)
+            {
+                _sensors[index].End();
+            }
+        }
+
         public SensorOutputSet Sample(SensorSampleContext context)
         {
             if (!_isReset)

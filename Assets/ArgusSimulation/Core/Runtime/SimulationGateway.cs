@@ -83,6 +83,10 @@ namespace Argus.Simulation.Core
             _isRunning = false;
             _hasStartedRun = false;
             Failure = null;
+            // The run in progress, if any, ends here: its sensors are replaced without being sampled
+            // again, so they release their renders first (CORE-21). End is idempotent, so sensors a
+            // stop or failure already ended are unaffected.
+            _sensors?.End();
             _engine.Initialize(run);
             _scenario = run;
             _sensors = sensors;
@@ -214,7 +218,17 @@ namespace Argus.Simulation.Core
                 Array.Empty<ISensorFrame>(),
                 status,
                 reason);
-            RunTerminated?.Invoke(observation);
+            // No sensor is sampled again for this run, so each releases what it holds, such as a
+            // camera's renders (CORE-21); subscribers still learn why the run ended if one throws.
+            try
+            {
+                _sensors?.End();
+            }
+            finally
+            {
+                RunTerminated?.Invoke(observation);
+            }
+
             return observation;
         }
 

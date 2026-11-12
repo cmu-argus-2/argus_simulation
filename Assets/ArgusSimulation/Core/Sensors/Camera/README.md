@@ -102,8 +102,12 @@ A camera never publishes a black or approximated image. With no renderer every e
 scene its own way.
 
 An exposure still pending when the run ends or the camera resets is abandoned, not published.
-`TrySample` is a frame's only way out, and neither case samples that run again; `Reset` also
-cancels the render. Frames are published in sequence order, so abandoned exposures are always
+`TrySample` is a frame's only way out, and neither case samples that run again. Abandoning also
+cancels the render and observes its exception if it later faults, so no render for a finished run
+keeps going unnoticed (CORE-21, #119). The gateway reaches every path: `SimulationGateway.Stop`,
+a backend failure and a cancelled step call `ISensor.End` through `SensorManager.End`, and a
+second `Reset` ends the old sensors before it replaces them. `End` is idempotent, and sensors
+with nothing pending ignore it. Frames are published in sequence order, so abandoned exposures are always
 the last ones: a camera's frames in a run directory can stop short of its last slot, but their
 `sequence` has no gaps. The manifest does not count them.
 
