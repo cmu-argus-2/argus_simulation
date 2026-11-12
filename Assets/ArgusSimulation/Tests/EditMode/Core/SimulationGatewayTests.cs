@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -200,6 +203,132 @@ namespace Argus.Simulation.Tests
             Assert.That(DeviceIds(log[5].Requested), Is.Empty);
             Assert.That(DeviceIds(log[5].Applied.Value), Is.EqualTo(new[] { "torque.body", "mtq.x" }));
             Assert.That(log[5].Applied.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(0.0, 0.0, 0.0)));
+        }
+
+        // CORE-21: a stop, a backend failure and a second Reset each end the run, so the old camera
+        // cancels the render it still has in flight, and that exposure is never published.
+        [TestCase("stop")]
+        [TestCase("backend failure")]
+        [TestCase("second reset")]
+        public void EndingARunCancelsTheOldCamerasPendingRenders(string end)
+        {
+            HeldRenderer renderer = new HeldRenderer();
+            ISimulationEngine engine = end == "backend failure"
+                ? new FailingEngine(Engine(), failAtStep: 1, new InvalidOperationException("Basilisk Step failed: Unavailable"))
+                : (ISimulationEngine)Engine();
+            SimulationGateway gateway = new SimulationGateway(engine, device => SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            SimulationConfiguration scenario = Scenario(0.1, Camera("cam.test", isControllerVisible: false));
+
+            gateway.Reset(0, scenario);
+            Assert.That(renderer.Tokens.Count, Is.EqualTo(1));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.False);
+
+            switch (end)
+            {
+                case "stop":
+                    Assert.That(gateway.Stop("test").Status, Is.EqualTo(ObservationStatus.Stopped));
+                    break;
+                case "backend failure":
+                    Assert.That(gateway.Step().Status, Is.EqualTo(ObservationStatus.BackendFailed));
+                    break;
+                default:
+                    gateway.Reset(0, scenario);
+                    gateway.Step();
+                    Assert.That(renderer.Tokens.Count, Is.EqualTo(3));
+                    Assert.That(renderer.Tokens[1].IsCancellationRequested, Is.False, "the new run's render");
+                    break;
+            }
+
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
+            Assert.That(outputs, Has.All.Matches<SensorOutputSet>(output => output.Frames.Count == 0));
+        }
+
+        // CORE-21: a render that faults after its run ended has its exception observed, so it never
+        // reaches TaskScheduler.UnobservedTaskException. A faulted task nobody observes is the control:
+        // if this runtime does not finalize it here, the check cannot run.
+        [Test]
+        public void ARenderThatFaultsAfterItsRunEndedIsObserved()
+        {
+            List<string> unobserved = new List<string>();
+            EventHandler<UnobservedTaskExceptionEventArgs> record = (sender, args) =>
+            {
+                foreach (Exception exception in args.Exception.InnerExceptions)
+                {
+                    unobserved.Add(exception.Message);
+                }
+
+                args.SetObserved();
+            };
+            TaskScheduler.UnobservedTaskException += record;
+            try
+            {
+                FaultAfterTheRunEnds("render lost after stop");
+                FaultUnobserved("control");
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                }
+            }
+            finally
+            {
+                TaskScheduler.UnobservedTaskException -= record;
+            }
+
+            if (!unobserved.Contains("control"))
+            {
+                Assert.Inconclusive("This runtime did not finalize the unobserved control task.");
+            }
+
+            Assert.That(unobserved, Does.Not.Contain("render lost after stop"));
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void FaultAfterTheRunEnds(string message)
+        {
+            HeldRenderer renderer = new HeldRenderer();
+            SimulationGateway gateway = new SimulationGateway(Engine(), device => SensorFactory.Create(device, renderer));
+            gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
+            gateway.Stop("test");
+            renderer.Fail(0, message);
+            renderer.Forget();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void FaultUnobserved(string message)
+        {
+            TaskCompletionSource<ImageFrame> render = new TaskCompletionSource<ImageFrame>();
+            render.SetException(new InvalidOperationException(message));
+        }
+
+        // CORE-21: a sensor with nothing pending is unaffected by its run ending, and ending it twice
+        // (a stop, then the Reset that replaces it) is harmless.
+        [Test]
+        public void SensorsWithNothingPendingCarryOnAfterTheRunEnds()
+        {
+            HeldRenderer renderer = new HeldRenderer();
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => device.KindDefinition is CameraKind ? SensorFactory.Create(device, renderer) : SameDefinitionStandIn(device));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            SimulationConfiguration scenario = Scenario(0.1, Rate("rate.body", isControllerVisible: true), Camera("cam.test", isControllerVisible: false));
+
+            gateway.Reset(0, scenario);
+            gateway.Step();
+            gateway.Stop("test");
+            gateway.Reset(0, scenario);
+            Observation observation = gateway.Step();
+
+            Assert.That(observation.Status, Is.EqualTo(ObservationStatus.Ok));
+            Assert.That(observation.Frames.Count, Is.EqualTo(1));
+            Assert.That(observation.Frames[0].SensorId, Is.EqualTo("rate.body"));
+            Assert.That(observation.Frames[0].Sequence, Is.EqualTo(1));
+            Assert.That(renderer.Tokens.Count, Is.EqualTo(4));
+            Assert.That(new[] { 0, 1 }, Has.All.Matches<int>(index => renderer.Tokens[index].IsCancellationRequested));
+            Assert.That(new[] { 2, 3 }, Has.All.Matches<int>(index => !renderer.Tokens[index].IsCancellationRequested));
         }
 
         [Test]
@@ -485,9 +614,35 @@ namespace Argus.Simulation.Tests
                 frame = null;
                 return false;
             }
+
+            public void End()
+            {
+            }
         }
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
+
+        // Each render stays in flight until the test faults it; it records the token it was given.
+        private sealed class HeldRenderer : IImageRenderer
+        {
+            private readonly List<TaskCompletionSource<ImageFrame>> _renders = new List<TaskCompletionSource<ImageFrame>>();
+
+            public string RendererName => "held-renderer";
+            public List<CancellationToken> Tokens { get; } = new List<CancellationToken>();
+
+            public Task<ImageFrame> RenderAsync(RenderRequest request, CancellationToken cancellationToken)
+            {
+                Tokens.Add(cancellationToken);
+                TaskCompletionSource<ImageFrame> render = new TaskCompletionSource<ImageFrame>();
+                _renders.Add(render);
+                return render.Task;
+            }
+
+            public void Fail(int index, string message) => _renders[index].SetException(new InvalidOperationException(message));
+
+            // Drops every render, so only the camera could still be observing one.
+            public void Forget() => _renders.Clear();
+        }
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
             new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: sensors);

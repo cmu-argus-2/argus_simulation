@@ -14,7 +14,8 @@ namespace Argus.Simulation.Core
     // Frames are published in sequence order. An exposure that is not rendered within
     // MaximumLatencySeconds of simulation time, or whose render fails, is published as Unavailable;
     // a camera never publishes a black or approximated image. TrySample never waits for a render.
-    // An exposure still pending when the run ends or the camera resets is never published.
+    // An exposure still pending when the run ends (End) or the camera resets is never published, and
+    // its render is cancelled (CORE-21).
     public abstract class CameraModel : SensorModel<ImageFrame>
     {
         private const double TimeToleranceSeconds = 1e-9;
@@ -88,7 +89,13 @@ namespace Argus.Simulation.Core
 
         // Cancels pending exposures without publishing them. A reset has no output path, and the
         // frames belong to the run directory the reset just ended (G3).
-        protected override void OnReset(SensorResetContext context)
+        protected override void OnReset(SensorResetContext context) => AbandonPending();
+
+        // The run ended (a stop, a backend failure, or a Reset that replaces this camera): the same,
+        // so no render for a finished run keeps going (CORE-21).
+        protected override void OnEnd() => AbandonPending();
+
+        private void AbandonPending()
         {
             while (_pending.Count > 0)
             {
