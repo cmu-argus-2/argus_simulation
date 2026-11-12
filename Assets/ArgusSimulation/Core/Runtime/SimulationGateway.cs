@@ -10,8 +10,9 @@ namespace Argus.Simulation.Core
     // [t_k, t_k+1) and returns observation k+1. Truth and every sensor frame, including ground
     // truth, reach the recorder and Unity through StateProduced and SensorOutputProduced, and every
     // command Step receives reaches it through CommandLogged.
-    // TODO(D7, G1): actuator-limit validation (CORE-10) and authority and heartbeat (CORE-9), which
-    // log their decisions through CommandLogged. Serving it to HIL and external controllers is
+    // Each actuator command is held to its device's limits by its kind, then clamped or rejected per
+    // the device's limit_policy (CORE-10). TODO(D7, G1): authority and heartbeat (CORE-9), which log
+    // their decisions through CommandLogged. Serving it to HIL and external controllers is
     // headless/Host GatewayServer.
     public sealed class SimulationGateway
     {
@@ -128,16 +129,24 @@ namespace Argus.Simulation.Core
                 throw new InvalidOperationException(notRunning);
             }
 
-            string rejection = Rejection(command);
+            string rejection = Rejection(command, out DeviceCommandSet limited, out string clamped);
             if (rejection != null)
             {
                 Log(Rejected(command, rejection));
                 throw new ArgumentException(rejection, nameof(command));
             }
 
-            DeviceCommandSet applied = WithIdleActuators(command);
+            // The record keeps the command as sent and what the engine runs: within the limits, or
+            // clamped to them with the reason (CORE-10).
+            DeviceCommandSet applied = WithIdleActuators(limited);
             Log(new CommandRecord(
-                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Applied, command, applied));
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                clamped == null ? CommandOutcome.Applied : CommandOutcome.Clamped,
+                command,
+                applied,
+                clamped));
 
             long sequence = _nextSequence + 1;
             double simulationTimeSeconds = sequence * _scenario.FixedStepSeconds;
@@ -238,8 +247,12 @@ namespace Argus.Simulation.Core
         }
 
         // Why Step refuses a command for step k, or null when it is valid and for k at t_k.
-        private string Rejection(DeviceCommandSet command)
+        // limited is the command held to its devices' limits, and clamped says which values a clamp
+        // policy changed (null when none did).
+        private string Rejection(DeviceCommandSet command, out DeviceCommandSet limited, out string clamped)
         {
+            limited = command;
+            clamped = null;
             if (!command.IsValid)
             {
                 string problem = command.FindProblem();
@@ -267,41 +280,66 @@ namespace Argus.Simulation.Core
                     _nextSimulationTimeSeconds);
             }
 
-            // Only the run's actuators take commands, each with exactly its kind's command values.
-            // TODO(G1): check each command's values against its device's limits (CORE-10, #46).
+            // Only the run's actuators take commands, each with exactly its kind's command values,
+            // then held to the device's limits by its kind (CORE-10): a reject policy refuses the whole
+            // command, and a clamp policy passes each value at its nearest limit.
+            List<DeviceCommand> devices = new List<DeviceCommand>(command.Commands.Count);
+            List<string> clamps = new List<string>();
             foreach (DeviceCommand device in command.Commands)
             {
-                IActuatorKind actuator = ConfiguredActuatorKind(device.DeviceId);
-                if (actuator == null)
+                DeviceConfiguration? configured = ConfiguredActuator(device.DeviceId);
+                if (!configured.HasValue)
                 {
                     return $"Device '{device.DeviceId}' is not an actuator this run configures.";
                 }
 
+                IActuatorKind actuator = (IActuatorKind)configured.Value.KindDefinition;
                 string problem = actuator.FindCommandProblem(device.Values);
                 if (problem != null)
                 {
                     return $"Device '{device.DeviceId}' command {problem}.";
                 }
 
+                DeviceValues parameters = configured.Value.Parameters;
+                DeviceValues values = actuator.Limit(parameters, device.Values, out string excess);
+                if (excess != null)
+                {
+                    if (actuator.LimitPolicyOf(parameters) != ActuatorLimitPolicy.Clamp)
+                    {
+                        return $"Device '{device.DeviceId}' command {excess}, and its limit_policy is reject.";
+                    }
+
+                    clamps.Add($"Device '{device.DeviceId}' command {excess}; clamped.");
+                }
+
                 // An engine that only records commands (the analytic fixture) would log a command as
                 // Applied that never acted, so refuse it and the run continues. BasiliskEngine applies
                 // every actuator its service accepted at ConfigureRun (BSK-8, #21).
-                if (!_engine.AppliesActuatorCommands && !actuator.IsIdle(device.Values))
+                if (!_engine.AppliesActuatorCommands && !actuator.IsIdle(values))
                 {
                     return $"Device '{device.DeviceId}': {_engine.BackendName} does not apply actuator commands.";
                 }
+
+                devices.Add(excess == null ? device : new DeviceCommand(device.DeviceId, values));
+            }
+
+            if (clamps.Count > 0)
+            {
+                limited = new DeviceCommandSet(command.Sequence, command.ApplyAtSimulationTimeSeconds, devices);
+                clamped = string.Join(" ", clamps);
             }
 
             return null;
         }
 
-        private IActuatorKind ConfiguredActuatorKind(string deviceId)
+        // The run's actuator with this device ID, or null.
+        private DeviceConfiguration? ConfiguredActuator(string deviceId)
         {
             foreach (DeviceConfiguration device in _scenario.Devices)
             {
                 if (device.Definition.SensorId == deviceId)
                 {
-                    return device.KindDefinition as IActuatorKind;
+                    return device.KindDefinition is IActuatorKind ? device : (DeviceConfiguration?)null;
                 }
             }
 

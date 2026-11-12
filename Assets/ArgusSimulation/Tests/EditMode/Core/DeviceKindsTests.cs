@@ -11,6 +11,74 @@ namespace Argus.Simulation.Tests
         // whose frames carry truth may not (D7), and whether it is a camera (ICameraKind: the
         // recorder's cameras[] and the shared profile-ID rule, CORE-6). A new kind fails here until it
         // has a row.
+        // CORE-10: each actuator kind holds a command to its device's limits. Within them, the values
+        // come back as given and excess is null; past them, each value is at its nearest limit, with its
+        // sign, and excess names it. At the limit is within.
+        [TestCase("ideal_body_torque", 1e-3, 1e-3, null)]
+        [TestCase("ideal_body_torque", 2e-3, 1e-3, "values[\"torque_body_n_m\"] (0, 0.002, -0.0005) is past max_torque_body_n_m (0.001, 0.001, 0.001)")]
+        [TestCase("ideal_body_torque", -2e-3, -1e-3, "values[\"torque_body_n_m\"] (0, -0.002, -0.0005) is past max_torque_body_n_m (0.001, 0.001, 0.001)")]
+        [TestCase("magnetic_torquer", -0.0814, -0.0814, null)]
+        [TestCase("magnetic_torquer", -0.1, -0.0814, "values[\"dipole_a_m2\"] -0.1 is past max_dipole_a_m2 0.0814")]
+        [TestCase("momentum_wheel", 2e-3, 1e-3, "values[\"motor_torque_n_m\"] 0.002 is past max_torque_n_m 0.001")]
+        [TestCase("momentum_wheel", -5e-4, -5e-4, null)]
+        [TestCase("thruster", 0.02, 0.01, "values[\"thrust_n\"] 0.02 is past max_thrust_n 0.01")]
+        [TestCase("thruster", 0.0, 0.0, null)]
+        public void EachActuatorKindHoldsACommandToItsDevicesLimits(string kindName, double command, double expected, string expectedExcess)
+        {
+            (IActuatorKind kind, DeviceValues parameters, string key) = kindName switch
+            {
+                "ideal_body_torque" => ((IActuatorKind)IdealBodyTorqueKind.Instance,
+                    Parameters(IdealBodyTorqueKind.Instance.Configure(Actuator(), new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))),
+                    IdealBodyTorqueKind.TorqueKey),
+                "magnetic_torquer" => (MagneticTorquerKind.Instance,
+                    Parameters(MagneticTorquerKind.Instance.Configure(Actuator(), new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.0814, ActuatorLimitPolicy.Clamp))),
+                    MagneticTorquerKind.DipoleKey),
+                "momentum_wheel" => (MomentumWheelKind.Instance,
+                    Parameters(MomentumWheelKind.Instance.Configure(Actuator(), new MomentumWheelProfile(new Vector3d(0.0, 0.0, 1.0), 3.39e-6, 1e-3, 600.0, ActuatorLimitPolicy.Reject), 0.0)),
+                    MomentumWheelKind.MotorTorqueKey),
+                _ => (ThrusterKind.Instance,
+                    Parameters(ThrusterKind.Instance.Configure(Actuator(), new ThrusterProfile(new Vector3d(1.0, 0.0, 0.0), 0.01, ActuatorLimitPolicy.Reject))),
+                    ThrusterKind.ThrustKey)
+            };
+            // The torque's other axes are within, so only the y component changes.
+            bool isVector = kindName == "ideal_body_torque";
+            DeviceValues values = isVector
+                ? new DeviceValues.Builder().Add(key, new Vector3d(0.0, command, -5e-4)).Build()
+                : new DeviceValues.Builder().Add(key, command).Build();
+            Assert.That(kind.FindCommandProblem(values), Is.Null);
+
+            DeviceValues limited = kind.Limit(parameters, values, out string excess);
+
+            Assert.That(excess, Is.EqualTo(expectedExcess));
+            if (isVector)
+            {
+                Assert.That(limited.Vector3(key), Is.EqualTo(new Vector3d(0.0, expected, -5e-4)));
+            }
+            else
+            {
+                Assert.That(limited.Number(key), Is.EqualTo(expected));
+            }
+
+            Assert.That(ReferenceEquals(limited, values), Is.EqualTo(expectedExcess == null), "unchanged values come back as given");
+        }
+
+        [Test]
+        public void AnActuatorsLimitPolicyIsItsParameter()
+        {
+            DeviceConfiguration clamp = MagneticTorquerKind.Instance.Configure(
+                Actuator(), new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.0814, ActuatorLimitPolicy.Clamp));
+            DeviceConfiguration reject = MagneticTorquerKind.Instance.Configure(
+                Actuator(), new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.0814, ActuatorLimitPolicy.Reject));
+
+            Assert.That(MagneticTorquerKind.Instance.LimitPolicyOf(clamp.Parameters), Is.EqualTo(ActuatorLimitPolicy.Clamp));
+            Assert.That(MagneticTorquerKind.Instance.LimitPolicyOf(reject.Parameters), Is.EqualTo(ActuatorLimitPolicy.Reject));
+        }
+
+        private static SensorDefinition Actuator() =>
+            new SensorDefinition("act.test", "test-actuator", "act_test", 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false);
+
+        private static DeviceValues Parameters(DeviceConfiguration configuration) => configuration.Parameters;
+
         [Test]
         public void EveryKindDeclaresWhoModelsItWhetherAControllerMaySeeItAndWhetherItIsACamera()
         {

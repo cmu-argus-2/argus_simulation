@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Argus.Simulation.Core
 {
@@ -51,12 +52,44 @@ namespace Argus.Simulation.Core
             return true;
         }
 
+        public ActuatorLimitPolicy LimitPolicyOf(DeviceValues parameters) => LimitPolicy(parameters);
+
+        public DeviceValues Limit(DeviceValues parameters, DeviceValues values, out string excess) =>
+            LimitToProfile(Parse(parameters), values, out excess);
+
         public override ISensor CreateSensor(DeviceConfiguration configuration, IImageRenderer imageRenderer) =>
             throw new InvalidOperationException($"Device kind {Name} is an actuator, not a sensor.");
 
         // A command value the kind can never take whatever its limits, checked after the keys;
-        // null when there is none. Limits are CORE-10's.
+        // null when there is none. Limits are LimitToProfile's.
         protected virtual string FindCommandValueProblem(DeviceValues values) => null;
+
+        // Limit for one kind: valid command values held to the profile's limits (see Limit).
+        protected abstract DeviceValues LimitToProfile(TProfile profile, DeviceValues values, out string excess);
+
+        // |value| <= max: the value, or max with the value's sign.
+        protected static double ClampMagnitude(double value, double max) =>
+            value > max ? max : value < -max ? -max : value;
+
+        // A number command held to +-max (or [0, max] for one that is never negative).
+        protected static DeviceValues LimitMagnitude(
+            DeviceValues values, string key, double max, string maxKey, out string excess)
+        {
+            double value = values.Number(key);
+            double limited = ClampMagnitude(value, max);
+            if (limited == value)
+            {
+                excess = null;
+                return values;
+            }
+
+            excess = $"values[\"{key}\"] {Format(value)} is past {maxKey} {Format(max)}";
+            return new DeviceValues.Builder().Add(key, limited).Build();
+        }
+
+        protected static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+
+        protected static string Format(Vector3d value) => $"({Format(value.X)}, {Format(value.Y)}, {Format(value.Z)})";
 
         protected override string FindValueProblem(DeviceValues parameters) =>
             ParseLimitPolicy(parameters[LimitPolicyKey].Text) == ActuatorLimitPolicy.Unknown
