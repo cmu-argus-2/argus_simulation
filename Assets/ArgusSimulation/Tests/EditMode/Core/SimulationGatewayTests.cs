@@ -222,6 +222,77 @@ namespace Argus.Simulation.Tests
             Assert.That(engine.LastCommands.Value.Commands[1].Values.Number("dipole_a_m2"), Is.EqualTo(0.0));
         }
 
+        // CORE-10, clamp policy: a command past its device's limits runs at them. The record keeps the
+        // command as sent, what the engine ran, and why; a command at the limits is applied as sent.
+        [Test]
+        public void AClampPolicyRunsACommandPastItsLimitsAtThem()
+        {
+            ApplyingEngine engine = new ApplyingEngine(Engine());
+            SimulationGateway gateway = new SimulationGateway(engine);
+            List<CommandRecord> log = new List<CommandRecord>();
+            gateway.CommandLogged += log.Add;
+            gateway.Reset(0, Scenario(0.1, IdealBodyTorque("torque.body")));
+
+            gateway.Step(Command(0, "torque.body", TorqueValues(new Vector3d(2e-3, -5e-4, -3e-3))));
+            gateway.Step(Command(1, "torque.body", TorqueValues(new Vector3d(1e-3, -1e-3, 0.0))));
+
+            Assert.That((log[0].Outcome, log[0].Reason), Is.EqualTo((CommandOutcome.Clamped,
+                "Device 'torque.body' command values[\"torque_body_n_m\"] (0.002, -0.0005, -0.003) is past " +
+                "max_torque_body_n_m (0.001, 0.001, 0.001); clamped.")));
+            Assert.That(log[0].Requested.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(2e-3, -5e-4, -3e-3)));
+            Assert.That(log[0].Applied.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(1e-3, -5e-4, -1e-3)));
+            Assert.That((log[1].Outcome, log[1].Reason), Is.EqualTo((CommandOutcome.Applied, (string)null)));
+            Assert.That(engine.LastCommands.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(1e-3, -1e-3, 0.0)));
+            Assert.That(gateway.NextSequence, Is.EqualTo(2));
+        }
+
+        // CORE-10, reject policy: a command past its device's limits is refused whole, the engine runs
+        // nothing, and the run goes on at the same step.
+        [Test]
+        public void ARejectPolicyRefusesACommandPastItsLimits()
+        {
+            ApplyingEngine engine = new ApplyingEngine(Engine());
+            SimulationGateway gateway = new SimulationGateway(engine);
+            List<CommandRecord> log = new List<CommandRecord>();
+            gateway.CommandLogged += log.Add;
+            gateway.Reset(0, Scenario(0.1, IdealBodyTorque("torque.body", ActuatorLimitPolicy.Reject)));
+
+            ArgumentException refused = Assert.Throws<ArgumentException>(() =>
+                gateway.Step(Command(0, "torque.body", TorqueValues(new Vector3d(0.0, 1.5e-3, 0.0)))));
+
+            const string reason = "Device 'torque.body' command values[\"torque_body_n_m\"] (0, 0.0015, 0) is past " +
+                "max_torque_body_n_m (0.001, 0.001, 0.001), and its limit_policy is reject.";
+            Assert.That(refused.Message, Does.StartWith(reason));
+            Assert.That((log[0].Outcome, log[0].Reason, log[0].Applied.HasValue), Is.EqualTo((CommandOutcome.Rejected, reason, false)));
+            Assert.That(engine.LastCommands.HasValue, Is.False);
+            Assert.That(gateway.NextSequence, Is.EqualTo(0));
+            gateway.Step(Command(0, "torque.body", TorqueValues(new Vector3d(0.0, 1e-3, 0.0))));
+            Assert.That((log[1].Outcome, gateway.NextSequence), Is.EqualTo((CommandOutcome.Applied, 1L)));
+        }
+
+        // Each device follows its own policy: a clamp changes only its device, and one device's reject
+        // refuses the whole command, a clamp beside it included.
+        [Test]
+        public void EachDeviceFollowsItsOwnLimitPolicy()
+        {
+            ApplyingEngine engine = new ApplyingEngine(Engine());
+            SimulationGateway gateway = new SimulationGateway(engine);
+            List<CommandRecord> log = new List<CommandRecord>();
+            gateway.CommandLogged += log.Add;
+            gateway.Reset(0, Scenario(0.1, IdealBodyTorque("torque.body"), MagneticTorquer("mtq.x")));
+            DeviceCommand torque = new DeviceCommand("torque.body", TorqueValues(new Vector3d(0.0, 0.0, -4e-3)));
+
+            gateway.Step(new DeviceCommandSet(0, 0.0, new[] { torque, new DeviceCommand("mtq.x", Dipole(-0.2)) }));
+            Assert.Throws<ArgumentException>(() =>
+                gateway.Step(new DeviceCommandSet(1, 0.1, new[] { torque, new DeviceCommand("mtq.x", Dipole(0.25)) })));
+
+            Assert.That(log[0].Outcome, Is.EqualTo(CommandOutcome.Clamped));
+            Assert.That(log[0].Applied.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(0.0, 0.0, -1e-3)));
+            Assert.That(log[0].Applied.Value.Commands[1].Values.Number("dipole_a_m2"), Is.EqualTo(-0.2));
+            Assert.That((log[1].Outcome, log[1].Reason), Is.EqualTo((CommandOutcome.Rejected,
+                "Device 'mtq.x' command values[\"dipole_a_m2\"] 0.25 is past max_dipole_a_m2 0.2, and its limit_policy is reject.")));
+        }
+
         [Test]
         public void BackendFailureEndsTheRunAndKeepsTheCause()
         {
@@ -343,9 +414,15 @@ namespace Argus.Simulation.Tests
         private static SensorDefinition Actuator(string deviceId) =>
             new SensorDefinition(deviceId, "test-actuator", deviceId, 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false);
 
-        private static DeviceConfiguration IdealBodyTorque(string deviceId) => IdealBodyTorqueKind.Instance.Configure(
-            Actuator(deviceId),
-            new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp));
+        private static DeviceConfiguration IdealBodyTorque(string deviceId, ActuatorLimitPolicy policy = ActuatorLimitPolicy.Clamp) =>
+            IdealBodyTorqueKind.Instance.Configure(
+                Actuator(deviceId),
+                new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), policy));
+
+        private static DeviceValues TorqueValues(Vector3d torque) =>
+            new DeviceValues.Builder().Add("torque_body_n_m", torque).Build();
+
+        private static DeviceValues Dipole(double dipole) => new DeviceValues.Builder().Add("dipole_a_m2", dipole).Build();
 
         private static DeviceConfiguration MagneticTorquer(string deviceId) => MagneticTorquerKind.Instance.Configure(
             Actuator(deviceId),
@@ -509,26 +586,6 @@ namespace Argus.Simulation.Tests
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
-        // The analytic engine, declaring that it applies commands, and keeping the last it got.
-        private sealed class ApplyingEngine : ISimulationEngine
-        {
-            private readonly ISimulationEngine _inner;
-
-            public ApplyingEngine(ISimulationEngine inner) => _inner = inner;
-
-            public DeviceCommandSet? LastCommands { get; private set; }
-            public string BackendName => _inner.BackendName;
-            public bool IsInitialized => _inner.IsInitialized;
-            public bool AppliesActuatorCommands => true;
-            public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
-            public bool TryReset(out SimulationState state) => _inner.TryReset(out state);
-
-            public bool TryStep(SimulationStepInput input, out SimulationState state)
-            {
-                LastCommands = input.Commands;
-                return _inner.TryStep(input, out state);
-            }
-        }
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
             new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: sensors);

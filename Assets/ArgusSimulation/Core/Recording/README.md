@@ -157,7 +157,7 @@ every command `Step` receives once a run has started, before the engine runs it 
 an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
 reason. `Applied` means the gateway accepted the command for the engine. If the run ended at that
 step (the manifest's `termination` has that `last_sequence`), the engine may not have run it; state
-k+1's `producing_command` is the confirmation that it did. `Clamped` arrives with actuator limits (CORE-10, #46). The file
+k+1's `producing_command` is the confirmation that it did. `Clamped` means the gateway held a value past its device's limits at that limit, per the device's `limit_policy` (CORE-10, #46): `requested` is the command as sent, `applied` what the engine ran, and `reason` names each clamped value; a `reject` policy logs `Rejected` instead. The file
 is created in every run directory, so it is empty when no command was received, as in
 Unity-driven runs, which bypass the gateway (G1).
 

@@ -33,6 +33,25 @@ namespace Argus.Simulation.Core
 
         protected override bool IsValid(IdealBodyTorqueProfile profile) => profile.IsValid;
 
+        // Each body axis on its own: |torque| <= max_torque_body_n_m on that axis.
+        protected override DeviceValues LimitToProfile(IdealBodyTorqueProfile profile, DeviceValues values, out string excess)
+        {
+            Vector3d torque = values.Vector3(TorqueKey);
+            Vector3d max = profile.MaxTorqueBodyNewtonMeters;
+            Vector3d limited = new Vector3d(
+                ClampMagnitude(torque.X, max.X),
+                ClampMagnitude(torque.Y, max.Y),
+                ClampMagnitude(torque.Z, max.Z));
+            if (limited.Equals(torque))
+            {
+                excess = null;
+                return values;
+            }
+
+            excess = $"values[\"{TorqueKey}\"] {Format(torque)} is past {MaxTorque} {Format(max)}";
+            return new DeviceValues.Builder().Add(TorqueKey, limited).Build();
+        }
+
         protected override string FindProfileProblem(IdealBodyTorqueProfile profile)
         {
             Vector3d max = profile.MaxTorqueBodyNewtonMeters;
