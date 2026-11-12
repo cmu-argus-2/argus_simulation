@@ -1,9 +1,10 @@
 """The thruster kind: a force along a body-fixed direction, at the device's mount position
 (D11, CON-2 #34).
 
-BSK-8 (#21) builds it as Basilisk's thrusterDynamicEffector (thrLoc_B is mount.position_body_m),
-converting thrust_n to an on-time of thrust_n / max_thrust_n of the step; until then the service
-builds nothing, so only idle commands are accepted.
+Basilisk would model it as thrusterDynamicEffector (thrLoc_B is mount.position_body_m), converting
+thrust_n to an on-time of thrust_n / max_thrust_n of the step. P0 carries no thruster (DATA-2,
+#68), so the kind has no builder and ConfigureRun returns UNIMPLEMENTED for it (README §9
+"Actuators").
 """
 
 from ._common import ACTUATOR, NUMBER, TEXT, VECTOR3, Invalid, limit_policy, non_negative, positive, unit_axis

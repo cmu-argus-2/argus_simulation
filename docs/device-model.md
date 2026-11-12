@@ -3,10 +3,11 @@
 **Status:** design (CON-5, #110). The sensors are built (CORE-19, #111): §1 to §5 and §7 are
 in `Core/Contracts`, the kinds in `Core/Sensors`, `argus.sim.v1/devices.proto` and
 `argus_basilisk/devices/`. So are the per-device commands of §6 (CORE-20, #112), except the
-per-step device state, which comes with the first actuator. The actuator kinds of §2 are
-registered on both sides (CON-2, #34); BSK-8 (#21) builds their Basilisk effectors and per-step
-state. Still to build: the profile files (HOST-9, #113; until then the devices live in the run
-file's `devices`).
+per-step device state, which comes with the first stateful actuator, the momentum wheel. The
+actuator kinds of §2 are registered on both sides (CON-2, #34), and the service builds the
+`ideal_body_torque` and `magnetic_torquer` effectors (BSK-8, #21). Still to build: the
+`momentum_wheel` and `thruster` effectors, which P0 doesn't carry (DATA-2, #68), and the profile
+files (HOST-9, #113; until then the devices live in the run file's `devices`).
 
 A spacecraft is a body plus a list of configured devices ([target-architecture.md](target-architecture.md)
 D11). Every sensor and actuator is a device: an instance of a generic kind, registered by name. A
@@ -60,17 +61,20 @@ unit vector in body axes (within 1e-6), each limit is finite and > 0, and every 
 `limit_policy`: `clamp` or `reject`, which the gateway applies past the limits (CORE-10, #46). A
 command carries exactly the kind's command keys, and its idle values are zero:
 
-| Kind | Parameters | Initial state | Command | Basilisk (BSK-8) |
+| Kind | Parameters | Initial state | Command | Basilisk |
 |---|---|---|---|---|
 | `ideal_body_torque` | `max_torque_body_n_m` (vector3, a bound on each body axis) | none | `torque_body_n_m` (vector3) | `extForceTorque` |
-| `momentum_wheel` | `spin_axis_body`, `spin_inertia_kg_m2`, `max_torque_n_m`, `max_speed_rad_per_s` | `speed_rad_per_s` | `motor_torque_n_m` | `reactionWheelStateEffector` |
+| `momentum_wheel` | `spin_axis_body`, `spin_inertia_kg_m2`, `max_torque_n_m`, `max_speed_rad_per_s` | `speed_rad_per_s` | `motor_torque_n_m` | `reactionWheelStateEffector` (not built) |
 | `magnetic_torquer` | `dipole_axis_body`, `max_dipole_a_m2` | none | `dipole_a_m2` (signed) | `MtbEffector` |
-| `thruster` | `thrust_direction_body`, `max_thrust_n` | none | `thrust_n` (>= 0), held over the step | `thrusterDynamicEffector`, on-time `thrust_n / max_thrust_n` of the step |
+| `thruster` | `thrust_direction_body`, `max_thrust_n` | none | `thrust_n` (>= 0), held over the step | `thrusterDynamicEffector`, on-time `thrust_n / max_thrust_n` of the step (not built) |
 
-Until BSK-8 (#21) applies commands, the gateway refuses (logs `Rejected`) any command that is not
-the kind's idle values, as the service would, so the run continues and the log tells the truth.
-A spacecraft whose actuators aren't known yet uses one `ideal_body_torque` device; the P0 run
-file lists `torque.body` with placeholder limits until DATA-2 (#68) confirms the actuators.
+The service builds the `ideal_body_torque` and `magnetic_torquer` effectors and refuses a run
+that configures a `momentum_wheel` or `thruster` (UNIMPLEMENTED), so every command it receives
+acts (`Argus.Basilisk/README.md` §9 "Actuators"). Over an engine that only records commands (the
+analytic fixture), the gateway refuses (logs `Rejected`) any command that is not the kind's idle
+values, so the run continues and the log tells the truth. A spacecraft whose actuators aren't
+known yet uses one `ideal_body_torque` device; the P0 run file lists `torque.body` with
+placeholder limits until DATA-2 (#68)'s six coils land in it.
 
 **The IMU is one kind,** `imu`, with `gyroscope.*` and `accelerometer.*` parameters and one frame
 that carries both channels. This matches Basilisk's `imuSensor` and today's `ImuMeasurement`, so
@@ -228,7 +232,7 @@ message RunConfiguration {
   are reserved.
 - Per-step actuator state arrives as `repeated BasiliskDeviceState device_states` on
   `StepResponse` (`device_id`, `map<string, DeviceValue> state`). It is added with the first
-  actuator (BSK-8).
+  stateful actuator, the momentum wheel; neither kind BSK-8 (#21) built has state.
 
 ## 6. Commands and device state
 
@@ -285,7 +289,9 @@ message DeviceCommandSet {
 - **Service:** each Basilisk-modelled kind is one module, `argus_basilisk/devices/<kind>.py`, with
   `KIND`, `PARAMETERS` and `OUTPUTS` (key to type), an optional `STATE` (none by default),
   `check` (its range rules) and `build` (its Basilisk modules and `output()`). An actuator kind
-  has `ROLE = ACTUATOR`, `COMMANDS` and `IDLE` in place of `OUTPUTS`, and no `build` until BSK-8. `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
+  has `ROLE = ACTUATOR`, `COMMANDS` and `IDLE` in place of `OUTPUTS`, and, once built,
+  `build(devices, inputs)`, its Basilisk effectors for all of the run's devices of the kind
+  (BSK-8, #21). `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
   `validation.py` and the scenario walk `KINDS` instead of switching on kinds. Kind modules import
   numpy and Basilisk only inside `build`, so validation runs without Basilisk.
 - **Adding a kind** means writing its Core class, its service module if Basilisk models it, one
@@ -305,5 +311,5 @@ v1 is now additive only, and the rest are additions.
 | `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), merged before HOST-5 |
 | `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), merged before HOST-5 |
 | Profile and run file split | no (a host format) | HOST-9 (#113), any time |
-| Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | BSK-8 (#21), with the first actuator |
+| Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | with the first stateful actuator, the momentum wheel |
 | New kinds | no (registry only) | the actuator kinds in CON-2 (#34); later kinds any time |

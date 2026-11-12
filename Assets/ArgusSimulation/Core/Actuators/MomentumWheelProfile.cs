@@ -1,7 +1,8 @@
 namespace Argus.Simulation.Core
 {
     // A wheel spun by its motor about a body-fixed axis (D11). Comments name the Basilisk
-    // reactionWheelStateEffector field each sets (BSK-8, #21).
+    // reactionWheelStateEffector field each would set; the service doesn't build wheels yet and
+    // refuses a run that configures one (UNIMPLEMENTED; Argus.Basilisk/README.md §9 "Actuators").
     public readonly struct MomentumWheelProfile
     {
         public MomentumWheelProfile(

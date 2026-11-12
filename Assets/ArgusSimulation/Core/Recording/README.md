@@ -147,9 +147,9 @@ Commands are per device (D11, [device-model.md](../../../../docs/device-model.md
 device ID to its values. The set is complete, so an actuator it leaves out is idle and `{}`
 means no output. `applied` lists every configured actuator, idle ones included (CON-2, #34),
 and a command naming a device that is not a configured actuator, with other keys than its
-kind's, or, until BSK-8 (#21) applies commands, with other values than the kind's idle ones, is
-`Rejected`. `states.jsonl` gains each device's per-step state as `devices` with the
-first effectors (BSK-8, #21). These fields replaced the three body-frame vectors before HOST-5
+kind's, or, over an engine that does not apply commands (the analytic fixture), with other
+values than the kind's idle ones, is `Rejected`. `states.jsonl` gains each device's per-step
+state as `devices` with the first stateful actuator, the momentum wheel. These fields replaced the three body-frame vectors before HOST-5
 (#29) froze v1, so the schema stays at version 1.
 
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for

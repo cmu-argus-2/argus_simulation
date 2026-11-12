@@ -115,7 +115,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    - `noise_std_w_per_m2 ≥ 0`; noise > 0 is white noise added by the service from the `css`
      seed stream (§9, §10, BSK-13 #116);
    - `epoch_utc` is inside the kernel set's `coverage_utc`, and inside WMM2025 validity
-     (2025.0 to 2030.0) when a magnetometer is configured; otherwise OUT_OF_RANGE. This
+     (2025.0 to 2030.0) when a magnetometer or a magnetic torquer is configured; otherwise
+     OUT_OF_RANGE. This
      check must precede the build: `SpiceInterface::Reset` evaluates SPICE during
      `InitializeSimulation`, and CSPICE aborts the whole process outside coverage.
 
@@ -130,8 +131,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    `configuration.devices[0].parameters["gyroscope.range_rad_per_s"]: required field is not
    set`, or `configuration.devices[1].kind`, `.mount.device_to_body` and `.sample_period_ns`.
    `real_time_factor > 0` is accepted and paced (§5, BSK-7 #20), as long as one paced step
-   lasts at most 3600 s of wall time. The actuator kinds are registered (CON-2,
-   #34) but build nothing, so only idle commands run until BSK-8 (#21) applies the rest. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
+   lasts at most 3600 s of wall time. A registered actuator kind the service doesn't build
+   (`momentum_wheel`, `thruster`; §9 "Actuators") is UNIMPLEMENTED, and so is a 37th
+   `magnetic_torquer`. Step reuses `validate_step_command` (Step 3) and `check_utc_in_range`
    (Step 4). Run the tests from `Argus.Basilisk/` with `python -m pytest tests -q`; they
    generate `generated/` if it is missing.
 3. Verify the kernels (§8), build the simulation (§4 to §9) and call
@@ -161,11 +163,11 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    an actuator it leaves out is idle, so the empty set is no output. Each command names a
    configured actuator once, with set, finite values; otherwise INVALID_ARGUMENT
    (`commands.commands[0].device_id: is not an actuator this run configures`), and exactly its
-   kind's `COMMANDS` keys, or INVALID_ARGUMENT naming the key. Step(0) follows no command: both
-   fields are unset and the set is empty, or INVALID_ARGUMENT (no interval ends at t = 0). No
-   actuator builds an effector until BSK-8 (#21) (G1), so a command at its kind's `IDLE` values
-   runs, since it applies nothing, and any other is UNIMPLEMENTED. The gateway sends every
-   configured actuator, idle ones included, so a P0 run with `torque.body` steps cleanly.
+   kind's `COMMANDS` keys, or INVALID_ARGUMENT naming the key. Each value must be within the
+   device's limits, or INVALID_ARGUMENT: the gateway applies the device's `limit_policy` first,
+   so the service never clamps (§9 "Actuators"). Step(0) follows no command: both
+   fields are unset and the set is empty, or INVALID_ARGUMENT (no interval ends at t = 0). The
+   gateway sends every configured actuator, idle ones included.
 4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
    otherwise OUT_OF_RANGE, checked before executing.
 5. For n > 0, write the request's command (command n-1) into the actuator input messages
@@ -227,9 +229,9 @@ At every t_n, modules run in this order, set by task creation order and prioriti
 
 1. ClockSynch (when pacing);
 2. `spiceInterface`;
-3. actuators (G1, BSK-8 #21), which read command n-1 from their input messages before the
-   dynamics integrate [t_n-1, t_n). After the dynamics, the command would act a step late
-   (§3 Step 5);
+3. actuators (§9 "Actuators", BSK-8 #21), which read command n-1 from their input messages
+   before the dynamics integrate [t_n-1, t_n). After the dynamics, the command would act a step
+   late (§3 Step 5);
 4. spacecraft dynamics;
 5. eclipse, `MagneticFieldWMM` and albedo;
 6. sensor tasks, one task `sensors_<ns>` per distinct sample period.
@@ -412,7 +414,7 @@ named by `kernelSetId` in `headless/Host/runs/p0-default.json`.
 - `file` is a plain filename, unique across both lists; all files share `kernels/`. `urls`
   is a non-empty list tried in order. `sha256` is 64 hex characters.
 
-## 9. P0 sensors
+## 9. P0 devices
 
 Every sensor is a device (D11, [device-model.md](../docs/device-model.md)): a
 `DeviceConfiguration` whose `kind` names a registered kind. Each kind is one module,
@@ -424,8 +426,9 @@ its Argus sensor, whose `output()` returns the output map. `devices.build_sensor
 parameter key is required, and no sensor kind has a default or an initial state.
 
 The actuator kinds (`ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`;
-CON-2, #34) are registered the same way, with `ROLE = ACTUATOR`, `COMMANDS` and `IDLE` in place
-of `OUTPUTS`, and no `build` until BSK-8 (#21) builds their effectors. Their keys are in
+CON-2, #34) are registered the same way, with `ROLE = ACTUATOR` and `COMMANDS` and `IDLE` in
+place of `OUTPUTS`. A built actuator kind's `build(devices, inputs)` takes all of the run's
+devices of that kind ("Actuators" below). Their keys are in
 [device-model.md](../docs/device-model.md) §2; `momentum_wheel` has an initial state,
 `speed_rad_per_s`. An actuator has `sample_period_ns` 0, no `controller_visible` and an
 identity `mount.device_to_body`, or ConfigureRun returns INVALID_ARGUMENT.
@@ -578,6 +581,41 @@ other per channel.
   noise-free, unclipped irradiance: its reader is for freshness checks only, and the sensor's
   output is `output()`.
 
+### Actuators (BSK-8, #21)
+
+DATA-2 (#68) set the fidelity: P0 carries six magnetorquer coils, and the ideal body torque is
+the fallback for a spacecraft whose actuators aren't known. Each built kind builds one
+`ActuatorGroup` for all of its devices: modules on the dynamics task at priority 250, between
+SPICE and the spacecraft (§6), and effectors attached with `spacecraft.addDynamicEffector`.
+Every actuator starts idle, and Step(n) writes command n-1 into the group's standalone input
+messages before running to t_n (§3 Step 5), each actuator the set leaves out at its kind's
+`IDLE` values.
+
+| Kind | Basilisk | Configured from | Command |
+|---|---|---|---|
+| `ideal_body_torque` | one `extForceTorque` per device, `cmdTorqueInMsg` | nothing: `max_torque_body_n_m` only bounds the command | `torqueRequestBody = torque_body_n_m` |
+| `magnetic_torquer` | one `MtbEffector` for all of them, `magInMsg` = the `MagneticFieldWMM` output | `numMTB`; column j of `GtMatrix_B` (3 × numMTB, row-major) is device j's `dipole_axis_body`, in configuration order; `maxMtbDipoles[j] = max_dipole_a_m2` | `mtbDipoleCmds[j] = dipole_a_m2` |
+| `momentum_wheel`, `thruster` | not built: P0 carries neither, so ConfigureRun returns UNIMPLEMENTED (§3) | | |
+
+- **When each reads its command.** `extForceTorque` reads `cmdTorqueInMsg` in `UpdateState`,
+  so it must run before the spacecraft at t_n; after it, the command would act a step late.
+  `MtbEffector` reads its command, `magInMsg` and `mtbParamsInMsg` in `computeForceTorque`, at
+  each integration substep, so its task position doesn't matter.
+- **The torquers' field** is the one `MagneticFieldWMM` wrote at t_n-1 (§6 runs it after the
+  dynamics), held over [t_n-1, t_n), and rotated into body axes at each substep with the hub's
+  attitude. Torque is `m × B` with the true field, an ideal dipole and no coil dynamics, as
+  DATA-2 recorded. A magnetic torquer builds `MagneticFieldWMM` even with no magnetometer, so
+  it needs `WMM2025.COF` (FAILED_PRECONDITION without it) and WMM validity bounds the run.
+- **Limits.** The gateway applies each device's `limit_policy` before the service sees a
+  command (CORE-10, #46), so the service never clamps: a command past `max_torque_body_n_m` on
+  any axis, or past ±`max_dipole_a_m2`, is INVALID_ARGUMENT, checked before running (the run
+  goes on). `MtbEffector` would clamp to `maxMtbDipoles` silently.
+- **Counts.** One run builds at most 36 magnetic torquers (bsk `MAX_EFF_CNT`, the size of the
+  MTB payload arrays); the 37th is UNIMPLEMENTED.
+- **No per-step device state yet.** Neither built kind has state, so `StepResponse` carries
+  none. `device_states` (device-model.md §5) comes with the first stateful kind, the momentum
+  wheel.
+
 ## 10. Seeds
 
 Every noisy module gets
@@ -605,11 +643,11 @@ lag-1 autocorrelation are the same on both versions.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, or in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, past the device's limits, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
-| FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer with no `WMM2025.COF` in the kernel set; run FAILED |
+| FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer or magnetic torquer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |
-| UNIMPLEMENTED | A command for a configured actuator after Step(0) (none can be configured yet) |
+| UNIMPLEMENTED | An actuator kind the service registers but doesn't build (`momentum_wheel`, `thruster`); a 37th magnetic torquer |
 | RESOURCE_EXHAUSTED | A concurrent call |
 | INTERNAL | A Basilisk failure, a non-finite output or a stale message |
 
@@ -628,7 +666,11 @@ Details name the field path and the bad value.
 
 - The quaternion checks in §4.
 - Every Step n returns `sim_time_ns == n × fixed_step_ns`.
-- 100 steps, Reset, 100 steps: bit-identical.
+- 100 steps, Reset, 100 steps: bit-identical, with and without commands.
+- A constant ideal body torque changes the body rate over its step as Euler's equation does
+  (to 1e-10 rad/s), command n-1 acts over [t_n-1, t_n) only, and magnetic torquers push `m × B`
+  against the WMM field. A gateway over `BasiliskEngine` applies a torque over its step
+  (`AGatewayOverTheServiceAppliesATorqueOverItsStep` in `headless/Host.Tests`).
 - For 2025-01-15T00:00Z with `argus-2026-09-25`, Step(0) Earth `J20002Pfix` and
   `J20002Pfix_dot` equal the t = 0 `rotation` and `rotation_rate` of
   `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json` at `f2e9fc8`
@@ -639,4 +681,5 @@ Details name the field path and the bad value.
   service.
 
 CI runs these on every pull request and push to `main` (BSK-11, #24): `tests/` with the P0
-kernel set, then a 60 s P0 host run against the service, which fails on any non-zero exit.
+kernel set, then a 60 s P0 host run against the service, which fails on any non-zero exit, and
+the gateway torque check.

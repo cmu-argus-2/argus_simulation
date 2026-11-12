@@ -1,8 +1,8 @@
 namespace Argus.Simulation.Core
 {
     // A force along a body-fixed direction, at the device's mount position (D11). Comments name the
-    // Basilisk thrusterDynamicEffector field each sets (BSK-8, #21); thrLoc_B is the mount's
-    // PositionBodyMeters.
+    // Basilisk thrusterDynamicEffector field each would set; thrLoc_B is the mount's
+    // PositionBodyMeters. The service doesn't build thrusters yet (Argus.Basilisk/README.md §9).
     public readonly struct ThrusterProfile
     {
         public ThrusterProfile(Vector3d thrustDirectionBody, double maxThrustNewtons, ActuatorLimitPolicy limitPolicy)

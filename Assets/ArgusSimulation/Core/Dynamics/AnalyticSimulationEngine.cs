@@ -38,6 +38,9 @@ namespace Argus.Simulation.Core
         public AnalyticOrbit Orbit => new AnalyticOrbit(_altitudeMeters, _inclinationDegrees, _raanDegrees, _phaseDegrees);
         public bool IsInitialized => _orbit != null;
 
+        // Commands are recorded, never applied: the orbit and attitude are analytic.
+        public bool AppliesActuatorCommands => false;
+
         public void Initialize(SimulationConfiguration configuration)
         {
             if (!configuration.IsValid)
