@@ -5,7 +5,8 @@
     "Argus.Simulation.Core",
     "CesiumForUnity",
     "Unity.Mathematics",
-    "Unity.InputSystem"
+    "Unity.InputSystem",
+    "Cysharp.Net.Http.YetAnotherHttpHandler"
   ],
   "autoReferenced": true
 }
