@@ -180,6 +180,30 @@ namespace Argus.Simulation.Core
                 $"A {Name} output is a {typeof(TMeasurement).Name}, not a {measurement?.GetType().Name ?? "null"}.",
                 nameof(measurement));
 
+        public ISensorFrame CreateFrame(
+            string runId,
+            string sensorId,
+            string frameId,
+            long sequence,
+            long stateSequence,
+            double simulationTimeSeconds,
+            DateTimeOffset timestampUtc,
+            SensorFrameStatus status,
+            string source,
+            DeviceValues output)
+        {
+            output = output ?? DeviceValues.Empty;
+            bool hasPayload = status == SensorFrameStatus.Valid || status == SensorFrameStatus.Stale;
+            if (!hasPayload && output.Count != 0)
+            {
+                throw new ArgumentException($"A {status} {Name} frame carries no payload.", nameof(output));
+            }
+
+            TMeasurement payload = hasPayload ? (TMeasurement)ReadOutput(output) : default;
+            return new SensorFrame<TMeasurement>(
+                runId, sensorId, frameId, sequence, stateSequence, simulationTimeSeconds, timestampUtc, status, source, payload);
+        }
+
         protected abstract TMeasurement Read(DeviceValues output);
 
         protected abstract DeviceValues Write(TMeasurement measurement);

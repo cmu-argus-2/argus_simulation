@@ -4,46 +4,42 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // Publishes whole SimulationStates from its state source to Unity consumers. For a step-driven
-    // source (the analytic fixture in development runs) it also owns the clock: fixed steps from
-    // Unity frame time x time scale, which pause, StepOnce and TimeScale control.
-    // TODO(G2): for Basilisk runs it follows StateStreamClient, whose states arrive on Basilisk's
-    // clock (D2), so pause, StepOnce and TimeScale do not apply there.
+    // Publishes the headless host's SimulationStates to Unity consumers (G2). The host owns the run:
+    // its run configuration is the only one, and in Basilisk runs Basilisk owns simulation time
+    // (D2). States arrive through the scene's ISimulationStateSource (StateStreamClient) and are
+    // published as delivered, never stepped, re-timed or paused; Unity has no simulation of its own.
+    // Presentation (CesiumSpacecraftPoseDriver) interpolates between them without changing them.
     public sealed class SimulationRunner : MonoBehaviour
     {
         [SerializeField] private MonoBehaviour stateSourceComponent;
-        [SerializeField, Min(0.001f)] private double fixedStepSeconds = 0.1;
-        [SerializeField, Min(0.0f)] private double timeScale = 1.0;
-        [SerializeField] private bool runOnStart = true;
-        [SerializeField, Min(1)] private int maximumStepsPerFrame = 100;
 
+        // SimulationRate averages over this many arrivals, since one is stamped at frame time.
+        private const int RateWindow = 5;
+
+        private readonly double[] _arrivalSeconds = new double[RateWindow];
+        private readonly double[] _arrivalSimulationSeconds = new double[RateWindow];
         private ISimulationStateSource _stateSource;
-        private IStepDrivenStateSource _stepDrivenSource;
         private bool _isSubscribed;
-        private bool _stateAccepted;
-        private double _accumulatorSeconds;
-        private double _simulationTimeSeconds;
-        private long _sequence;
+        private int _arrivals;
 
         public event Action<SimulationState> StateProduced;
-        public event Action SimulationReset;
 
-        public bool IsRunning { get; set; }
-        public double SimulationTimeSeconds => _simulationTimeSeconds;
-        public double FixedStepSeconds => fixedStepSeconds;
+        // Raised before the first state of a new run or subscription: clear interpolation and history.
+        public event Action HistoryReset;
+
         public bool HasState { get; private set; }
         public SimulationState LastState { get; private set; }
+        public double SimulationTimeSeconds => HasState ? LastState.Spacecraft.SimulationTimeSeconds : 0.0;
+
+        // Simulated seconds per wall-clock second over the last few states, or 0 before two: how fast
+        // the host's run advances (1 when Basilisk paces it in real time).
+        public double SimulationRate { get; private set; }
+
         public ISimulationStateSource StateSource => _stateSource;
-        public double TimeScale
-        {
-            get => timeScale;
-            set => timeScale = Math.Max(0.0, value);
-        }
 
         private void Awake()
         {
             ResolveStateSource();
-            IsRunning = runOnStart;
         }
 
         private void OnEnable()
@@ -56,63 +52,10 @@ namespace Argus.Simulation.Unity
             Unsubscribe();
         }
 
-        private void Update()
-        {
-            if (!IsRunning || _stepDrivenSource == null)
-            {
-                return;
-            }
-
-            _accumulatorSeconds += Time.unscaledDeltaTime * timeScale;
-            int steps = 0;
-            while (_accumulatorSeconds >= fixedStepSeconds && steps < maximumStepsPerFrame)
-            {
-                StepOnce();
-                _accumulatorSeconds -= fixedStepSeconds;
-                steps++;
-            }
-        }
-
-        public void Configure(MonoBehaviour source, double stepSeconds = 0.1)
+        public void Configure(MonoBehaviour source)
         {
             stateSourceComponent = source;
-            fixedStepSeconds = Math.Max(0.001, stepSeconds);
             ResolveStateSource();
-        }
-
-        // Advances a step-driven source by one fixed step; false for a follower source.
-        public bool StepOnce()
-        {
-            if (_stateSource == null)
-            {
-                ResolveStateSource();
-            }
-
-            if (_stepDrivenSource == null)
-            {
-                return false;
-            }
-
-            _stateAccepted = false;
-            if (!_stepDrivenSource.TryStep(_sequence, _simulationTimeSeconds) || !_stateAccepted)
-            {
-                return false;
-            }
-
-            _sequence++;
-            _simulationTimeSeconds = _sequence * fixedStepSeconds;
-            return true;
-        }
-
-        public void ResetSimulation()
-        {
-            _stepDrivenSource?.ResetRun();
-            _accumulatorSeconds = 0.0;
-            _simulationTimeSeconds = 0.0;
-            _sequence = 0;
-            HasState = false;
-            LastState = default;
-            SimulationReset?.Invoke();
         }
 
         private void HandleState(SimulationState state)
@@ -123,17 +66,38 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
+            int slot = _arrivals % RateWindow;
+            _arrivalSeconds[slot] = Time.realtimeSinceStartupAsDouble;
+            _arrivalSimulationSeconds[slot] = state.Spacecraft.SimulationTimeSeconds;
+            _arrivals++;
+            if (_arrivals > 1)
+            {
+                int oldest = _arrivals > RateWindow ? _arrivals % RateWindow : 0;
+                double wall = _arrivalSeconds[slot] - _arrivalSeconds[oldest];
+                if (wall > 0.0)
+                {
+                    SimulationRate = (_arrivalSimulationSeconds[slot] - _arrivalSimulationSeconds[oldest]) / wall;
+                }
+            }
+
             LastState = state;
             HasState = true;
-            _stateAccepted = true;
             StateProduced?.Invoke(state);
+        }
+
+        private void HandleHistoryReset()
+        {
+            HasState = false;
+            LastState = default;
+            SimulationRate = 0.0;
+            _arrivals = 0;
+            HistoryReset?.Invoke();
         }
 
         private void ResolveStateSource()
         {
             Unsubscribe();
             _stateSource = stateSourceComponent as ISimulationStateSource;
-            _stepDrivenSource = _stateSource as IStepDrivenStateSource;
             if (stateSourceComponent != null && _stateSource == null)
             {
                 Debug.LogError(
@@ -155,6 +119,7 @@ namespace Argus.Simulation.Unity
             }
 
             _stateSource.StateProduced += HandleState;
+            _stateSource.HistoryReset += HandleHistoryReset;
             _isSubscribed = true;
         }
 
@@ -166,6 +131,7 @@ namespace Argus.Simulation.Unity
             }
 
             _stateSource.StateProduced -= HandleState;
+            _stateSource.HistoryReset -= HandleHistoryReset;
             _isSubscribed = false;
         }
     }

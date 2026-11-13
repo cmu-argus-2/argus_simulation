@@ -127,7 +127,7 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            if (!runner.HasState && !runner.StepOnce())
+            if (!runner.HasState)
             {
                 SetCaptureStatus("NO STATE");
                 return false;
@@ -144,15 +144,18 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState.Spacecraft));
+            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
             return true;
         }
 
-        private IEnumerator CaptureWhenCesiumIsReady(SpacecraftState state)
+        // The host keeps running, so the CubeSat is held at the captured state while its tiles load:
+        // the images then match the exported state.
+        private IEnumerator CaptureWhenCesiumIsReady(SimulationState captured)
         {
             IsCaptureInProgress = true;
-            bool resumeSimulation = runner.IsRunning;
-            runner.IsRunning = false;
+            SpacecraftState state = captured.Spacecraft;
+            CesiumSpacecraftPoseDriver pose = cameraRig.GetComponent<CesiumSpacecraftPoseDriver>();
+            pose?.Hold(captured);
 
             Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
                 FindObjectsInactive.Exclude);
@@ -180,7 +183,7 @@ namespace Argus.Simulation.Unity
                         $"Image capture cancelled because Cesium did not reach " +
                         $"{minimumLoadProgress:0}% load progress within {timeout:0} seconds.",
                         this);
-                    CompleteCapture(resumeSimulation, "LOAD TIMEOUT");
+                    CompleteCapture(pose, "LOAD TIMEOUT");
                     yield break;
                 }
 
@@ -213,7 +216,7 @@ namespace Argus.Simulation.Unity
                 Debug.LogException(exception, this);
             }
 
-            CompleteCapture(resumeSimulation, finalStatus);
+            CompleteCapture(pose, finalStatus);
         }
 
         internal static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
@@ -235,12 +238,9 @@ namespace Argus.Simulation.Unity
             return foundEnabledTileset ? progress : 100f;
         }
 
-        private void CompleteCapture(bool resumeSimulation, string status)
+        private void CompleteCapture(CesiumSpacecraftPoseDriver pose, string status)
         {
-            if (runner != null)
-            {
-                runner.IsRunning = resumeSimulation;
-            }
+            pose?.Release();
 
             IsCaptureInProgress = false;
             SetCaptureStatus(status);

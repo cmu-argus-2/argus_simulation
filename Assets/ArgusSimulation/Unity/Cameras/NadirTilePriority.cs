@@ -13,9 +13,10 @@ namespace Argus.Simulation.Unity
     // Cesium weighs every registered view equally, so priority is expressed by choosing which
     // views it loads for:
     // - A hidden look-ahead camera streams tiles where the nadir camera will be a few wall-clock
-    //   seconds from now, scaled by the simulation time scale.
-    // - After a jump (scene start, reset, orbit nudge) the simulation is held while only the
-    //   nadir and look-ahead views are registered, then every other view is restored.
+    //   seconds from now, at the rate the host's run advances (SimulationRunner.SimulationRate).
+    // - After a jump (the first state of a run or subscription) only the nadir and look-ahead views
+    //   are registered until they have loaded, then every other view is restored. The host owns the
+    //   run, so this never holds it: the nadir view only loads first.
     [DisallowMultipleComponent]
     [RequireComponent(typeof(CubeSatCameraRig))]
     public sealed class NadirTilePriority : MonoBehaviour
@@ -24,10 +25,12 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(0f)] private float lookaheadWallSeconds = 4f;
         [SerializeField, Min(0f)] private float maximumLookaheadSimulationSeconds = 600f;
 
+        // The nadir view keeps moving with the host's run, so the warm-up ends at the first frame its
+        // tiles reach this much, not after a run of stable frames.
         [Header("Warm-up")]
         [SerializeField] private bool warmUpOnStart = true;
-        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 100f;
-        [SerializeField, Min(1)] private int stableFramesRequired = 10;
+        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 95f;
+        [SerializeField, Min(1)] private int stableFramesRequired = 1;
         [SerializeField, Min(1f)] private float warmUpTimeoutSeconds = 30f;
 
         private readonly List<Camera> _deferredCameras = new List<Camera>(4);
@@ -37,8 +40,9 @@ namespace Argus.Simulation.Unity
         private CesiumCameraManager _cameraManager;
         private Camera _lookaheadCamera;
         private CesiumGlobeAnchor _lookaheadAnchor;
+        private CesiumSpacecraftPoseDriver _pose;
         private Coroutine _warmUp;
-        private bool _resumeAfterWarmUp;
+        private bool _viewsDeferred;
         private bool _restoreMainCamera;
         private bool _restoreSceneViewCamera;
 
@@ -48,16 +52,31 @@ namespace Argus.Simulation.Unity
 
         public void Configure(SimulationRunner runner)
         {
+            if (_runner != null)
+            {
+                _runner.HistoryReset -= RequestWarmUp;
+            }
+
             _runner = runner;
+            if (_runner != null && isActiveAndEnabled)
+            {
+                _runner.HistoryReset += RequestWarmUp;
+            }
         }
 
         private void Start()
         {
             if (_runner == null)
             {
-                _runner = FindAnyObjectByType<SimulationRunner>();
+                Configure(FindAnyObjectByType<SimulationRunner>());
+            }
+            else
+            {
+                _runner.HistoryReset -= RequestWarmUp;
+                _runner.HistoryReset += RequestWarmUp;
             }
 
+            _pose = GetComponent<CesiumSpacecraftPoseDriver>();
             _cameraRig = GetComponent<CubeSatCameraRig>();
             _cameraRig.BuildIfNeeded();
             _cameraManager = CesiumCameraManager.GetOrCreate(gameObject);
@@ -69,7 +88,8 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        // Holds the simulation until the nadir view has loaded. Call after any jump in position.
+        // Loads the nadir view before every other view, from the next state on. Called on start and
+        // on every jump in position (a new run or subscription).
         public void RequestWarmUp()
         {
             if (!isActiveAndEnabled || _runner == null || _cameraManager == null ||
@@ -81,41 +101,31 @@ namespace Argus.Simulation.Unity
             if (_warmUp != null)
             {
                 StopCoroutine(_warmUp);
-                _resumeAfterWarmUp |= _runner.IsRunning;
-            }
-            else
-            {
-                _resumeAfterWarmUp = _runner.IsRunning;
-                DeferNonNadirViews();
             }
 
-            _runner.IsRunning = false;
             _warmUp = StartCoroutine(WarmUp());
         }
 
         private IEnumerator WarmUp()
         {
-            if (!_runner.HasState)
+            // The nadir camera needs a pose to load for, and the host may not be streaming yet:
+            // every view keeps loading until a state arrives, so the globe is never left blank.
+            while (!_runner.HasState)
             {
-                _runner.StepOnce();
+                WarmUpProgress = 0f;
+                yield return null;
             }
+
+            DeferNonNadirViews();
 
             Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
                 FindObjectsInactive.Exclude);
             int requiredStableFrames = Math.Max(1, stableFramesRequired);
             float startedAt = Time.realtimeSinceStartup;
             int stableFrames = 0;
-            bool resume = _resumeAfterWarmUp;
 
             while (stableFrames < requiredStableFrames)
             {
-                // Resuming by hand skips the rest of the wait.
-                if (_runner.IsRunning)
-                {
-                    resume = false;
-                    break;
-                }
-
                 // Guard against NaN while a tileset has not counted any tiles yet.
                 float progress = NavigationEpisodeExporter.MinimumEnabledTilesetProgress(tilesets);
                 WarmUpProgress = float.IsNaN(progress) ? 0f : progress;
@@ -137,21 +147,18 @@ namespace Argus.Simulation.Unity
 
             _warmUp = null;
             RestoreDeferredViews();
-            if (resume)
-            {
-                _runner.IsRunning = true;
-            }
         }
 
         private void LateUpdate()
         {
-            if (_lookaheadAnchor == null || _runner == null || !_runner.HasState)
+            // While a capture holds the pose, the look-ahead holds too, so the capture's tiles can settle.
+            if (_lookaheadAnchor == null || _runner == null || !_runner.HasState || (_pose != null && _pose.IsHeld))
             {
                 return;
             }
 
             double leadSeconds = Math.Min(
-                lookaheadWallSeconds * _runner.TimeScale,
+                lookaheadWallSeconds * Math.Max(0.0, _runner.SimulationRate),
                 maximumLookaheadSimulationSeconds);
             Vector3d position = OrbitLookahead.PredictPositionEcef(_runner.LastState.Spacecraft, leadSeconds);
             _lookaheadAnchor.positionGlobeFixed = new double3(position.X, position.Y, position.Z);
@@ -186,6 +193,12 @@ namespace Argus.Simulation.Unity
 
         private void DeferNonNadirViews()
         {
+            if (_viewsDeferred)
+            {
+                return;
+            }
+
+            _viewsDeferred = true;
             _deferredCameras.Clear();
             Camera groundTruth = _cameraRig.GroundTruthCamera;
             foreach (Camera camera in _cameraRig.Cameras)
@@ -204,10 +217,12 @@ namespace Argus.Simulation.Unity
 
         private void RestoreDeferredViews()
         {
-            if (_cameraManager == null)
+            if (_cameraManager == null || !_viewsDeferred)
             {
                 return;
             }
+
+            _viewsDeferred = false;
 
             foreach (Camera camera in _deferredCameras)
             {
@@ -232,14 +247,15 @@ namespace Argus.Simulation.Unity
             // Unity has already stopped the coroutine.
             _warmUp = null;
             RestoreDeferredViews();
-            if (_resumeAfterWarmUp && _runner != null)
-            {
-                _runner.IsRunning = true;
-            }
         }
 
         private void OnDestroy()
         {
+            if (_runner != null)
+            {
+                _runner.HistoryReset -= RequestWarmUp;
+            }
+
             if (_cameraManager != null && _lookaheadCamera != null)
             {
                 _cameraManager.additionalCameras.Remove(_lookaheadCamera);

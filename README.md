@@ -98,6 +98,16 @@ The `.env` file is ignored by Git.
 
 ### Open the project
 
+Unity's state-stream client needs its gRPC plugin, which is generated and never committed.
+Build it once after cloning, and again when the contracts change (it needs the .NET SDK):
+
+```bash
+dotnet build Argus.Contracts/Unity/Argus.Stream.Contracts.csproj
+```
+
+It writes `Assets/ArgusSimulation/Plugins/Stream/` (git-ignored). Without it, Unity reports
+missing `Grpc`, `Google.Protobuf` and `Argus.Contracts` namespaces.
+
 From a terminal:
 
 ```bash
@@ -111,7 +121,12 @@ When Unity opens for the first time:
 
 1. Wait for the Cesium package and other dependencies to finish importing.
 2. Open `Assets/ArgusSimulation/Scenes/Foundation.unity`. It is tracked in Git; **Argus Simulation > Create Foundation Scene** regenerates it and overwrites the tracked file.
-3. Press the **Play** button.
+3. Start the simulation: the Basilisk service and `headless/Host`, as in
+   [headless/README.md](headless/README.md). The host's run file is the only simulation; Unity
+   runs none of its own and follows the host's state stream on `127.0.0.1:50052`.
+4. Press the **Play** button. The toolbar shows **FOLLOWING HOST** once states arrive, or
+   **CONNECTING TO HOST** / **HOST DISCONNECTED** while the host is not streaming; Unity keeps
+   retrying, so the host can start before or after Play.
 
 The scene is at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 
@@ -124,18 +139,21 @@ See [Argus.Imagery/README.md](Argus.Imagery/README.md).
 ### Simulator controls
 
 - Left-drag to turn the globe, middle-drag to pan, and scroll to zoom.
-- Use the top toolbar to pause, reset, or change simulation speed.
-- Images are not exported automatically. Press **CAPTURE** in the top toolbar to pause
-  the simulation, wait for Cesium to finish the current view, and save one synchronized
-  set of camera images. A timed-out load is cancelled instead of exporting incomplete imagery.
-- Use the analytic-state panel to change orbit phase or altitude and apply pitch, yaw, or roll offsets while watching the four side-camera feeds.
-- **RESET POSE** restores the initial analytic orbit position and removes all attitude offsets.
+- The host owns the run, so Unity has no pause, reset, speed, orbit or attitude controls: change
+  the run in the host's run file. The stream panel under the toolbar shows the endpoint, the
+  stream's status and how fast the run advances (×1 when paced in real time). The CubeSat is
+  interpolated between the streamed states, and the orbit trail draws the last orbit or so flown
+  (one point per 10 simulated seconds).
+- Images are not exported automatically. Press **CAPTURE** in the top toolbar to hold the CubeSat
+  at the latest state, wait for Cesium to finish that view, and save one synchronized set of
+  camera images; the host keeps running meanwhile. A timed-out load is cancelled instead of
+  exporting incomplete imagery.
 - Toggle telemetry groups from the right-side sensor settings panel.
 - The lower camera strip shows the four body-mounted +X, -X, +Y, and -Y cameras plus a virtual north-up nadir ground-truth feed. The GT camera follows orbital position but ignores CubeSat attitude changes.
-- The nadir GT feed loads first. On start, **RESET**, and orbit phase or altitude changes, the
-  toolbar shows **LOADING NADIR** and the simulation waits (up to 30 s) until Cesium has loaded
-  the nadir view; press **RESUME** to skip the wait. While running, a hidden look-ahead camera
-  preloads imagery about 4 wall-clock seconds ahead of the nadir camera at the current time speed.
+- The nadir GT feed loads first. When a run starts or Unity reconnects, the toolbar shows
+  **LOADING NADIR** while Cesium loads only the nadir view (up to 30 s); the run is never held.
+  A hidden look-ahead camera preloads imagery about 4 wall-clock seconds ahead of the nadir camera
+  at the rate the host's run advances.
 - Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar side of the scene's fixed Sun light, including the part past the antimeridian. The Sun itself is still fixed; see the known issues in [the target architecture](docs/target-architecture.md#7-gaps).
 
 Captured images and `navigation_metadata.jsonl` are written to:

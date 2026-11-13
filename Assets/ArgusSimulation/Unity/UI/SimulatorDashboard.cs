@@ -15,7 +15,7 @@ namespace Argus.Simulation.Unity
         private enum SensorGroup
         {
             OrbitTruth,
-            BodyRate,
+            HostSensors,
             Cameras,
             SensorAvailability
         }
@@ -26,14 +26,17 @@ namespace Argus.Simulation.Unity
         private static readonly Color TextColor = new Color(0.86f, 0.92f, 0.96f, 1f);
         private static readonly Color MutedTextColor = new Color(0.55f, 0.66f, 0.72f, 1f);
 
+        private static readonly Color GoodColor = new Color(0.3f, 1f, 0.58f);
+        private static readonly Color WaitColor = new Color(0.98f, 0.72f, 0.22f);
+        private static readonly Color BadColor = new Color(1f, 0.45f, 0.4f);
+
         private readonly Dictionary<SensorGroup, bool> _visibleGroups =
             new Dictionary<SensorGroup, bool>();
-        private readonly double[] _speedOptions = { 1.0, 10.0, 60.0 };
 
+        // The host owns the run (G2): Unity only follows its stream, so there is no pause, step,
+        // time scale or reset here, and orbit and attitude nudges wait for engine commands (UNITY-11).
         private SimulationRunner _runner;
-        private AnalyticStateSource _orbitSource;
-        private CesiumSpacecraftPoseDriver _poseDriver;
-        private SimulationSensorRuntime _sensorRuntime;
+        private StateStreamClient _streamClient;
         private CubeSatCameraRig _cameraRig;
         private NadirTilePriority _nadirPriority;
         private NavigationEpisodeExporter _episodeExporter;
@@ -41,18 +44,13 @@ namespace Argus.Simulation.Unity
         private Font _font;
         private Text _telemetryText;
         private Text _statusText;
-        private Text _pauseButtonText;
-        private Text _speedButtonText;
         private Text _captureButtonText;
-        private Text _poseStatusText;
+        private Text _streamText;
         private GameObject _settingsPanel;
         private InputField _gtDateField;
         private InputField _gtLayerField;
         private Text _settingsStatusText;
         private float _nextTelemetryRefresh;
-        private int _speedIndex;
-        private double _initialAltitudeMeters;
-        private double _initialPhaseDegrees;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void CreateForFoundationScene()
@@ -101,19 +99,7 @@ namespace Argus.Simulation.Unity
                 return;
             }
 
-            _orbitSource = _runner.StateSource as AnalyticStateSource;
-            if (_orbitSource != null)
-            {
-                _initialAltitudeMeters = _orbitSource.AltitudeMeters;
-                _initialPhaseDegrees = _orbitSource.PhaseDegrees;
-            }
-
-            _sensorRuntime = _runner.GetComponent<SimulationSensorRuntime>();
-            if (_sensorRuntime == null)
-            {
-                _sensorRuntime = _runner.gameObject.AddComponent<SimulationSensorRuntime>();
-            }
-            _sensorRuntime.Configure(_runner);
+            _streamClient = _runner.StateSource as StateStreamClient;
 
             _episodeExporter = _runner.GetComponent<NavigationEpisodeExporter>();
             if (_episodeExporter == null)
@@ -125,7 +111,6 @@ namespace Argus.Simulation.Unity
             GameObject spacecraft = GameObject.Find("CubeSat Truth Pose");
             if (spacecraft != null)
             {
-                _poseDriver = spacecraft.GetComponent<CesiumSpacecraftPoseDriver>();
                 CubeSatVisualModel visual = spacecraft.GetComponent<CubeSatVisualModel>();
                 if (visual == null)
                 {
@@ -183,7 +168,7 @@ namespace Argus.Simulation.Unity
             RectTransform canvasTransform = canvasObject.GetComponent<RectTransform>();
             BuildTopBar(canvasTransform);
             BuildMissionViewLabel(canvasTransform);
-            BuildPoseControlPanel(canvasTransform);
+            BuildStreamPanel(canvasTransform);
             BuildCameraFeedStrip(canvasTransform);
             BuildTelemetryPanel(canvasTransform);
             BuildSettingsPanel(canvasTransform);
@@ -239,41 +224,15 @@ namespace Argus.Simulation.Unity
             _captureButtonText.fontSize = 15;
             captureButton.onClick.AddListener(CaptureImages);
 
-            Button pauseButton = CreateButton(
-                "Pause Button",
-                topBar,
-                "PAUSE",
-                new Vector2(0.67f, 0.18f),
-                new Vector2(0.76f, 0.82f));
-            _pauseButtonText = pauseButton.GetComponentInChildren<Text>();
-            pauseButton.onClick.AddListener(TogglePause);
-
-            Button resetButton = CreateButton(
-                "Reset Button",
-                topBar,
-                "RESET",
-                new Vector2(0.77f, 0.18f),
-                new Vector2(0.85f, 0.82f));
-            resetButton.onClick.AddListener(ResetSimulation);
-
-            Button speedButton = CreateButton(
-                "Speed Button",
-                topBar,
-                "TIME 1×",
-                new Vector2(0.86f, 0.18f),
-                new Vector2(0.94f, 0.82f));
-            _speedButtonText = speedButton.GetComponentInChildren<Text>();
-            speedButton.onClick.AddListener(CycleSpeed);
-
             CreateText(
                 "Source Badge",
                 topBar,
-                "ANALYTIC ORBIT",
+                "HOST STREAM",
                 17,
                 FontStyle.Bold,
                 TextAnchor.MiddleCenter,
                 MutedTextColor,
-                new Vector2(0.945f, 0f),
+                new Vector2(0.67f, 0f),
                 new Vector2(0.998f, 1f));
         }
 
@@ -297,19 +256,20 @@ namespace Argus.Simulation.Unity
                 Vector2.one);
         }
 
-        private void BuildPoseControlPanel(RectTransform parent)
+        // Where the stream comes from and how it is doing; the host's run is the only simulation.
+        private void BuildStreamPanel(RectTransform parent)
         {
             RectTransform panel = CreatePanel(
-                "Pose Controls",
+                "Stream Status",
                 parent,
                 new Vector2(0.012f, 0.805f),
                 new Vector2(0.688f, 0.888f),
                 new Color(0.02f, 0.04f, 0.06f, 0.90f));
 
-            _poseStatusText = CreateText(
-                "Pose Status",
+            CreateText(
+                "Stream Label",
                 panel,
-                "POSE CONTROL",
+                "HOST STREAM",
                 14,
                 FontStyle.Bold,
                 TextAnchor.MiddleLeft,
@@ -317,50 +277,16 @@ namespace Argus.Simulation.Unity
                 new Vector2(0.012f, 0.05f),
                 new Vector2(0.18f, 0.95f));
 
-            AddPoseButton(panel, "PHASE -15°", 0.19f, 0.53f, 0.34f, 0.94f,
-                () => NudgeOrbit(-15.0, 0.0));
-            AddPoseButton(panel, "PHASE +15°", 0.35f, 0.53f, 0.50f, 0.94f,
-                () => NudgeOrbit(15.0, 0.0));
-            AddPoseButton(panel, "ALT -50 KM", 0.51f, 0.53f, 0.66f, 0.94f,
-                () => NudgeOrbit(0.0, -50_000.0));
-            AddPoseButton(panel, "ALT +50 KM", 0.67f, 0.53f, 0.82f, 0.94f,
-                () => NudgeOrbit(0.0, 50_000.0));
-            AddPoseButton(panel, "RESET POSE", 0.83f, 0.53f, 0.988f, 0.94f,
-                ResetPoseControls);
-
-            AddPoseButton(panel, "PITCH -10°", 0.19f, 0.06f, 0.315f, 0.47f,
-                () => NudgeAttitude(new Vector3(-10f, 0f, 0f)));
-            AddPoseButton(panel, "PITCH +10°", 0.325f, 0.06f, 0.45f, 0.47f,
-                () => NudgeAttitude(new Vector3(10f, 0f, 0f)));
-            AddPoseButton(panel, "YAW -10°", 0.46f, 0.06f, 0.585f, 0.47f,
-                () => NudgeAttitude(new Vector3(0f, -10f, 0f)));
-            AddPoseButton(panel, "YAW +10°", 0.595f, 0.06f, 0.72f, 0.47f,
-                () => NudgeAttitude(new Vector3(0f, 10f, 0f)));
-            AddPoseButton(panel, "ROLL -10°", 0.73f, 0.06f, 0.855f, 0.47f,
-                () => NudgeAttitude(new Vector3(0f, 0f, -10f)));
-            AddPoseButton(panel, "ROLL +10°", 0.865f, 0.06f, 0.988f, 0.47f,
-                () => NudgeAttitude(new Vector3(0f, 0f, 10f)));
-
-            UpdatePoseStatus();
-        }
-
-        private void AddPoseButton(
-            RectTransform parent,
-            string label,
-            float left,
-            float bottom,
-            float right,
-            float top,
-            Action action)
-        {
-            Button button = CreateButton(
-                label + " Button",
-                parent,
-                label,
-                new Vector2(left, bottom),
-                new Vector2(right, top));
-            button.GetComponentInChildren<Text>().fontSize = 13;
-            button.onClick.AddListener(() => action());
+            _streamText = CreateText(
+                "Stream Text",
+                panel,
+                "",
+                14,
+                FontStyle.Normal,
+                TextAnchor.MiddleLeft,
+                TextColor,
+                new Vector2(0.19f, 0.05f),
+                new Vector2(0.988f, 0.95f));
         }
 
         private void BuildCameraFeedStrip(RectTransform parent)
@@ -455,7 +381,7 @@ namespace Argus.Simulation.Unity
 
             string[] labels =
             {
-                "ORBIT TRUTH", "BODY RATE", "CAMERAS", "AVAILABILITY"
+                "ORBIT TRUTH", "HOST SENSORS", "CAMERAS", "AVAILABILITY"
             };
             SensorGroup[] groups = (SensorGroup[])Enum.GetValues(typeof(SensorGroup));
             for (int index = 0; index < groups.Length; index++)
@@ -647,25 +573,12 @@ namespace Argus.Simulation.Unity
 
         private void RefreshTelemetry()
         {
-            UpdatePoseStatus();
-
+            RefreshStream();
             if (_runner == null || !_runner.HasState)
             {
-                _statusText.text = "● WAITING FOR STATE";
-                _statusText.color = new Color(0.98f, 0.72f, 0.22f);
-                _telemetryText.text = "Waiting for spacecraft state…";
+                _telemetryText.text = "Waiting for the host's first state…";
                 return;
             }
-
-            _statusText.text = _runner.IsRunning ? "● SIMULATION RUNNING" : "● SIMULATION PAUSED";
-            _statusText.color = _runner.IsRunning
-                ? new Color(0.3f, 1f, 0.58f)
-                : new Color(1f, 0.72f, 0.24f);
-            if (_nadirPriority != null && _nadirPriority.IsWarmingUp)
-            {
-                _statusText.text = $"● LOADING NADIR {_nadirPriority.WarmUpProgress:0}%";
-            }
-            _pauseButtonText.text = _runner.IsRunning ? "PAUSE" : "RESUME";
 
             SpacecraftState state = _runner.LastState.Spacecraft;
             StringBuilder builder = new StringBuilder(1400);
@@ -683,31 +596,12 @@ namespace Argus.Simulation.Unity
                 AddRow(builder, "Body→ECEF q", $"{q.X:F4}, {q.Y:F4}, {q.Z:F4}, {q.W:F4}");
             }
 
-            if (IsGroupVisible(SensorGroup.BodyRate))
+            if (IsGroupVisible(SensorGroup.HostSensors))
             {
-                AddHeader(builder, "BODY-RATE SENSOR");
-                if (_sensorRuntime != null &&
-                    _sensorRuntime.HasOutput &&
-                    _sensorRuntime.Latest.TryGetFrame(
-                        SimulationSensorRuntime.BodyRateSensorId,
-                        out SensorFrame<AngularRateMeasurement> bodyRate))
-                {
-                    AddRow(builder, "Status", bodyRate.Status.ToString().ToUpperInvariant());
-                    AddRow(builder, "Source", bodyRate.Source);
-                    AddRow(builder, "Frame", bodyRate.FrameId);
-                    AddRow(builder, "Sensor sequence", bodyRate.Sequence.ToString());
-                    if (bodyRate.Status == SensorFrameStatus.Valid)
-                    {
-                        AddVector(
-                            builder,
-                            "Angular rate rad/s",
-                            bodyRate.Payload.AngularVelocitySensorRadiansPerSecond);
-                    }
-                }
-                else
-                {
-                    AddRow(builder, "Status", "UNAVAILABLE — no frame produced");
-                }
+                // TODO(G2): list the host's sensor frames from StateStreamClient.OutputProduced
+                // (UNITY-7, #61); Unity no longer runs sensors of its own.
+                AddHeader(builder, "HOST SENSORS");
+                AddRow(builder, "Status", "Received on the stream; shown here by UNITY-7");
             }
 
             if (IsGroupVisible(SensorGroup.Cameras))
@@ -752,111 +646,49 @@ namespace Argus.Simulation.Unity
             _telemetryText.text = builder.ToString();
         }
 
-        // TODO(G1): orbit and attitude nudges become engine commands, so rendered images match the
-        // recorded state.
-        private void NudgeOrbit(double phaseDeltaDegrees, double altitudeDeltaMeters)
+        // The top bar's status and the stream panel: whether Unity is following the host.
+        private void RefreshStream()
         {
-            if (_orbitSource == null)
+            if (_streamClient == null)
             {
+                SetStatus("● NO HOST STREAM", BadColor);
+                _streamText.text = "This scene has no StateStreamClient to follow the host.";
                 return;
             }
 
-            _orbitSource.PhaseDegrees += phaseDeltaDegrees;
-            _orbitSource.AltitudeMeters += altitudeDeltaMeters;
-            ProduceManualState();
-            _nadirPriority?.RequestWarmUp();
+            string generation = _streamClient.RunGeneration;
+            _streamText.text =
+                $"{_streamClient.Endpoint}   {_streamClient.Status.ToString().ToUpperInvariant()}" +
+                (generation == null ? "" : $"   run {generation.Substring(0, Math.Min(8, generation.Length))}") +
+                (_runner != null && _runner.HasState ? $"   ×{_runner.SimulationRate:0.#} real time" : "") +
+                (_streamClient.StatusMessage.Length > 0 ? "\n" + _streamClient.StatusMessage : "");
+
+            switch (_streamClient.Status)
+            {
+                case StateStreamStatus.Streaming when _nadirPriority != null && _nadirPriority.IsWarmingUp:
+                    SetStatus($"● LOADING NADIR {_nadirPriority.WarmUpProgress:0}%", WaitColor);
+                    break;
+                case StateStreamStatus.Streaming:
+                    SetStatus("● FOLLOWING HOST", GoodColor);
+                    break;
+                case StateStreamStatus.Disconnected:
+                    SetStatus("● HOST DISCONNECTED", BadColor);
+                    break;
+                default:
+                    SetStatus("● CONNECTING TO HOST", WaitColor);
+                    break;
+            }
         }
 
-        private void NudgeAttitude(Vector3 deltaDegrees)
+        private void SetStatus(string text, Color color)
         {
-            if (_poseDriver == null)
-            {
-                return;
-            }
-
-            _poseDriver.NudgeAttitude(deltaDegrees);
-            UpdatePoseStatus();
-        }
-
-        private void ResetPoseControls()
-        {
-            if (_orbitSource != null)
-            {
-                _orbitSource.PhaseDegrees = _initialPhaseDegrees;
-                _orbitSource.AltitudeMeters = _initialAltitudeMeters;
-            }
-
-            _poseDriver?.ResetManualAttitude();
-            ProduceManualState();
-            _nadirPriority?.RequestWarmUp();
-        }
-
-        private void ProduceManualState()
-        {
-            if (_runner != null)
-            {
-                _runner.StepOnce();
-            }
-
-            UpdatePoseStatus();
-            RefreshTelemetry();
-        }
-
-        private void UpdatePoseStatus()
-        {
-            if (_poseStatusText == null)
-            {
-                return;
-            }
-
-            if (_orbitSource == null)
-            {
-                _poseStatusText.text = "POSE CONTROL\nUNAVAILABLE";
-                return;
-            }
-
-            Vector3 attitude = _poseDriver != null
-                ? _poseDriver.ManualAttitudeOffsetDegrees
-                : Vector3.zero;
-            _poseStatusText.text =
-                $"ANALYTIC STATE\nPHASE {_orbitSource.PhaseDegrees:0}°  ALT {_orbitSource.AltitudeMeters / 1000.0:0} KM\n" +
-                $"P {attitude.x:0}°  Y {attitude.y:0}°  R {attitude.z:0}°";
+            _statusText.text = text;
+            _statusText.color = color;
         }
 
         private bool IsGroupVisible(SensorGroup group)
         {
             return !_visibleGroups.TryGetValue(group, out bool isVisible) || isVisible;
-        }
-
-        private void TogglePause()
-        {
-            if (_runner != null)
-            {
-                _runner.IsRunning = !_runner.IsRunning;
-                RefreshTelemetry();
-            }
-        }
-
-        private void ResetSimulation()
-        {
-            if (_runner != null)
-            {
-                _runner.ResetSimulation();
-                _runner.StepOnce();
-                _nadirPriority?.RequestWarmUp();
-            }
-        }
-
-        private void CycleSpeed()
-        {
-            if (_runner == null)
-            {
-                return;
-            }
-
-            _speedIndex = (_speedIndex + 1) % _speedOptions.Length;
-            _runner.TimeScale = _speedOptions[_speedIndex];
-            _speedButtonText.text = $"TIME {_speedOptions[_speedIndex]:0}×";
         }
 
         private void CaptureImages()

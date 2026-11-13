@@ -5,69 +5,129 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // Draws one predicted orbit from the analytic fixture in development runs.
-    // TODO(G2): Basilisk runs cannot be sampled ahead; build the trail from received state history,
-    // or from a predicted track the host sends.
+    // Draws the track the spacecraft has flown, from the states received from the host: the run
+    // cannot be sampled ahead in Unity (G2). It keeps one Earth-fixed position per
+    // sampleSpacingSeconds of simulated time, the last sampleCount of them (about 100 minutes, an
+    // orbit, by default), and clears them on a new run. A predicted track sent by the host is
+    // UNITY-8 (#62).
     [DisallowMultipleComponent]
     public sealed class OrbitTrailRenderer : MonoBehaviour
     {
         [SerializeField] private SimulationRunner runner;
-        [SerializeField, Range(64, 512)] private int sampleCount = 240;
+        [SerializeField, Range(64, 2048)] private int sampleCount = 600;
+        [SerializeField, Min(0.1f)] private float sampleSpacingSeconds = 10f;
         [SerializeField] private float trailWidthMeters = 28_000f;
 
         private CesiumGeoreference _georeference;
         private LineRenderer _lineRenderer;
+        private Vector3d[] _positionsEcef;
+        private int _count;
+        private int _next;
+        private double _lastSampleSeconds;
+        private bool _isDirty;
+
+        public int PointCount => _count;
 
         public void Configure(SimulationRunner simulationRunner)
         {
+            if (isActiveAndEnabled)
+            {
+                Unsubscribe();
+            }
+
             runner = simulationRunner;
+            if (isActiveAndEnabled)
+            {
+                Subscribe();
+            }
         }
 
-        private void Start()
-        {
-            _georeference = FindAnyObjectByType<CesiumGeoreference>();
-            BuildTrail();
-        }
-
-        public void BuildTrail()
+        private void OnEnable()
         {
             if (runner == null)
             {
                 runner = FindAnyObjectByType<SimulationRunner>();
             }
 
-            if (_georeference == null)
-            {
-                _georeference = FindAnyObjectByType<CesiumGeoreference>();
-            }
+            _positionsEcef = new Vector3d[sampleCount];
+            ClearTrack();
+            Subscribe();
+        }
 
-            if (runner == null || _georeference == null ||
-                !(runner.StateSource is AnalyticStateSource analytic))
+        private void OnDisable()
+        {
+            Unsubscribe();
+        }
+
+        // Re-projects every point each frame the track changes, since the georeference origin can move.
+        private void LateUpdate()
+        {
+            if (!_isDirty)
             {
                 return;
             }
 
-            _georeference.Initialize();
-            EnsureLineRenderer();
-            double periodSeconds = analytic.EstimatedPeriodSeconds;
-
-            Vector3[] positions = new Vector3[sampleCount];
-            for (int index = 0; index < sampleCount; index++)
+            if (_georeference == null)
             {
-                double time = periodSeconds * index / (sampleCount - 1.0);
-                if (!analytic.TryPredictState(index, time, out SimulationState state))
+                _georeference = FindAnyObjectByType<CesiumGeoreference>();
+                if (_georeference == null)
                 {
-                    continue;
+                    return;
                 }
-
-                Vector3d ecef = state.Spacecraft.PositionEcefMeters;
-                double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
-                    new double3(ecef.X, ecef.Y, ecef.Z));
-                positions[index] = new Vector3((float)unity.x, (float)unity.y, (float)unity.z);
             }
 
-            _lineRenderer.positionCount = positions.Length;
-            _lineRenderer.SetPositions(positions);
+            EnsureLineRenderer();
+            _lineRenderer.positionCount = _count;
+            int oldest = _count < _positionsEcef.Length ? 0 : _next;
+            for (int index = 0; index < _count; index++)
+            {
+                Vector3d ecef = _positionsEcef[(oldest + index) % _positionsEcef.Length];
+                double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
+                    new double3(ecef.X, ecef.Y, ecef.Z));
+                _lineRenderer.SetPosition(index, new Vector3((float)unity.x, (float)unity.y, (float)unity.z));
+            }
+
+            _isDirty = false;
+        }
+
+        private void HandleState(SimulationState state)
+        {
+            double time = state.Spacecraft.SimulationTimeSeconds;
+            if (_count > 0 && time - _lastSampleSeconds < sampleSpacingSeconds)
+            {
+                return;
+            }
+
+            _lastSampleSeconds = time;
+            _positionsEcef[_next] = state.Spacecraft.PositionEcefMeters;
+            _next = (_next + 1) % _positionsEcef.Length;
+            _count = Mathf.Min(_count + 1, _positionsEcef.Length);
+            _isDirty = true;
+        }
+
+        private void ClearTrack()
+        {
+            _count = 0;
+            _next = 0;
+            _isDirty = true;
+        }
+
+        private void Subscribe()
+        {
+            if (runner != null)
+            {
+                runner.StateProduced += HandleState;
+                runner.HistoryReset += ClearTrack;
+            }
+        }
+
+        private void Unsubscribe()
+        {
+            if (runner != null)
+            {
+                runner.StateProduced -= HandleState;
+                runner.HistoryReset -= ClearTrack;
+            }
         }
 
         private void EnsureLineRenderer()

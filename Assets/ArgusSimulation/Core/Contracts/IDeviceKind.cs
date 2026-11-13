@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Argus.Simulation.Core
@@ -72,5 +73,20 @@ namespace Argus.Simulation.Core
         // ReadOutput, for links that carry frames as value maps (the state stream, HOST-3). Throws
         // ArgumentException for a measurement of another type.
         DeviceValues WriteOutput(object measurement);
+
+        // A frame of this kind from a link that carries its payload as the output map, such as the
+        // state stream in Unity (UNITY-5). Valid and Stale frames read the map as ReadOutput does;
+        // Unavailable and Invalid frames carry no payload, so their map must be empty.
+        ISensorFrame CreateFrame(
+            string runId,
+            string sensorId,
+            string frameId,
+            long sequence,
+            long stateSequence,
+            double simulationTimeSeconds,
+            DateTimeOffset timestampUtc,
+            SensorFrameStatus status,
+            string source,
+            DeviceValues output);
     }
 }
