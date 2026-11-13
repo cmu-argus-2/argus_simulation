@@ -109,17 +109,17 @@ def magnetometer_request():
     return request
 
 
-def step_request(sequence, run_id="p0-default", sim_time_ns=None):
+def step_request(sequence, run_id="p0-default", sim_time_ns=None, step_ns=STEP_NS):
     """Step(n) carrying the empty command n-1, which acts over [t_n-1, t_n)."""
     request = service_pb.StepRequest(
         run_id=run_id,
         sequence=sequence,
-        sim_time_ns=sequence * STEP_NS if sim_time_ns is None else sim_time_ns,
+        sim_time_ns=sequence * step_ns if sim_time_ns is None else sim_time_ns,
         commands=zero_command(),
     )
     if sequence > 0:
         request.command_sequence = sequence - 1
-        request.command_time_ns = (sequence - 1) * STEP_NS
+        request.command_time_ns = (sequence - 1) * step_ns
     return request
 
 
@@ -804,6 +804,48 @@ def test_ceres_albedo_is_darker_over_open_ocean_and_brighter_over_clouds_than_th
     assert ratio.max() > 1.25
     assert ceres[558] / average[558] < 0.6  # t = 5580 s, open ocean.
     assert ceres[412] / average[412] > 1.25  # t = 4120 s, cloud deck.
+
+
+def orbit_after(stub, step_s, duration_s):
+    """The spacecraft's J2000 position after duration_s of the P0 orbit (no devices), stepped at step_s.
+
+    ConfigureRun discards any earlier run, so one service measures both step sizes.
+    """
+    request = configure_request()
+    step_ns = int(round(step_s * 1e9))
+    request.configuration.fixed_step_ns = step_ns
+    stub.ConfigureRun(request)
+    for n in range(int(round(duration_s / step_s)) + 1):
+        response = stub.Step(step_request(n, step_ns=step_ns))
+    return np.array(xyz(response.spacecraft.position_bn_inertial_m))
+
+
+# HOST-8 (#32) found the orbit converging at second order: with the central body (Earth, also SPICE's zero base)
+# reading its planet message, the orbit drifted about 1.4 m a day at 1 s steps (1.45 m on bsk 2.11.1, 1.35 m on 2.12.2).
+# RK4 at fourth order moves a 1 h orbit by micrometres when the step halves; the second-order path moved it by
+# centimetres.
+@real_kernels
+def test_halving_the_step_barely_moves_a_one_hour_orbit(service):
+    _, stub = service
+    moved = np.linalg.norm(orbit_after(stub, 1.0, 3600.0) - orbit_after(stub, 0.5, 3600.0))
+    assert moved < 1e-4, f"halving the step moved the 1 h orbit by {moved:.3e} m"
+
+
+# The central body skips its planet message only because it is SPICE's zero base, where its position and velocity are
+# zero by construction (HOST-8 #32). Any other zero base must fail, not leave Earth's gravity at the origin while SPICE,
+# eclipse, albedo and WMM put Earth elsewhere (#137 review).
+def test_only_the_central_body_at_spices_zero_base_reads_no_planet_message():
+    assert scenario_module._unsubscribed_body("Earth") == scenario_module.EARTH_INDEX
+    with pytest.raises(ValueError, match="zero base"):
+        scenario_module._unsubscribed_body("Sun")
+
+
+@real_kernels
+def test_a_scenario_whose_zero_base_is_not_the_central_body_is_refused(monkeypatch):
+    monkeypatch.setattr(scenario_module, "ZERO_BASE", "Sun")
+    configuration = configure_request().configuration
+    with pytest.raises(ValueError, match="zero base"):
+        scenario_module.Scenario(configuration, load_kernel_set(configuration.kernel_set_id))
 
 
 # --- Pacing (BSK-7) --------------------------------------------------------------------------
