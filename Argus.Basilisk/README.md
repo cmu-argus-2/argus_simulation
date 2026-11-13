@@ -86,8 +86,15 @@ Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version fork
   `127.0.0.1:50051`. v1 is an insecure channel, so non-loopback hosts are refused.
 - Generated code goes to `generated/` and kernel files to `kernels/`; both are gitignored.
   Fill `kernels/` with `scripts/fetch_kernels.py` (§8) before starting a run.
-- The server runs one worker and `maximum_concurrent_rpcs=1`, so a concurrent call gets
-  RESOURCE_EXHAUSTED.
+- Calls are sequential. The servicer's lock refuses a call that reaches it while another runs
+  (RESOURCE_EXHAUSTED); a call that arrives while both workers are busy waits for one instead.
+  The server has two workers and no `maximum_concurrent_rpcs`: gRPC counts a call until its
+  worker has freed the response, after sending it, so that limit refused a strictly sequential
+  client under load (BSK-16, #144). A second client isn't detected between calls: its
+  ConfigureRun discards the run, and the first client's next calls are checked against
+  whatever run is left. A different run_id, an unexpected sequence or no run at all gives
+  FAILED_PRECONDITION; a Reset, or a Step that happens to match, carries on silently on the
+  other client's run. Run one client per service.
 
 ## 3. Lifecycle
 
@@ -648,6 +655,9 @@ Details name the field path and the bad value.
 - The quaternion checks in §4.
 - Every Step n returns `sim_time_ns == n × fixed_step_ns`.
 - 100 steps, Reset, 100 steps: bit-identical.
+- A client that waits for each response is never refused, even when gRPC frees a response
+  slowly; a call that reaches the servicer while another runs, on any RPC, gets
+  RESOURCE_EXHAUSTED.
 - For 2025-01-15T00:00Z with `argus-2026-09-25`, Step(0) Earth `J20002Pfix` and
   `J20002Pfix_dot` equal the t = 0 `rotation` and `rotation_rate` of
   `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json` at `f2e9fc8`
