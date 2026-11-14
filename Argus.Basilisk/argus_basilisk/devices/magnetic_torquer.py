@@ -10,6 +10,8 @@ from ._common import ACTUATOR, NUMBER, TEXT, VECTOR3, ActuatorGroup, Invalid, li
 
 KIND = "magnetic_torquer"
 ROLE = ACTUATOR
+# MtbEffector pushes against the MagneticFieldWMM field.
+NEEDS_MAGNETIC_FIELD = True
 
 PARAMETERS = {
     # One column of GtMatrix_B.

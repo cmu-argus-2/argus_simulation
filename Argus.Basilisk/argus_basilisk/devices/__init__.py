@@ -23,7 +23,9 @@ module defines:
 - build(devices, inputs) (actuators): one _common.ActuatorGroup for all of the run's devices of
   the kind, in configuration order (BSK-8, #21). An actuator kind without build is registered but
   not built: ConfigureRun returns UNIMPLEMENTED for it;
-- MAX_DEVICES (optional): the most devices of the kind one run may configure.
+- MAX_DEVICES (optional): the most devices of the kind one run may configure;
+- NEEDS_MAGNETIC_FIELD (optional, False by default): whether its devices read the
+  MagneticFieldWMM output, so the run builds it and WMM2025 validity bounds the run.
 
 validation.py and the scenario walk KINDS instead of switching on kinds, so adding a kind is one
 module plus one entry here. Kind modules import numpy and Basilisk only inside their builders,
@@ -62,9 +64,10 @@ def is_built(kind) -> bool:
 
 
 def needs_magnetic_field(configuration) -> bool:
-    """Whether the run builds MagneticFieldWMM: a magnetometer reads it, and a magnetic torquer
-    pushes against it. Its WMM2025 validity then bounds the run (README §3)."""
-    return bool(of_kind(configuration.devices, magnetometer.KIND) or of_kind(configuration.devices, magnetic_torquer.KIND))
+    """Whether the run builds MagneticFieldWMM: a device of a kind with NEEDS_MAGNETIC_FIELD (a
+    magnetometer reads it, a magnetic torquer pushes against it). Its WMM2025 validity then bounds
+    the run (README §3)."""
+    return any(getattr(KINDS.get(device.kind), "NEEDS_MAGNETIC_FIELD", False) for device in configuration.devices)
 
 
 def actuators(configuration) -> dict:

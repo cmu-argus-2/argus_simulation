@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 5 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors) and ClockSynch pacing; magnetometer and light-sensor noise are drawn in the service; Step accepts only the empty command set until actuator kinds exist
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 6 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors), ClockSynch pacing, and the ideal body torque and magnetic torquer actuators; magnetometer and light-sensor noise are drawn in the service; momentum wheels and thrusters are not built (BSK-17)
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -178,7 +178,8 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
    so the service never clamps (§9 "Actuators"). Step(0) follows no command: both
    fields are unset and the set is empty, or INVALID_ARGUMENT (no interval ends at t = 0). The
    gateway sends every configured actuator, idle ones included.
-4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer);
+4. `epoch + t_n` is inside kernel coverage (and WMM validity with a magnetometer or a magnetic
+   torquer);
    otherwise OUT_OF_RANGE, checked before executing.
 5. For n > 0, write the request's command (command n-1) into the actuator input messages
    before running, so it acts over [t_n-1, t_n): the gateway's command k, computed from the
@@ -542,8 +543,8 @@ other per channel.
   with `configureWMMFile(<path>/WMM2025.COF)`, `epochInMsg` from the run epoch,
   `planetPosInMsg` from the SPICE Earth, and `addSpacecraftToModel`. P0 uses WMM2025 only.
 - The scenario builds one `MagneticFieldWMM` in the dynamics task, after eclipse, only when a
-  magnetometer is configured, and asserts freshness on `envOutMsgs[0]` at every step. A kernel
-  set without `WMM2025.COF` cannot serve a magnetometer: ConfigureRun returns
+  magnetometer or a magnetic torquer is configured, and asserts freshness on `envOutMsgs[0]` at
+  every step. A kernel set without `WMM2025.COF` cannot serve either: ConfigureRun returns
   FAILED_PRECONDITION before SPICE loads anything.
 - The magnetometer measures on its first firing, at t = 0, since the field is written earlier in
   the same t_n: `tam_S = scale (C_SB C_BN B_N + noise + bias)`, clipped to ±range.
@@ -621,7 +622,7 @@ messages before running to t_n (§3 Step 5), each actuator the set leaves out at
 |---|---|---|---|
 | `ideal_body_torque` | one `extForceTorque` per device, `cmdTorqueInMsg` | nothing: `max_torque_body_n_m` only bounds the command | `torqueRequestBody = torque_body_n_m` |
 | `magnetic_torquer` | one `MtbEffector` for all of them, `magInMsg` = the `MagneticFieldWMM` output | `numMTB`; column j of `GtMatrix_B` (3 × numMTB, row-major) is device j's `dipole_axis_body`, in configuration order; `maxMtbDipoles[j] = max_dipole_a_m2` | `mtbDipoleCmds[j] = dipole_a_m2` |
-| `momentum_wheel`, `thruster` | not built: P0 carries neither, so ConfigureRun returns UNIMPLEMENTED (§3) | | |
+| `momentum_wheel`, `thruster` | not built: P0 carries neither, so ConfigureRun returns UNIMPLEMENTED (§3); BSK-17 builds them | | |
 
 - **When each reads its command.** `extForceTorque` reads `cmdTorqueInMsg` in `UpdateState`,
   so it must run before the spacecraft at t_n; after it, the command would act a step late.
