@@ -81,8 +81,8 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
         return self._call(context, self._step, request)
 
     def _call(self, context, handler, request):
-        # The server already allows one RPC at a time; this keeps a concurrent call from ever
-        # reaching Basilisk if that setting changes.
+        # The only guard against two calls at once (BSK-16): every RPC comes through here, and the lock
+        # is released before the response is sent, so a sequential client never meets it.
         if not self._lock.acquire(blocking=False):
             context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "another call is in progress; calls are sequential")
         try:

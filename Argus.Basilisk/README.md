@@ -29,6 +29,9 @@ spacecraft, SPICE and eclipse (BSK-3, #16) and adds the sensor devices that the 
 in `devices/` (§9) builds, with seeds from `seeds.py` (§10). The registered kinds are the IMU
 (BSK-4, #17), the magnetometer (BSK-5, #18) and the light sensor with albedo (BSK-6, #19).
 `scripts/fetch_kernels.py` is the SPICE team's fetch/verify tool (§8).
+`scripts/check_reference_runs.py` is HOST-8's offline checker (#32): it compares a recorded host
+run with an independent reference (`headless/Host/runs/reference/README.md`) and runs in this
+venv with the `basilisk` and `tools` extras.
 
 ## 2. Install and run
 
@@ -83,8 +86,15 @@ Python 3.12 (`requires-python = "==3.12.*"`, so the lock has no per-version fork
   `127.0.0.1:50051`. v1 is an insecure channel, so non-loopback hosts are refused.
 - Generated code goes to `generated/` and kernel files to `kernels/`; both are gitignored.
   Fill `kernels/` with `scripts/fetch_kernels.py` (§8) before starting a run.
-- The server runs one worker and `maximum_concurrent_rpcs=1`, so a concurrent call gets
-  RESOURCE_EXHAUSTED.
+- Calls are sequential. The servicer's lock refuses a call that reaches it while another runs
+  (RESOURCE_EXHAUSTED); a call that arrives while both workers are busy waits for one instead.
+  The server has two workers and no `maximum_concurrent_rpcs`: gRPC counts a call until its
+  worker has freed the response, after sending it, so that limit refused a strictly sequential
+  client under load (BSK-16, #144). A second client isn't detected between calls: its
+  ConfigureRun discards the run, and the first client's next calls are checked against
+  whatever run is left. A different run_id, an unexpected sequence or no run at all gives
+  FAILED_PRECONDITION; a Reset, or a Step that happens to match, carries on silently on the
+  other client's run. Run one client per service.
 
 ## 3. Lifecycle
 
@@ -296,7 +306,10 @@ python -m pytest tests -q
 ```
 
 Install the `test` extra to obtain pytest (`pip install -e '.[test]'`); Basilisk and
-generated protobuf modules are not needed by these tests. `tests/test_service.py` needs the
+generated protobuf modules are not needed by these tests. `tests/test_check_reference_runs.py`
+needs numpy, which the `basilisk` extra brings, and skips without it. Its SPICE test also
+needs the `tools` extra (spiceypy) and the `argus-2026-11-02` kernels in `kernels/`, and
+skips without either. `tests/test_service.py` needs the
 `basilisk` extra. Its live-run tests also need the P0 set `argus-2026-11-02` in `kernels/`,
 and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped without its files.
 
@@ -316,6 +329,17 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
   `createSpiceInterface` defaults do the same. Do not import `simIncludeGravBody` either: it
   imports `dataFetcher`, which sends a request to github.com at import time; `scenario.py`
   builds the two point-mass `GravBodyData` itself.
+- Earth, the central body, is also the zero base, so its SPICE position and velocity are zero,
+  and its `GravBodyData` reads no planet message. The message also carries Earth's ITRF93
+  orientation and its rate, and bsk (2.11.1 and 2.12.2 alike) steps that orientation linearly
+  inside each step. The orbit then converges at second order: about 1.4 m a day at 1 s steps
+  against an independent reference (1.45 m on 2.11.1, 1.35 m on 2.12.2), instead of micrometres
+  (HOST-8, #32). A message with the orientation and no rate leaves the orbit exact, so the rate
+  is the trigger. A J2 or spherical-harmonics Earth needs the orientation and would hit the same
+  error. `_unsubscribed_body` refuses any zero base but the central body, which would otherwise
+  leave Earth's gravity at the origin. The Sun's body reads its SPICE state; its IAU_SUN frame
+  turns at about 2.9e-6 rad/s and is stepped the same way, and R1 still holds the orbit over 24
+  h to 4.1e-5 m at 0.1 s steps and 7.7e-5 m at 1 s.
 - A kernel that cannot be loaded raises `BasiliskError` during `InitializeSimulation`; it is
   FAILED_PRECONDITION. A file that loads but lacks data (no leap seconds, no ITRF93 for the
   epoch) is not an error until CSPICE needs that data, and then CSPICE aborts the process.
@@ -344,8 +368,10 @@ and the §13 SPICE reference test needs `argus-2026-09-25`; each is skipped with
 - It then reports, with spiceypy, the SPK coverage of the Sun (10) and Earth (399), the
   binary PCK coverage of ITRF93 (3000) and the PCK's "UTC Epoch of last datum" comment,
   and fails unless they cover `coverage_utc` and match `reconstructed_end`.
-- spiceypy is a dependency of this tool only (the `tools` extra). `argus_basilisk` never
-  imports it or the tool, so the service's only SPICE source stays `spiceInterface` (D3).
+- spiceypy is a dependency of the offline tools only (the `tools` extra): this one and
+  `check_reference_runs.py` (HOST-8, which D3's row allows to read the pinned kernels
+  offline). `argus_basilisk` never imports it or the tools, so the service's only SPICE
+  source stays `spiceInterface` (D3).
 - A copy placed in `kernels/` by hand is accepted when its hash matches.
 
 ### Kernels in CI (BSK-11, #24)
@@ -629,6 +655,9 @@ Details name the field path and the bad value.
 - The quaternion checks in §4.
 - Every Step n returns `sim_time_ns == n × fixed_step_ns`.
 - 100 steps, Reset, 100 steps: bit-identical.
+- A client that waits for each response is never refused, even when gRPC frees a response
+  slowly; a call that reaches the servicer while another runs, on any RPC, gets
+  RESOURCE_EXHAUSTED.
 - For 2025-01-15T00:00Z with `argus-2026-09-25`, Step(0) Earth `J20002Pfix` and
   `J20002Pfix_dot` equal the t = 0 `rotation` and `rotation_rate` of
   `Assets/StreamingAssets/Argus/Spice/foundation_one_orbit.json` at `f2e9fc8`

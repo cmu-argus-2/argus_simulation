@@ -1,0 +1,46 @@
+{
+  "epochUtc": "2026-06-01T12:00:00Z",
+  "fixedStepSeconds": 0.1,
+  "randomSeed": 1,
+  "kernelSetId": "argus-2026-11-02",
+  "initialOrbit": {
+    "semiMajorAxisMeters": 6958137.0,
+    "eccentricity": 0.0,
+    "inclinationDegrees": 97.75,
+    "raanDegrees": 234.06,
+    "argumentOfPeriapsisDegrees": 0.0,
+    "trueAnomalyDegrees": 0.0
+  },
+  "spacecraft": {
+    "massKilograms": 2.6,
+    "inertiaBodyKilogramSquareMeters": [
+      [
+        0.01906,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.01931,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.00824
+      ]
+    ],
+    "initialBodyToJ2000": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "w": 1.0
+    },
+    "initialAngularVelocityBodyRadiansPerSecond": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "devices": []
+}

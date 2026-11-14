@@ -375,7 +375,8 @@ folders, is [code-organization.md](code-organization.md).
 
 - [x] Implement the `BasiliskEngine` client and mapping tests.
 - [ ] Implement the Basilisk service and validate `BasiliskEngine` against it.
-- [ ] Validate the analytic and Basilisk trajectories against reference cases.
+- [x] Validate the analytic and Basilisk trajectories against reference cases (HOST-8, #32: the Basilisk path
+      validated, the analytic fixture's deviation measured and development only; target-architecture G4).
 - [ ] Add synchronized camera rendering and NASA-image comparison metrics.
 
 ## 16. Current limitations
