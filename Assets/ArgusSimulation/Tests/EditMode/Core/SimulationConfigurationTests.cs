@@ -42,15 +42,17 @@ namespace Argus.Simulation.Tests
             Assert.That(configuration.IsValid, Is.EqualTo(isValid));
         }
 
-        // A camera frame carries the true camera pose, so a run may not show a camera to the
-        // controller (D7) until CORE-23 (#125) gives it an observation without truth; other kinds
-        // may be visible.
+        // A controller sees a camera through its kind's projection, a CameraObservation without the
+        // pose (D7, CORE-23), so a run may show a body camera to the controller. The nadir camera is
+        // ground truth, with no projection, so it may never be visible.
         [Test]
-        public void ControllerVisibleCameraIsInvalid()
+        public void ControllerVisibleCameraIsValidButNotTheNadirCamera()
         {
-            Assert.That(Run(Camera(0.1, isControllerVisible: true)).IsValid, Is.False);
+            Assert.That(Run(Camera(0.1, isControllerVisible: true)).IsValid, Is.True);
             Assert.That(Run(Camera(0.1, isControllerVisible: false)).IsValid, Is.True);
             Assert.That(Run(Imu(0.1, isControllerVisible: true)).IsValid, Is.True);
+            Assert.That(Run(NadirCamera(isControllerVisible: true)).IsValid, Is.False);
+            Assert.That(Run(NadirCamera(isControllerVisible: false)).IsValid, Is.True);
         }
 
         // A profile ID names one parameter set (intrinsics, distortion and noise), so two cameras that
@@ -112,5 +114,9 @@ namespace Argus.Simulation.Tests
             CameraKind.Instance.Configure(
                 new SensorDefinition(sensorId, "test-camera", sensorId.Replace('.', '_'), samplePeriodSeconds, "argus", SensorMount.Identity, isControllerVisible),
                 profile ?? TestCameras.Imx708Profile());
+
+        private static DeviceConfiguration NadirCamera(bool isControllerVisible) =>
+            TestCameras.NadirConfiguration(
+                new SensorDefinition("cam.nadir_gt", "nadir-ground-truth", "cam_nadir_gt", 0.1, "argus", SensorMount.Identity, isControllerVisible));
     }
 }

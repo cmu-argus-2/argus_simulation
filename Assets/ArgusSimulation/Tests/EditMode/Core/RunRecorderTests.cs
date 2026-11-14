@@ -319,10 +319,14 @@ namespace Argus.Simulation.Tests
             return gateway;
         }
 
+        // Not controller-visible: the recorder gets every frame either way, and the ideal body-rate
+        // stand-in publishes an AngularRateMeasurement, which the imu kind's projection does not take
+        // (CORE-23).
         private static SimulationConfiguration Scenario(double fixedStepSeconds)
         {
             DeviceConfiguration rate = ImuKind.Instance.Configure(
-                new SensorDefinition("imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity),
+                new SensorDefinition(
+                    "imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity, isControllerVisible: false),
                 TestImu.P0LikeProfile());
             return new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: new[] { rate });
         }

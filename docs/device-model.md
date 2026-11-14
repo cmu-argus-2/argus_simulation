@@ -25,7 +25,7 @@ Common fields, the same for every kind:
 | `frameId` | Core only | The sensor frame's name in frames and datasets. |
 | `mount` | `mount` | `positionBodyMeters` (lever arm from the centre of mass) and `deviceToBody` (v_body = q v_device q*). It replaces `SensorMount`'s `sensorToBody`. An actuator's axis is a body-frame parameter, so its `deviceToBody` must be the identity; a thruster acts at its `positionBodyMeters`. |
 | `samplePeriodSeconds` | `sample_period_ns` | Sensors only: a positive whole number of fixed steps. Actuators have none: they take a command every step. |
-| `controllerVisible` | `controller_visible` | Sensors only; unset means visible. False for ground-truth sensors (D7). |
+| `controllerVisible` | `controller_visible` | Sensors only; unset means visible, for a camera too. False for ground-truth sensors (D7). A visible device's frames reach a controller through its kind's controller projection (§2); a device whose kind has none, such as the nadir ground-truth camera, may not be visible. |
 | `parameters` | `parameters` | The kind's fixed values (§3). |
 | `initialState` | `initial_state` | The kind's state at t = 0, for example a wheel's speed. Empty for kinds with no state, which includes the three P0 sensors. |
 
@@ -44,7 +44,16 @@ Each kind declares:
 - **its parameters and initial state:** for each key, its type (§3), whether it is required or what
   its default is, and its range.
 - **its output (sensors):** the measurement keys it publishes each sample. In Core, a typed payload
-  such as `ImuMeasurement` in a `SensorFrame<T>`; on the wire, the same keys in a value map.
+  such as `ImuMeasurement` in a `SensorFrame<T>`; on the wire, the same keys in a value map. A
+  camera publishes an `ImageFrame`, which holds its render request: the true camera pose and Sun.
+- **what a controller sees (sensors):** its controller projection (`IDeviceKind.ControllerProjection`,
+  D7), which the gateway applies to each frame of a visible device. It names the payload it takes
+  and the one it gives, and keeps the frame's envelope (`ControllerProjection`); it may change the
+  status, to withhold a payload. A Basilisk-modelled kind's measurement
+  carries no truth, so its projection is the identity. A `camera` gives a `CameraObservation`:
+  the camera ID, the frame's sequence, the exposure start and duration, and raw RGB pixels, with
+  no pose, Sun or intrinsics (CORE-23). `nadir_ground_truth_camera` and the actuators have none,
+  so they may not be visible.
 - **its command values and idle values (actuators):** what a command carries, and what the
   actuator does in a step whose command leaves it out (zero torque, zero dipole). Limits and
   clamp-or-reject are its parameters (CORE-10, #46).
@@ -268,16 +277,18 @@ message DeviceCommandSet {
 ## 7. Registry
 
 - **Core:** each kind is one class implementing `IDeviceKind` (`Core/Contracts/IDeviceKind.cs`).
-  The class holds the kind's name, role, modeller, declarations and validation. A sensor kind
-  builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`) also reads its output map
-  into its measurement type, and a camera kind (`ICameraKind`) gives its `CameraProfile`, for the
-  manifest's `cameras` and the shared profile-ID rule (CORE-6). An actuator kind (`IActuatorKind`,
-  on `ActuatorKind<TProfile>`) gives its command keys, its idle values and its command check; the
-  gateway runs an actuator a command leaves out at its idle values. Its limit checks are CORE-10.
+  The class holds the kind's name, role, modeller, controller projection, declarations and
+  validation. A sensor kind builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`)
+  also reads its output map into its measurement type, and a camera kind (`ICameraKind`) gives
+  its `CameraProfile`, for the manifest's `cameras` and the shared profile-ID rule (CORE-6). An
+  actuator kind (`IActuatorKind`, on `ActuatorKind<TProfile>`) gives its command keys, its idle
+  values and its command check; the gateway runs an actuator a command leaves out at its idle
+  values. Its limit checks are CORE-10.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
   `CameraProfileKind` only list their keys and map them. `CameraKind` and
-  `NadirGroundTruthCameraKind` share `CameraProfileKind`'s keys and differ only in name and model.
+  `NadirGroundTruthCameraKind` share `CameraProfileKind`'s keys and differ only in name,
+  controller projection and model.
   A kind declares its initial-state keys the same way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
   (`parameters["gyroscope.*"]`). `DeviceKinds` lists every registration in one
   file. It replaced the `SensorKind` switches in `SensorFactory`, `SensorConfiguration`, the
@@ -289,7 +300,8 @@ message DeviceCommandSet {
   `validation.py` and the scenario walk `KINDS` instead of switching on kinds. Kind modules import
   numpy and Basilisk only inside `build`, so validation runs without Basilisk.
 - **Adding a kind** means writing its Core class, its service module if Basilisk models it, one
-  registration on each side, and its tests. No proto, gateway, recorder or file-format change.
+  registration on each side, and its tests. The Core class declares its controller projection, or
+  none. No proto, gateway, recorder or file-format change.
 
 Both sides declare a kind's keys. A single machine-readable schema both read is out of scope for
 now.

@@ -38,10 +38,13 @@ namespace Argus.Simulation.Core
         // Argus never computes them. Argus-computed kinds never reach the backend.
         bool IsBackendModelled { get; }
 
-        // Whether a controller may see the kind's frames (D7). The gateway forwards a controller-
-        // visible frame unchanged, so a kind whose frames carry truth may not be visible, and
-        // SimulationConfiguration.IsValid rejects such a device configured as visible.
-        bool MayBeControllerVisible { get; }
+        // What a controller sees of the kind's frames (D7), or null when a controller may never see
+        // them. The gateway applies it to every frame of a device configured as controller-visible,
+        // and SimulationConfiguration.IsValid rejects a visible device of a kind with none, so the
+        // two can't disagree. A kind whose frames carry no truth declares the identity on its
+        // payload; the camera kind drops the pose and the Sun (CameraControllerProjection, CORE-23);
+        // ground-truth kinds and actuators declare none.
+        ControllerProjection ControllerProjection { get; }
 
         // Every parameter key, all required.
         IReadOnlyList<DeviceKey> ParameterKeys { get; }

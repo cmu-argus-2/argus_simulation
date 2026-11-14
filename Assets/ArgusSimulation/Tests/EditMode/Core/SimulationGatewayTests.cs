@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -39,13 +42,7 @@ namespace Argus.Simulation.Tests
         [Test]
         public void ObservationsHoldOnlyControllerVisibleFrames()
         {
-            SimulationGateway gateway = new SimulationGateway(
-                Engine(),
-                sensor => new IdealBodyRateSensorModel(
-                    sensor.Definition.SensorId,
-                    sensor.Definition.FrameId,
-                    sensor.Definition.SamplePeriodSeconds,
-                    sensor.Definition.Source));
+            SimulationGateway gateway = new SimulationGateway(Engine(), SameDefinitionStandIn);
             List<SensorOutputSet> outputs = new List<SensorOutputSet>();
             gateway.SensorOutputProduced += outputs.Add;
             SimulationConfiguration scenario = Scenario(
@@ -58,25 +55,40 @@ namespace Argus.Simulation.Tests
             for (int index = 0; index < observations.Length; index++)
             {
                 Assert.That(observations[index].Frames.Count, Is.EqualTo(1));
-                Assert.That(observations[index].TryGetFrame("rate.visible", out SensorFrame<AngularRateMeasurement> frame), Is.True);
+                Assert.That(observations[index].TryGetFrame("rate.visible", out SensorFrame<ImuMeasurement> frame), Is.True);
                 Assert.That(frame.Sequence, Is.EqualTo(observations[index].Sequence));
-                Assert.That(observations[index].TryGetFrame("rate.truth", out SensorFrame<AngularRateMeasurement> _), Is.False);
+                Assert.That(observations[index].TryGetFrame("rate.truth", out SensorFrame<ImuMeasurement> _), Is.False);
                 // The recorder still receives the ground-truth sensor's frame.
                 Assert.That(outputs[index].Frames.Count, Is.EqualTo(2));
             }
         }
 
-        // A camera frame carries the true camera pose (its RenderRequest) even when Unavailable, so
-        // a scenario that shows a camera to the controller is rejected before anything runs (D7).
+        // A camera frame carries the true camera pose (its RenderRequest) even when Unavailable, but a
+        // controller sees it through the camera kind's projection, without the pose (D7, CORE-23), so
+        // a scenario may show a body camera to the controller.
         [Test]
-        public void ResetRejectsAControllerVisibleCamera()
+        public void ResetAcceptsAControllerVisibleCamera()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            int runsStarted = 0;
+            gateway.RunStarted += (run, sensors) => runsStarted++;
+
+            Assert.DoesNotThrow(() => gateway.Reset(0, Scenario(0.1, Camera("cam.px", isControllerVisible: true))));
+            Assert.That(runsStarted, Is.EqualTo(1));
+            Assert.That(gateway.IsRunning, Is.True);
+        }
+
+        // The nadir camera is ground truth and its kind has no projection, so a scenario that shows it
+        // to the controller is rejected before anything runs (D7).
+        [Test]
+        public void ResetRejectsAControllerVisibleNadirCamera()
         {
             SimulationGateway gateway = new SimulationGateway(Engine());
             int runsStarted = 0;
             gateway.RunStarted += (run, sensors) => runsStarted++;
 
             Assert.Throws<ArgumentException>(
-                () => gateway.Reset(0, Scenario(0.1, Camera("cam.px", isControllerVisible: true))));
+                () => gateway.Reset(0, Scenario(0.1, NadirCamera("cam.nadir_gt", isControllerVisible: true))));
             Assert.That(runsStarted, Is.EqualTo(0));
             Assert.That(gateway.IsRunning, Is.False);
         }
@@ -103,6 +115,215 @@ namespace Argus.Simulation.Tests
                 Assert.That(outputs[index].Frames[0].SensorId, Is.EqualTo("cam.px"));
                 Assert.That(outputs[index].Frames[0].Status, Is.EqualTo(SensorFrameStatus.Unavailable));
             }
+        }
+
+        // A controller sees a visible camera's frame as a CameraObservation: the pixels and timing,
+        // never the pose or the Sun (D7, CORE-23). Its envelope is the recorded frame's, so the two
+        // join, and the recorder still gets the full ImageFrame with its RenderRequest. The pixels
+        // are the recorded frame's bytes, in a copy of their own.
+        [Test]
+        public void AVisibleCameraShowsTheControllerItsPixelsButNotItsPose()
+        {
+            ImmediateRenderer renderer = new ImmediateRenderer(ImageEncoding.Rgb8);
+            SimulationGateway gateway = new SimulationGateway(new SunlitEngine(), device => SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation[] observations =
+            {
+                gateway.Reset(0, Scenario(0.1, SmallCamera("cam.px", isControllerVisible: true))),
+                gateway.Step()
+            };
+
+            for (int index = 0; index < observations.Length; index++)
+            {
+                Assert.That(outputs[index].TryGetFrame("cam.px", out SensorFrame<ImageFrame> recorded), Is.True);
+                Assert.That(recorded.Status, Is.EqualTo(SensorFrameStatus.Valid));
+                Assert.That(recorded.Payload.Request.SunPositionEcefMeters, Is.EqualTo(SunlitEngine.SunPositionItrf93Meters));
+                Assert.That(recorded.Payload.Request.IsValid, Is.True);
+
+                Assert.That(observations[index].Frames.Count, Is.EqualTo(1));
+                Assert.That(observations[index].Frames[0], Is.TypeOf<SensorFrame<CameraObservation>>());
+                Assert.That(observations[index].TryGetFrame("cam.px", out SensorFrame<CameraObservation> seen), Is.True);
+                Assert.That(seen.Status, Is.EqualTo(SensorFrameStatus.Valid));
+                Assert.That(
+                    (seen.SensorId, seen.Sequence, seen.StateSequence),
+                    Is.EqualTo((recorded.SensorId, recorded.Sequence, recorded.StateSequence)));
+                Assert.That(seen.StateSequence, Is.EqualTo(observations[index].Sequence));
+                Assert.That(
+                    (seen.Payload.CameraId, seen.Payload.Sequence, seen.Payload.WidthPixels, seen.Payload.HeightPixels),
+                    Is.EqualTo(("cam.px", recorded.Payload.Sequence, 4, 2)));
+                Assert.That(seen.Payload.IsValid, Is.True);
+                Assert.That(seen.Payload.Pixels.ToArray(), Is.EqualTo(recorded.Payload.Data));
+                Assert.That(MemoryMarshal.TryGetArray(seen.Payload.Pixels, out ArraySegment<byte> pixels), Is.True);
+                Assert.That(pixels.Array, Is.Not.SameAs(recorded.Payload.Data));
+            }
+        }
+
+        // Two visible cameras, a visible IMU and a hidden nadir camera in one step: the controller
+        // gets the visible frames in the recorder's order, each camera its own pixels in its own
+        // array, and nothing of the nadir camera, whose frame still reaches the recorder (D7).
+        [Test]
+        public void EachVisibleCameraGetsItsOwnPixelsAndAHiddenCameraNone()
+        {
+            PerCameraRenderer renderer = new PerCameraRenderer();
+            SimulationGateway gateway = new SimulationGateway(
+                new SunlitEngine(),
+                device => device.Kind == ImuKind.KindName ? SameDefinitionStandIn(device) : SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation observation = gateway.Reset(0, Scenario(
+                0.1,
+                Rate("imu.main", isControllerVisible: true),
+                SmallCamera("cam.px", isControllerVisible: true),
+                NadirCamera("cam.nadir", isControllerVisible: false),
+                SmallCamera("cam.mx", isControllerVisible: true)));
+
+            Assert.That(outputs[0].TryGetFrame("cam.nadir", out SensorFrame<ImageFrame> nadir), Is.True);
+            Assert.That(nadir.Status, Is.EqualTo(SensorFrameStatus.Valid));
+            List<string> recordedVisible = new List<string>();
+            foreach (ISensorFrame frame in outputs[0].Frames)
+            {
+                if (frame.SensorId != "cam.nadir")
+                {
+                    recordedVisible.Add(frame.SensorId);
+                }
+            }
+
+            List<string> seen = new List<string>();
+            foreach (ISensorFrame frame in observation.Frames)
+            {
+                seen.Add(frame.SensorId);
+            }
+
+            Assert.That(seen, Is.EqualTo(recordedVisible));
+            Assert.That(seen, Is.EquivalentTo(new[] { "imu.main", "cam.px", "cam.mx" }));
+            Assert.That(observation.TryGetFrame("imu.main", out SensorFrame<ImuMeasurement> _), Is.True);
+            Assert.That(observation.TryGetFrame("cam.px", out SensorFrame<CameraObservation> px), Is.True);
+            Assert.That(observation.TryGetFrame("cam.mx", out SensorFrame<CameraObservation> mx), Is.True);
+            Assert.That((px.Status, px.Payload.Pixels.Length), Is.EqualTo((SensorFrameStatus.Valid, 4 * 2 * 3)));
+            Assert.That((mx.Status, mx.Payload.Pixels.Length), Is.EqualTo((SensorFrameStatus.Valid, 4 * 2 * 3)));
+            Assert.That(px.Payload.Pixels.ToArray(), Is.All.EqualTo(PerCameraRenderer.Fill("cam.px")));
+            Assert.That(mx.Payload.Pixels.ToArray(), Is.All.EqualTo(PerCameraRenderer.Fill("cam.mx")));
+            Assert.That(MemoryMarshal.TryGetArray(px.Payload.Pixels, out ArraySegment<byte> pxArray), Is.True);
+            Assert.That(MemoryMarshal.TryGetArray(mx.Payload.Pixels, out ArraySegment<byte> mxArray), Is.True);
+            Assert.That(pxArray.Array, Is.Not.SameAs(mxArray.Array));
+        }
+
+        // ReadOnlyMemory is read-only only by convention: MemoryMarshal.TryGetArray hands back its
+        // array. A controller that writes through it must not change the frame the recorder writes
+        // later (the recorder queues frames by reference, #99; D6, D7).
+        [Test]
+        public void AControllerWritingThroughItsPixelsCannotChangeTheRecordedFrame()
+        {
+            ImmediateRenderer renderer = new ImmediateRenderer(ImageEncoding.Rgb8);
+            SimulationGateway gateway = new SimulationGateway(new SunlitEngine(), device => SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation observation = gateway.Reset(0, Scenario(0.1, SmallCamera("cam.px", isControllerVisible: true)));
+            Assert.That(outputs[0].TryGetFrame("cam.px", out SensorFrame<ImageFrame> recorded), Is.True);
+            byte[] asRendered = (byte[])recorded.Payload.Data.Clone();
+            Assert.That(observation.TryGetFrame("cam.px", out SensorFrame<CameraObservation> seen), Is.True);
+            Assert.That(MemoryMarshal.TryGetArray(seen.Payload.Pixels, out ArraySegment<byte> writable), Is.True);
+
+            for (int i = 0; i < writable.Count; i++)
+            {
+                writable.Array[writable.Offset + i] = 0;
+            }
+
+            Assert.That(recorded.Payload.Data, Is.EqualTo(asRendered));
+        }
+
+        // The controller gets a visible camera's frame Unavailable, with no pixels, when there is no
+        // image, when the image is not raw RGB, or when the run has no Sun to light it (analytic runs,
+        // G3). The recorder keeps the original frame.
+        [TestCase("no renderer")]
+        [TestCase("png")]
+        [TestCase("rgba8")]
+        [TestCase("no sun")]
+        public void TheControllerGetsAnUnavailableCameraFrameWhenItMayNotTakeTheImage(string why)
+        {
+            IImageRenderer renderer = why == "no renderer"
+                ? null
+                : new ImmediateRenderer(why == "png" ? ImageEncoding.Png : why == "rgba8" ? ImageEncoding.Rgba8 : ImageEncoding.Rgb8);
+            ISimulationEngine engine = why == "no sun" ? (ISimulationEngine)Engine() : new SunlitEngine();
+            SimulationGateway gateway = new SimulationGateway(engine, device => SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation observation = gateway.Reset(0, Scenario(0.1, SmallCamera("cam.px", isControllerVisible: true)));
+
+            Assert.That(outputs[0].TryGetFrame("cam.px", out SensorFrame<ImageFrame> recorded), Is.True);
+            Assert.That(recorded.Status, Is.EqualTo(why == "no renderer" ? SensorFrameStatus.Unavailable : SensorFrameStatus.Valid));
+            Assert.That(observation.TryGetFrame("cam.px", out SensorFrame<CameraObservation> seen), Is.True);
+            Assert.That(seen.Status, Is.EqualTo(SensorFrameStatus.Unavailable));
+            Assert.That(seen.Payload.IsValid, Is.True);
+            Assert.That(seen.Payload.Pixels.IsEmpty, Is.True);
+            Assert.That((seen.Payload.WidthPixels, seen.Payload.HeightPixels), Is.EqualTo((0, 0)));
+            Assert.That(
+                (seen.SensorId, seen.Sequence, seen.StateSequence),
+                Is.EqualTo((recorded.SensorId, recorded.Sequence, recorded.StateSequence)));
+        }
+
+        // With an asynchronous renderer, the step on which a frame reaches the controller depends on
+        // render time, while its capture time and state do not (G3). The step loop does not wait for
+        // renders (UNITY-4, #57).
+        [Test]
+        public void ALateRenderReachesTheControllerWithItsCaptureTime()
+        {
+            DeferredRenderer renderer = new DeferredRenderer();
+            SimulationGateway gateway = new SimulationGateway(new SunlitEngine(), device => SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+
+            Observation first = gateway.Reset(0, Scenario(0.1, SmallCamera("cam.px", isControllerVisible: true)));
+            Observation second = gateway.Step();
+            renderer.Complete(0);
+            Observation third = gateway.Step();
+
+            Assert.That(first.Frames, Is.Empty);
+            Assert.That(second.Frames, Is.Empty);
+            Assert.That(third.Sequence, Is.EqualTo(2));
+            Assert.That(third.TryGetFrame("cam.px", out SensorFrame<CameraObservation> late), Is.True);
+            Assert.That(late.Status, Is.EqualTo(SensorFrameStatus.Valid));
+            Assert.That((late.Sequence, late.StateSequence, late.SimulationTimeSeconds), Is.EqualTo((0L, 0L, 0.0)));
+            Assert.That(
+                (late.Payload.Sequence, late.Payload.ExposureStartSimulationTimeSeconds, late.Payload.Pixels.Length),
+                Is.EqualTo((0L, 0.0, 4 * 2 * 3)));
+            Assert.That(outputs[2].TryGetFrame("cam.px", out SensorFrame<ImageFrame> recorded), Is.True);
+            Assert.That((recorded.Sequence, recorded.StateSequence), Is.EqualTo((late.Sequence, late.StateSequence)));
+        }
+
+        // A projection that throws in Publish, here because a visible device's sensor publishes a
+        // payload its kind's projection does not take, ends the run as a throwing sensor does: the
+        // run stops, RunTerminated says why once, and a retried Step is refused, so the log holds one
+        // Applied record for the step (CORE-23 review).
+        [Test]
+        public void AFrameItsProjectionCannotTakeEndsTheRun()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine(), device => new WrongPayloadSensor(device.Definition));
+            List<CommandRecord> log = new List<CommandRecord>();
+            List<Observation> terminated = new List<Observation>();
+            gateway.CommandLogged += log.Add;
+            gateway.RunTerminated += terminated.Add;
+            gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true)));
+
+            InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => gateway.Step());
+
+            Assert.That(error.Message, Is.EqualTo(
+                "Sensor 'rate.main' published a AngularRateMeasurement payload; its kind's controller projection takes ImuMeasurement."));
+            Assert.That(gateway.IsRunning, Is.False);
+            Assert.That(
+                terminated.ConvertAll(end => (end.Status, end.Sequence, end.TerminationReason)),
+                Is.EqualTo(new[] { (ObservationStatus.Stopped, 0L, "Publishing step 1 failed: " + error.Message) }));
+            InvalidOperationException retry = Assert.Throws<InvalidOperationException>(() => gateway.Step());
+            Assert.That(retry.Message, Is.EqualTo("The run has not started or has ended; call Reset."));
+            Assert.That(terminated.Count, Is.EqualTo(1));
+            Assert.That(
+                log.ConvertAll(record => (record.Outcome, record.Sequence)),
+                Is.EqualTo(new[] { (CommandOutcome.Applied, 0L), (CommandOutcome.Rejected, 0L) }));
         }
 
         [Test]
@@ -458,13 +679,25 @@ namespace Argus.Simulation.Tests
             Assert.That(error.Message, Does.Contain("'rate.main'"));
         }
 
-        // An ideal body-rate sensor with its device's ID, frame, period and source.
-        private static ISensor SameDefinitionStandIn(DeviceConfiguration device) =>
-            new IdealBodyRateSensorModel(
-                device.Definition.SensorId,
-                device.Definition.FrameId,
-                device.Definition.SamplePeriodSeconds,
-                device.Definition.Source);
+        // An IMU stand-in with its device's definition. The analytic engine has no backend
+        // measurements for ImuSensor to publish (D10), and a visible imu device's frames must be the
+        // kind's ImuMeasurement, the payload its identity projection takes (CORE-23).
+        private static ISensor SameDefinitionStandIn(DeviceConfiguration device) => new ImuStandIn(device.Definition);
+
+        // Publishes the true body rate and no specific force, as an ImuMeasurement.
+        private sealed class ImuStandIn : SensorModel<ImuMeasurement>
+        {
+            public ImuStandIn(SensorDefinition definition)
+                : base(definition)
+            {
+            }
+
+            protected override SensorFrameStatus Measure(SensorSampleContext context, out ImuMeasurement payload)
+            {
+                payload = new ImuMeasurement(context.Spacecraft.AngularVelocityBodyRadiansPerSecond, new Vector3d(0.0, 0.0, 0.0));
+                return SensorFrameStatus.Valid;
+            }
+        }
 
         // A sensor with any definition, for the guard to compare; it never samples.
         private sealed class DefinitionOnlySensor : ISensor
@@ -498,7 +731,130 @@ namespace Argus.Simulation.Tests
                 new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
                 TestCameras.Imx708Profile());
 
-        // Any valid sensor configuration; the test's factory samples it as an ideal body-rate sensor.
+        private static DeviceConfiguration NadirCamera(string sensorId, bool isControllerVisible) =>
+            TestCameras.NadirConfiguration(
+                new SensorDefinition(sensorId, "nadir-ground-truth", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible));
+
+        // A camera with a 4 x 2 px image at the fixed step's period, so it samples at every step.
+        private static DeviceConfiguration SmallCamera(string sensorId, bool isControllerVisible) =>
+            CameraKind.Instance.Configure(
+                new SensorDefinition(sensorId, "test-camera", sensorId, 0.1, "argus", SensorMount.Identity, isControllerVisible),
+                TestCameras.Profile(new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0), 0.0005));
+
+        // A distinct byte per position, for the request's image size.
+        private static byte[] Image(RenderRequest request, int bytesPerPixel)
+        {
+            byte[] data = new byte[request.Intrinsics.WidthPixels * request.Intrinsics.HeightPixels * bytesPerPixel];
+            for (int i = 0; i < data.Length; i++)
+            {
+                data[i] = (byte)(i + 1);
+            }
+
+            return data;
+        }
+
+        // Renders every request at once in one encoding.
+        private sealed class ImmediateRenderer : IImageRenderer
+        {
+            private readonly ImageEncoding _encoding;
+
+            public ImmediateRenderer(ImageEncoding encoding)
+            {
+                _encoding = encoding;
+            }
+
+            public string RendererName => "immediate-test";
+
+            public Task<ImageFrame> RenderAsync(RenderRequest request, CancellationToken cancellationToken)
+            {
+                byte[] data = _encoding == ImageEncoding.Png
+                    ? new byte[] { 137, 80, 78, 71 }
+                    : Image(request, _encoding == ImageEncoding.Rgba8 ? 4 : 3);
+                return Task.FromResult(new ImageFrame(request, _encoding, data, RendererName));
+            }
+        }
+
+        // Renders every request at once in Rgb8, filling each camera's image with its own byte.
+        private sealed class PerCameraRenderer : IImageRenderer
+        {
+            public string RendererName => "per-camera-test";
+
+            public static byte Fill(string cameraId) =>
+                cameraId == "cam.px" ? (byte)0x11 : cameraId == "cam.mx" ? (byte)0x22 : cameraId == "cam.nadir" ? (byte)0x33 : (byte)0x44;
+
+            public Task<ImageFrame> RenderAsync(RenderRequest request, CancellationToken cancellationToken)
+            {
+                byte[] data = new byte[request.Intrinsics.WidthPixels * request.Intrinsics.HeightPixels * 3];
+                for (int i = 0; i < data.Length; i++)
+                {
+                    data[i] = Fill(request.CameraId);
+                }
+
+                return Task.FromResult(new ImageFrame(request, ImageEncoding.Rgb8, data, RendererName));
+            }
+        }
+
+        // Each render completes, in Rgb8, only when the test says so.
+        private sealed class DeferredRenderer : IImageRenderer
+        {
+            private readonly List<(RenderRequest Request, TaskCompletionSource<ImageFrame> Render)> _renders =
+                new List<(RenderRequest Request, TaskCompletionSource<ImageFrame> Render)>();
+
+            public string RendererName => "deferred-test";
+
+            public Task<ImageFrame> RenderAsync(RenderRequest request, CancellationToken cancellationToken)
+            {
+                TaskCompletionSource<ImageFrame> render = new TaskCompletionSource<ImageFrame>();
+                _renders.Add((request, render));
+                return render.Task;
+            }
+
+            public void Complete(int index)
+            {
+                RenderRequest request = _renders[index].Request;
+                _renders[index].Render.SetResult(new ImageFrame(request, ImageEncoding.Rgb8, Image(request, 3), RendererName));
+            }
+        }
+
+        // A sensor with its device's definition that publishes a body rate, not its kind's
+        // ImuMeasurement, from step 1 on.
+        private sealed class WrongPayloadSensor : ISensor
+        {
+            private string _runId;
+
+            public WrongPayloadSensor(SensorDefinition definition)
+            {
+                Definition = definition;
+            }
+
+            public SensorDefinition Definition { get; }
+
+            public void Reset(SensorResetContext context)
+            {
+                _runId = context.RunId;
+            }
+
+            public bool TrySample(SensorSampleContext context, out ISensorFrame frame)
+            {
+                SpacecraftState spacecraft = context.Spacecraft;
+                frame = spacecraft.Sequence == 0
+                    ? null
+                    : new SensorFrame<AngularRateMeasurement>(
+                        _runId,
+                        Definition.SensorId,
+                        Definition.FrameId,
+                        spacecraft.Sequence - 1,
+                        spacecraft.Sequence,
+                        spacecraft.SimulationTimeSeconds,
+                        spacecraft.TimestampUtc,
+                        SensorFrameStatus.Valid,
+                        Definition.Source,
+                        new AngularRateMeasurement(spacecraft.AngularVelocityBodyRadiansPerSecond));
+                return frame != null;
+            }
+        }
+
+        // An imu device; each test's factory builds the sensor it samples.
         private static DeviceConfiguration Rate(string sensorId, bool isControllerVisible)
         {
             return ImuKind.Instance.Configure(

@@ -29,6 +29,10 @@ namespace Argus.Simulation.Core
 
         public RenderRequest Request { get; }
         public ImageEncoding Encoding { get; }
+
+        // A fresh array per frame, never written again once the renderer returns it (IImageRenderer):
+        // the recorder queues it by reference, so a reused buffer would change frames already queued
+        // (D6) and could show a controller another camera's pixels (D7).
         public byte[] Data { get; }
         public string Renderer { get; }
 
