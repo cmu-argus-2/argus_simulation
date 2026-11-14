@@ -49,7 +49,7 @@ namespace Argus.Simulation.Core
             }
 
             excess = $"values[\"{TorqueKey}\"] {Format(torque)} is past {MaxTorque} {Format(max)}";
-            return new DeviceValues.Builder().Add(TorqueKey, limited).Build();
+            return WithValue(values, TorqueKey, DeviceValue.FromVector3(limited));
         }
 
         protected override string FindProfileProblem(IdealBodyTorqueProfile profile)

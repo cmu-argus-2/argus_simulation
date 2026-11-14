@@ -291,6 +291,12 @@ namespace Argus.Simulation.Tests
             Assert.That(log[0].Applied.Value.Commands[1].Values.Number("dipole_a_m2"), Is.EqualTo(-0.2));
             Assert.That((log[1].Outcome, log[1].Reason), Is.EqualTo((CommandOutcome.Rejected,
                 "Device 'mtq.x' command values[\"dipole_a_m2\"] 0.25 is past max_dipole_a_m2 0.2, and its limit_policy is reject.")));
+            // The refused step didn't run: the engine last ran step 0's command, and step 1 comes next.
+            Assert.That(engine.LastCommands.Value.Sequence, Is.EqualTo(0));
+            Assert.That(gateway.NextSequence, Is.EqualTo(1));
+            gateway.Step(new DeviceCommandSet(1, 0.1, new[] { torque }));
+            Assert.That((log[2].Outcome, engine.LastCommands.Value.Sequence, gateway.NextSequence),
+                Is.EqualTo((CommandOutcome.Clamped, 1L, 2L)));
         }
 
         [Test]

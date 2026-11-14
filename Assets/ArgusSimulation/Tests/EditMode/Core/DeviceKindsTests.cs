@@ -6,11 +6,6 @@ namespace Argus.Simulation.Tests
 {
     public sealed class DeviceKindsTests
     {
-        // Each kind declares whether the backend models it, so Argus never computes a kind the
-        // backend models (D10, CORE-18), and whether a controller may see its frames, which a kind
-        // whose frames carry truth may not (D7), and whether it is a camera (ICameraKind: the
-        // recorder's cameras[] and the shared profile-ID rule, CORE-6). A new kind fails here until it
-        // has a row.
         // CORE-10: each actuator kind holds a command to its device's limits. Within them, the values
         // come back as given and excess is null; past them, each value is at its nearest limit, with its
         // sign, and excess names it. At the limit is within.
@@ -62,6 +57,25 @@ namespace Argus.Simulation.Tests
             Assert.That(ReferenceEquals(limited, values), Is.EqualTo(expectedExcess == null), "unchanged values come back as given");
         }
 
+        // The ideal torque holds each body axis to its own limit: x and y are past theirs, and z, past
+        // x's and y's limits but within its own, is unchanged. Any axis checked against another's limit
+        // gives a different result.
+        [Test]
+        public void TheIdealTorqueHoldsEachAxisToItsOwnLimit()
+        {
+            DeviceValues parameters = IdealBodyTorqueKind.Instance.Configure(
+                Actuator(), new IdealBodyTorqueProfile(new Vector3d(1e-3, 2e-3, 3e-3), ActuatorLimitPolicy.Clamp)).Parameters;
+            DeviceValues command = new DeviceValues.Builder()
+                .Add(IdealBodyTorqueKind.TorqueKey, new Vector3d(1.5e-3, 2.5e-3, 2.5e-3))
+                .Build();
+
+            DeviceValues limited = IdealBodyTorqueKind.Instance.Limit(parameters, command, out string excess);
+
+            Assert.That(limited.Vector3(IdealBodyTorqueKind.TorqueKey), Is.EqualTo(new Vector3d(1e-3, 2e-3, 2.5e-3)));
+            Assert.That(excess, Is.EqualTo(
+                "values[\"torque_body_n_m\"] (0.0015, 0.0025, 0.0025) is past max_torque_body_n_m (0.001, 0.002, 0.003)"));
+        }
+
         [Test]
         public void AnActuatorsLimitPolicyIsItsParameter()
         {
@@ -79,6 +93,11 @@ namespace Argus.Simulation.Tests
 
         private static DeviceValues Parameters(DeviceConfiguration configuration) => configuration.Parameters;
 
+        // Each kind declares whether the backend models it, so Argus never computes a kind the
+        // backend models (D10, CORE-18), and whether a controller may see its frames, which a kind
+        // whose frames carry truth may not (D7), and whether it is a camera (ICameraKind: the
+        // recorder's cameras[] and the shared profile-ID rule, CORE-6). A new kind fails here until it
+        // has a row.
         [Test]
         public void EveryKindDeclaresWhoModelsItWhetherAControllerMaySeeItAndWhetherItIsACamera()
         {

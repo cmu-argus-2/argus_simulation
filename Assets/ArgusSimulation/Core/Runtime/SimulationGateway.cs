@@ -304,12 +304,18 @@ namespace Argus.Simulation.Core
                 DeviceValues values = actuator.Limit(parameters, device.Values, out string excess);
                 if (excess != null)
                 {
-                    if (actuator.LimitPolicyOf(parameters) != ActuatorLimitPolicy.Clamp)
+                    switch (actuator.LimitPolicyOf(parameters))
                     {
-                        return $"Device '{device.DeviceId}' command {excess}, and its limit_policy is reject.";
+                        case ActuatorLimitPolicy.Clamp:
+                            clamps.Add($"Device '{device.DeviceId}' command {excess}; clamped.");
+                            break;
+                        case ActuatorLimitPolicy.Reject:
+                            return $"Device '{device.DeviceId}' command {excess}, and its limit_policy is reject.";
+                        default:
+                            // A valid configuration has a known policy, so this is a bug, not a refusal.
+                            throw new InvalidOperationException(
+                                $"Device '{device.DeviceId}' has limit_policy {actuator.LimitPolicyOf(parameters)}, which the gateway does not apply.");
                     }
-
-                    clamps.Add($"Device '{device.DeviceId}' command {excess}; clamped.");
                 }
 
                 // An engine that only records commands (the analytic fixture) would log a command as

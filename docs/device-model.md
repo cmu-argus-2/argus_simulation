@@ -73,8 +73,8 @@ that configures a `momentum_wheel` or `thruster` (UNIMPLEMENTED), so every comma
 acts (`Argus.Basilisk/README.md` §9 "Actuators"). Over an engine that only records commands (the
 analytic fixture), the gateway refuses (logs `Rejected`) any command that is not the kind's idle
 values, so the run continues and the log tells the truth. A spacecraft whose actuators aren't
-known yet uses one `ideal_body_torque` device; the P0 run file lists `torque.body` with
-placeholder limits until DATA-2 (#68)'s six coils land in it.
+known yet uses one `ideal_body_torque` device; the P0 run file lists `torque.body`, with DATA-2
+(#68)'s `reject` at 1e-4 N·m per axis, until DATA-2's six coils land in it.
 
 **The IMU is one kind,** `imu`, with `gyroscope.*` and `accelerometer.*` parameters and one frame
 that carries both channels. This matches Basilisk's `imuSensor` and today's `ImuMeasurement`, so
@@ -257,8 +257,7 @@ message DeviceCommandSet {
   `Clamped`, with the requested and applied command and the reason; `reject` refuses the whole
   command (`Rejected`), so the step doesn't run.
 - **In Core**, `DeviceCommandSet` (which replaced `ActuatorCommandSet`) holds the sequence, the
-  apply time and the `DeviceCommand`s, each a device ID and its values. Until actuator kinds
-  exist, no device is a configured actuator, so only the empty set is applied.
+  apply time and the `DeviceCommand`s, each a device ID and its values.
 - **`commands.jsonl`**: `requested` and `applied` keep `sequence` and
   `apply_at_simulation_time_s`. The three vectors are replaced by `devices`, which maps each device
   ID to its values. `requested` is what the controller sent. `applied` lists every configured

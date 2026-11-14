@@ -155,9 +155,12 @@ state as `devices` with the first stateful actuator, the momentum wheel. These f
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
 every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
 an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
-reason. `Applied` means the gateway accepted the command for the engine. If the run ended at that
-step (the manifest's `termination` has that `last_sequence`), the engine may not have run it; state
-k+1's `producing_command` is the confirmation that it did. `Clamped` means the gateway held a value past its device's limits at that limit, per the device's `limit_policy` (CORE-10, #46): `requested` is the command as sent, `applied` what the engine ran, and `reason` names each clamped value; a `reject` policy logs `Rejected` instead. The file
+reason. `Applied` means the gateway accepted the command for the engine. `Clamped` means it
+accepted the command with a value past its device's limits held at that limit, per the device's
+`limit_policy` (CORE-10, #46): `requested` is the command as sent, `applied` what the engine was
+given, and `reason` names each clamped value; a `reject` policy logs `Rejected` instead. For
+either, if the run ended at that step (the manifest's `termination` has that `last_sequence`), the
+engine may not have run it; state k+1's `producing_command` is the confirmation that it did. The file
 is created in every run directory, so it is empty when no command was received, as in
 Unity-driven runs, which bypass the gateway (G1).
 

@@ -84,7 +84,20 @@ namespace Argus.Simulation.Core
             }
 
             excess = $"values[\"{key}\"] {Format(value)} is past {maxKey} {Format(max)}";
-            return new DeviceValues.Builder().Add(key, limited).Build();
+            return WithValue(values, key, DeviceValue.FromNumber(limited));
+        }
+
+        // values with key's value replaced and every other key kept, so a kind with several command
+        // keys keeps the ones it didn't limit.
+        protected static DeviceValues WithValue(DeviceValues values, string key, DeviceValue value)
+        {
+            DeviceValues.Builder builder = new DeviceValues.Builder();
+            foreach (KeyValuePair<string, DeviceValue> entry in values)
+            {
+                builder.Add(entry.Key, entry.Key == key ? value : entry.Value);
+            }
+
+            return builder.Build();
         }
 
         protected static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);
