@@ -6,7 +6,7 @@ in `Core/Contracts`, the kinds in `Core/Sensors`, `argus.sim.v1/devices.proto` a
 per-step device state, which comes with the first stateful actuator, the momentum wheel. The
 actuator kinds of §2 are registered on both sides (CON-2, #34), and the service builds the
 `ideal_body_torque` and `magnetic_torquer` effectors (BSK-8, #21). Still to build: the
-`momentum_wheel` and `thruster` effectors, which P0 doesn't carry (DATA-2, #68; BSK-17), and the profile
+`momentum_wheel` and `thruster` effectors, which P0 doesn't carry (DATA-2, #68; BSK-17, #152), and the profile
 files (HOST-9, #113; until then the devices live in the run file's `devices`).
 
 A spacecraft is a body plus a list of configured devices ([target-architecture.md](target-architecture.md)
@@ -232,7 +232,7 @@ message RunConfiguration {
   are reserved.
 - Per-step actuator state arrives as `repeated BasiliskDeviceState device_states` on
   `StepResponse` (`device_id`, `map<string, DeviceValue> state`). It is added with the first
-  stateful actuator, the momentum wheel (BSK-17); neither kind BSK-8 (#21) built has state.
+  stateful actuator, the momentum wheel (BSK-17, #152); neither kind BSK-8 (#21) built has state.
 
 ## 6. Commands and device state
 
@@ -311,5 +311,5 @@ v1 is now additive only, and the rest are additions.
 | `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), merged before HOST-5 |
 | `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), merged before HOST-5 |
 | Profile and run file split | no (a host format) | HOST-9 (#113), any time |
-| Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | with the first stateful actuator, the momentum wheel (BSK-17) |
+| Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | with the first stateful actuator, the momentum wheel (BSK-17, #152) |
 | New kinds | no (registry only) | the actuator kinds in CON-2 (#34); later kinds any time |
