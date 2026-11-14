@@ -1,6 +1,6 @@
 # Argus.Basilisk: Basilisk simulation service
 
-**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 6 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors), ClockSynch pacing, and the ideal body torque and magnetic torquer actuators; magnetometer and light-sensor noise are drawn in the service; momentum wheels and thrusters are not built (BSK-17)
+**Diagram block:** Basilisk service · **Process:** Python, outside Unity · **Status:** build steps 1 to 6 (§12): spacecraft, SPICE, eclipse, the P0 sensors (IMU, magnetometer, light sensors), ClockSynch pacing, and the ideal body torque and magnetic torquer actuators; magnetometer and light-sensor noise are drawn in the service; momentum wheels and thrusters are not built (BSK-17, #152)
 
 The Python gRPC service that runs the Basilisk simulation, with SPICE inside it through
 `spiceInterface`. It is the authoritative dynamics backend and owns simulation time in every
@@ -622,7 +622,7 @@ messages before running to t_n (§3 Step 5), each actuator the set leaves out at
 |---|---|---|---|
 | `ideal_body_torque` | one `extForceTorque` per device, `cmdTorqueInMsg` | nothing: `max_torque_body_n_m` only bounds the command | `torqueRequestBody = torque_body_n_m` |
 | `magnetic_torquer` | one `MtbEffector` for all of them, `magInMsg` = the `MagneticFieldWMM` output | `numMTB`; column j of `GtMatrix_B` (3 × numMTB, row-major) is device j's `dipole_axis_body`, in configuration order; `maxMtbDipoles[j] = max_dipole_a_m2` | `mtbDipoleCmds[j] = dipole_a_m2` |
-| `momentum_wheel`, `thruster` | not built: P0 carries neither, so ConfigureRun returns UNIMPLEMENTED (§3); BSK-17 builds them | | |
+| `momentum_wheel`, `thruster` | not built: P0 carries neither, so ConfigureRun returns UNIMPLEMENTED (§3); BSK-17 (#152) builds them | | |
 
 - **When each reads its command.** `extForceTorque` reads `cmdTorqueInMsg` in `UpdateState`,
   so it must run before the spacecraft at t_n; after it, the command would act a step late.
