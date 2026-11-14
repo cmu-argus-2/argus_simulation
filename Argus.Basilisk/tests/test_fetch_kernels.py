@@ -190,7 +190,7 @@ def test_coverage_outside_the_files_fails(field, value, gap):
         fetch_kernels.check_coverage(manifest, ROOT / "kernels")
 
 
-def test_service_never_imports_the_tool_or_spiceypy():
+def test_service_never_imports_the_tools_or_spiceypy():
     for path in (ROOT / "argus_basilisk").rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
@@ -200,4 +200,4 @@ def test_service_never_imports_the_tool_or_spiceypy():
             else:
                 continue
             for name in names:
-                assert name.split(".")[0] not in ("fetch_kernels", "spiceypy"), path
+                assert name.split(".")[0] not in ("fetch_kernels", "check_reference_runs", "scripts", "spiceypy"), path

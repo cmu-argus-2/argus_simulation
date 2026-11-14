@@ -456,6 +456,106 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
+        // HOST-8 (#32): the reference cases are frozen run files next to P0, checked by
+        // Argus.Basilisk/scripts/check_reference_runs.py. Each must load, validly, at the epoch and
+        // kernel set its checker case assumes.
+        [Test]
+        public void EveryReferenceRunFileLoadsAtTheReferenceEpochAndKernelSet()
+        {
+            Assert.That(Directory.Exists(ReferenceRunDirectory), Is.True, ReferenceRunDirectory);
+            string[] present = Directory.GetFiles(ReferenceRunDirectory, "*.json")
+                .Select(Path.GetFileName)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            Assert.That(present, Is.EqualTo(ReferenceRunFiles.OrderBy(name => name, StringComparer.Ordinal).ToArray()));
+
+            foreach (string name in ReferenceRunFiles)
+            {
+                SimulationConfiguration run = Reference(name);
+                Assert.That(run.IsValid, Is.True, name);
+                Assert.That(run.EpochUtc, Is.EqualTo(new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero)), name);
+                Assert.That(run.KernelSetId, Is.EqualTo("argus-2026-11-02"), name);
+                Assert.That(run.InitialOrbit.HasValue && run.Spacecraft.HasValue, Is.True, name);
+            }
+        }
+
+        // R2's closed form needs a spin about a principal axis that stays put, so +Y is the unique
+        // major axis of a diagonal inertia, and the start is tilted (40° about (1, -2, 0.5)), not
+        // identity, where convention errors are invisible.
+        [Test]
+        public void ReferenceSpinStartsTiltedAndSpinsAboutTheUniqueMajorAxis()
+        {
+            SpacecraftConfiguration spacecraft = Reference("r2-spin.json").Spacecraft.Value;
+            Matrix3d inertia = spacecraft.InertiaBodyKilogramSquareMeters;
+            Assert.That(
+                new[] { inertia.Row0.Y, inertia.Row0.Z, inertia.Row1.X, inertia.Row1.Z, inertia.Row2.X, inertia.Row2.Y },
+                Is.All.EqualTo(0.0));
+            Assert.That(inertia.Row1.Y, Is.GreaterThan(inertia.Row0.X).And.GreaterThan(inertia.Row2.Z));
+
+            double half = 20.0 * Math.PI / 180.0;
+            Vector3d axis = new Vector3d(1.0, -2.0, 0.5) / Math.Sqrt(5.25);
+            Quaterniond q0 = spacecraft.InitialBodyToJ2000;
+            AssertClose(new Vector3d(q0.X, q0.Y, q0.Z), axis * Math.Sin(half), "initial attitude vector part");
+            Assert.That(q0.W, Is.EqualTo(Math.Cos(half)).Within(1e-15), "initial attitude scalar part");
+            AssertClose(
+                spacecraft.InitialAngularVelocityBodyRadiansPerSecond,
+                new Vector3d(0.0, 20.17 * Math.PI / 180.0, 0.0),
+                "spin rate");
+        }
+
+        // With ω = f = 0, an anomaly or argument mix-up in elements → state gives 0 m, so R1e uses
+        // generic angles.
+        [Test]
+        public void ReferenceEccentricOrbitUsesGenericAngles()
+        {
+            ClassicalOrbitElements orbit = Reference("r1e-eccentric.json").InitialOrbit.Value;
+            Assert.That(
+                new[]
+                {
+                    orbit.SemiMajorAxisMeters, orbit.Eccentricity, orbit.InclinationDegrees, orbit.RaanDegrees,
+                    orbit.ArgumentOfPeriapsisDegrees, orbit.TrueAnomalyDegrees,
+                },
+                Is.EqualTo(new[] { 6958137.0, 0.01, 97.75, 251.0, 37.0, 113.0 }));
+        }
+
+        // R5 must catch a misread light-sensor mount, which an identity mount can't. The sensor sits on a 35°
+        // mount, and the start q_s ⊗ q_mount* puts its boresight (device +Z) on the Sun's J2000 direction at the
+        // epoch: RA 69.058°, Dec 22.040° (rounded to 0.001°, so within about 3e-5 rad).
+        [Test]
+        public void ReferenceSunPointingSensorHasARotatedMountAndStartsOnTheSun()
+        {
+            SimulationConfiguration run = Reference("r5-sun-pointing.json");
+            Quaterniond mount = run.Devices.Single(device => device.Kind == "light_sensor").Definition.Mount.SensorToBody;
+            Assert.That(2.0 * Math.Acos(Math.Abs(mount.W)), Is.EqualTo(35.0 * Math.PI / 180.0).Within(1e-12), "mount angle");
+
+            double ra = 69.058 * Math.PI / 180.0;
+            double dec = 22.040 * Math.PI / 180.0;
+            Vector3d sun = new Vector3d(Math.Cos(dec) * Math.Cos(ra), Math.Cos(dec) * Math.Sin(ra), Math.Sin(dec));
+            Vector3d boresight = run.Spacecraft.Value.InitialBodyToJ2000.Rotate(mount.Rotate(new Vector3d(0, 0, 1)));
+            Assert.That(Math.Acos(Math.Min(1.0, Vector3d.Dot(boresight, sun))), Is.LessThan(1e-4), "boresight to the Sun, rad");
+        }
+
+        // R3 must exercise the products of inertia, which a diagonal inertia can't.
+        [Test]
+        public void ReferenceTumbleHasProductsOfInertia()
+        {
+            Matrix3d inertia = Reference("r3-tumble.json").Spacecraft.Value.InertiaBodyKilogramSquareMeters;
+            Assert.That(new[] { inertia.Row0.Y, inertia.Row0.Z, inertia.Row1.Z }, Is.All.Not.EqualTo(0.0));
+        }
+
+        private static readonly string ReferenceRunDirectory =
+            Path.Combine(AppContext.BaseDirectory, "runs", "reference");
+
+        private static readonly string[] ReferenceRunFiles =
+        {
+            "r1-orbit-dt0.1.json", "r1-orbit-dt1.json", "r1e-eccentric.json", "r2-spin.json",
+            "r2-long-q0-dt0.1.json", "r2-long-q0-dt1.json", "r2-long-identity-dt0.1.json", "r2-long-identity-dt1.json",
+            "r3-tumble.json", "r5-sun-pointing.json",
+        };
+
+        private static SimulationConfiguration Reference(string name) =>
+            RunConfigurationFile.Load(Path.Combine(ReferenceRunDirectory, name), RunId);
+
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
 
         // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
