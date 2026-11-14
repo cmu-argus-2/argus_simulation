@@ -91,15 +91,30 @@ namespace Argus.Simulation.Core
         // frames belong to the run directory the reset just ended (G3).
         protected override void OnReset(SensorResetContext context) => AbandonPending();
 
-        // The run ended (a stop, a backend failure, or a Reset that replaces this camera): the same,
-        // so no render for a finished run keeps going (CORE-21).
+        // The run ended (a stop, a backend failure, Finish, or a Reset that replaces this camera):
+        // the same, so no render for a finished run keeps going (CORE-21).
         protected override void OnEnd() => AbandonPending();
 
+        // Every pending exposure is abandoned even if one's cancellation throws (a renderer's token
+        // callback); the failures are thrown together at the end.
         private void AbandonPending()
         {
+            List<Exception> failures = null;
             while (_pending.Count > 0)
             {
-                Abandon(_pending.Dequeue());
+                try
+                {
+                    Abandon(_pending.Dequeue());
+                }
+                catch (Exception exception)
+                {
+                    (failures ??= new List<Exception>()).Add(exception);
+                }
+            }
+
+            if (failures != null)
+            {
+                throw new AggregateException($"Camera '{Definition.SensorId}' could not cancel every pending render.", failures);
             }
         }
 
@@ -210,11 +225,12 @@ namespace Argus.Simulation.Core
         private static ImageFrame WithoutPixels(RenderRequest request) =>
             new ImageFrame(request, default, null, null);
 
-        // Not disposed: the renderer may still hold the token.
+        // Not disposed: the renderer may still hold the token. Observed first, because Cancel rethrows
+        // an exception from a token callback, and the render's later fault must still be observed.
         private static void Abandon(PendingExposure exposure)
         {
-            exposure.Cancellation?.Cancel();
             Observe(exposure.Render);
+            exposure.Cancellation?.Cancel();
         }
 
         // Marks a failed or abandoned render's exception as observed, now or when it finishes.

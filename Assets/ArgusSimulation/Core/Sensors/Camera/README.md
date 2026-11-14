@@ -105,10 +105,15 @@ An exposure still pending when the run ends or the camera resets is abandoned, n
 `TrySample` is a frame's only way out, and neither case samples that run again. Abandoning also
 cancels the render and observes its exception if it later faults, so no render for a finished run
 keeps going unnoticed (CORE-21, #119). The gateway reaches every path: `SimulationGateway.Stop`,
-a backend failure and a cancelled step call `ISensor.End` through `SensorManager.End`, and a
-second `Reset` ends the old sensors before it replaces them. `End` is idempotent, and sensors
-with nothing pending ignore it. Frames are published in sequence order, so abandoned exposures are always
-the last ones: a camera's frames in a run directory can stop short of its last slot, but their
+a backend failure, a cancelled step and `SimulationGateway.Finish` (a run that reached its last
+step; the host calls it) call `ISensor.End` through `SensorManager.End`, and a second `Reset`
+ends the old sensors before it replaces them, after it has checked the new ones. `End` is
+idempotent, and sensors with nothing pending ignore it. It releases work but doesn't invalidate
+the sensor: sampling after `End` still works until the next `Reset`. A renderer whose cancellation
+callback throws stops nothing: the camera observes the render first, abandons its other pending
+exposures, and every other sensor is still ended; the gateway ignores the failure, so the run ends
+as it would have. Frames are published in sequence order, so abandoned exposures are always the
+last ones: a camera's frames in a run directory can stop short of its last slot, but their
 `sequence` has no gaps. The manifest does not count them.
 
 `PendingExposureCount` is a queue depth, not something to wait on. It falls only inside

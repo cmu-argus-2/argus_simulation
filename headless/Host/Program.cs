@@ -188,6 +188,8 @@ namespace Argus.Simulation.Host
 
                     if (observation.Sequence >= lastSequence)
                     {
+                        // The run reached its duration: its sensors release what they hold (CORE-21).
+                        gateway.Finish();
                         break;
                     }
 

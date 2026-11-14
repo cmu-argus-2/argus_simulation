@@ -85,8 +85,9 @@ namespace Argus.Simulation.Core
             Failure = null;
             // The run in progress, if any, ends here: its sensors are replaced without being sampled
             // again, so they release their renders first (CORE-21). End is idempotent, so sensors a
-            // stop or failure already ended are unaffected.
-            _sensors?.End();
+            // stop, failure or Finish already ended are unaffected. Only after BuildSensors, so a
+            // refused Reset leaves the run in progress and its renders untouched (CORE-22).
+            EndSensors();
             _engine.Initialize(run);
             _scenario = run;
             _sensors = sensors;
@@ -198,6 +199,21 @@ namespace Argus.Simulation.Core
             return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
         }
 
+        // The run reached its last step: no sensor is sampled again, so each releases what it holds,
+        // such as a camera's renders (CORE-21), and Step refuses further commands. Nothing went wrong,
+        // so there is no terminal observation and RunTerminated is not raised; the recording ends as
+        // complete. Does nothing when no run is running.
+        public void Finish()
+        {
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            _isRunning = false;
+            EndSensors();
+        }
+
         // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
         // backend's own; the reason names the step that failed.
         private Observation Terminate(Exception failure)
@@ -219,17 +235,25 @@ namespace Argus.Simulation.Core
                 status,
                 reason);
             // No sensor is sampled again for this run, so each releases what it holds, such as a
-            // camera's renders (CORE-21); subscribers still learn why the run ended if one throws.
+            // camera's renders (CORE-21).
+            EndSensors();
+            RunTerminated?.Invoke(observation);
+            return observation;
+        }
+
+        // Ends the current sensors' run. A sensor that throws (a renderer's token callback) is
+        // ignored, as in EndBeforeRethrow: every other sensor has still been ended (SensorManager.End),
+        // and it must not change how the run ended, such as a BackendFailed observation becoming an
+        // exception from Step.
+        private void EndSensors()
+        {
             try
             {
                 _sensors?.End();
             }
-            finally
+            catch (Exception)
             {
-                RunTerminated?.Invoke(observation);
             }
-
-            return observation;
         }
 
         // Ends a running run before an exception propagates, so RunTerminated still tells subscribers

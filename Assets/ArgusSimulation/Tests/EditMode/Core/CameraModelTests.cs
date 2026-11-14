@@ -230,6 +230,93 @@ namespace Argus.Simulation.Tests
             Assert.That(frame.Sequence, Is.EqualTo(0));
         }
 
+        // CORE-21: End abandons pending exposures as Reset does. Ending twice is harmless, and the
+        // next Reset restarts the camera cleanly.
+        [Test]
+        public void EndAbandonsPendingExposuresAndResetRestartsCleanly()
+        {
+            TestRenderer renderer = new TestRenderer();
+            TestCamera camera = new TestCamera(1.0, double.PositiveInfinity, renderer);
+            SensorManager manager = Manager(camera);
+            manager.Sample(Context(0));
+
+            camera.End();
+            camera.End();
+
+            Assert.That(camera.PendingExposureCount, Is.EqualTo(0));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
+            manager.Reset(new SensorResetContext("run-2", DateTimeOffset.UnixEpoch, 2));
+            manager.Sample(new SensorSampleContext("run-2", StateWithEnvironment("run-2", 0)));
+            renderer.Complete(1);
+            SensorFrame<ImageFrame> frame = Single(manager.Sample(new SensorSampleContext("run-2", StateWithEnvironment("run-2", 1))));
+            Assert.That((frame.RunId, frame.Sequence, frame.Status), Is.EqualTo(("run-2", 0L, SensorFrameStatus.Valid)));
+        }
+
+        // With nothing pending, End changes nothing: the camera samples on as before.
+        [Test]
+        public void EndWithNothingPendingChangesNothing()
+        {
+            TestRenderer renderer = new TestRenderer();
+            TestCamera camera = new TestCamera(1.0, double.PositiveInfinity, renderer);
+            SensorManager manager = Manager(camera);
+
+            camera.End();
+
+            Assert.That(renderer.Requests, Is.Empty);
+            manager.Sample(Context(0));
+            Assert.That(camera.PendingExposureCount, Is.EqualTo(1));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.False);
+        }
+
+        // SensorManager.End ends every sensor, even past one that throws, and then throws its failure.
+        [Test]
+        public void SensorManagerEndReachesEverySensor()
+        {
+            EndCountingSensor first = new EndCountingSensor("a.first", throws: true);
+            EndCountingSensor second = new EndCountingSensor("b.second", throws: false);
+            SensorManager manager = new SensorManager();
+            manager.Register(first);
+            manager.Register(second);
+
+            AggregateException failure = Assert.Throws<AggregateException>(() => manager.End());
+
+            Assert.That((first.EndCount, second.EndCount), Is.EqualTo((1, 1)));
+            Assert.That(failure.InnerExceptions.Count, Is.EqualTo(1));
+        }
+
+        private sealed class EndCountingSensor : ISensor
+        {
+            private readonly bool _throws;
+
+            public EndCountingSensor(string sensorId, bool throws)
+            {
+                Definition = new SensorDefinition(sensorId, "test-sensor", sensorId, 1.0, "simulation", SensorMount.Identity);
+                _throws = throws;
+            }
+
+            public SensorDefinition Definition { get; }
+            public int EndCount { get; private set; }
+
+            public void Reset(SensorResetContext context)
+            {
+            }
+
+            public bool TrySample(SensorSampleContext context, out ISensorFrame frame)
+            {
+                frame = null;
+                return false;
+            }
+
+            public void End()
+            {
+                EndCount++;
+                if (_throws)
+                {
+                    throw new InvalidOperationException("End failed.");
+                }
+            }
+        }
+
         private static SensorManager Manager(CameraModel camera)
         {
             SensorManager manager = new SensorManager();
