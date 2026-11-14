@@ -6,6 +6,8 @@ from .. import seeds
 from ._common import NUMBER, VECTOR3, Invalid, array, dcm, non_negative, positive, vector3_value
 
 KIND = "magnetometer"
+# It reads the MagneticFieldWMM field.
+NEEDS_MAGNETIC_FIELD = True
 
 # output = clip(scale (B + noise + bias), -range, +range). README §9 maps each key.
 PARAMETERS = {

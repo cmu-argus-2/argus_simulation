@@ -64,11 +64,13 @@ namespace Argus.Simulation.Host.Tests
         }
 
         // BSK-8's end-to-end check, run against a running Basilisk service (default 127.0.0.1:50051,
-        // or $ARGUS_BASILISK_ENDPOINT); CI runs it in the Basilisk job. The P0 body starts at rest with
-        // a diagonal inertia, so a torque about z changes only the z rate, by torque x dt / Izz, over
-        // the step its command is for, and the rate holds once the torque is idle again. The command
-        // asks for twice P0's 1 mN·m limit, so the gateway clamps it (CORE-10) and the service, which
-        // refuses anything past the limit, runs it at the limit.
+        // or $ARGUS_BASILISK_ENDPOINT); CI runs it in the Basilisk job. P0's epoch, orbit and kernels,
+        // but its own body and actuator, so P0's attitude data and devices can change without touching
+        // it: the body starts at rest with a diagonal inertia, so a torque about z changes only the z
+        // rate, by torque x dt / Izz, over the step its command is for, and the rate holds once the
+        // torque is idle again. A spinning body with unequal inertias would change its own rates. The
+        // command asks for twice the device's 1 mN·m limit, so the gateway clamps it (CORE-10) and the
+        // service, which refuses anything past the limit, runs it at the limit.
         [Test, Explicit("Needs the Argus.Basilisk service running")]
         public void AGatewayOverTheServiceAppliesATorqueOverItsStep()
         {
@@ -80,9 +82,18 @@ namespace Argus.Simulation.Host.Tests
                 initialOrbit: p0.InitialOrbit,
                 randomSeed: p0.RandomSeed,
                 kernelSetId: p0.KernelSetId,
-                spacecraft: p0.Spacecraft,
-                devices: p0.Devices.Where(device => device.KindDefinition is IdealBodyTorqueKind).ToList());
-            Assert.That(scenario.Devices.Select(device => device.Definition.SensorId), Is.EqualTo(new[] { "torque.body" }));
+                spacecraft: new SpacecraftConfiguration(
+                    1.33,
+                    new Matrix3d(new Vector3d(2.536e-3, 0.0, 0.0), new Vector3d(0.0, 2.536e-3, 0.0), new Vector3d(0.0, 0.0, 2.217e-3)),
+                    new Quaterniond(0.0, 0.0, 0.0, 1.0),
+                    new Vector3d(0.0, 0.0, 0.0)),
+                devices: new[]
+                {
+                    IdealBodyTorqueKind.Instance.Configure(
+                        new SensorDefinition("torque.body", "ideal-body-torque", "torque_body", 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false),
+                        new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))
+                });
+            Assert.That(scenario.IsValid, Is.True);
             string endpoint = Environment.GetEnvironmentVariable(HostOptions.EndpointVariable) ?? "127.0.0.1:50051";
 
             using BasiliskEngine engine = new BasiliskEngine(new Uri($"http://{endpoint}"), 0.0, CancellationToken.None);

@@ -47,7 +47,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 │   ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
 │   ├── Gateway/                  # GatewayServer (placeholder)
 │   ├── Streaming/                # StateStreamServer, StateStreamPublisher, StateStreamMapper (argus/stream/v1)
-│   └── runs/                     # Run configuration files (p0-default.json: placeholder data)
+│   └── runs/                     # Run configuration files (p0-default.json: placeholder data; reference/: HOST-8's frozen cases)
 └── Host.Tests/                   # Host tests (NUnit)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
 Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)

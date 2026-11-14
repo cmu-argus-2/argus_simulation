@@ -42,9 +42,11 @@
     <ProjectReference Include="../Core/Argus.Simulation.Core.Headless.csproj" />
   </ItemGroup>
 
-  <!-- Run configuration files, copied next to the binary; the host reads runs/p0-default.json by default. -->
+  <!-- Run configuration files, copied next to the binary; the host reads runs/p0-default.json by default.
+       runs/reference/ holds HOST-8's frozen reference cases (#32). -->
   <ItemGroup>
     <None Update="runs/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="runs/reference/*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

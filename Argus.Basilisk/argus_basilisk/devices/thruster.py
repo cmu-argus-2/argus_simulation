@@ -5,6 +5,8 @@ Basilisk would model it as thrusterDynamicEffector (thrLoc_B is mount.position_b
 thrust_n to an on-time of thrust_n / max_thrust_n of the step. P0 carries no thruster (DATA-2,
 #68), so the kind has no builder and ConfigureRun returns UNIMPLEMENTED for it (README §9
 "Actuators").
+
+TODO(G1): build it in BSK-17 when a spacecraft carries one.
 """
 
 from ._common import ACTUATOR, NUMBER, TEXT, VECTOR3, Invalid, limit_policy, non_negative, positive, unit_axis
