@@ -7,9 +7,11 @@ namespace Argus.Simulation.Core
     // device configured as visible. A projection takes frames of one payload type and returns frames
     // of another, or the same, and keeps the envelope, so a controller's frame joins the recorded
     // frame it came from. The envelope is a frame's run ID, sensor ID, frame ID, sequence, state
-    // sequence, simulation time, UTC and source. The status is not part of it: a projection may
-    // change the status, to withhold a payload. A kind whose frames carry no truth declares the
-    // identity on its payload; a camera drops the pose and the Sun (CameraControllerProjection,
+    // sequence, simulation time, UTC and source. The status is not part of it: a projection keeps
+    // the status, or makes the frame Unavailable to withhold its payload; an Invalid frame stays
+    // Invalid. Any other change would show a controller a payload its sensor didn't produce (Valid
+    // and Stale carry one) or hide a fault (Invalid). A kind whose frames carry no truth declares
+    // the identity on its payload; a camera drops the pose and the Sun (CameraControllerProjection,
     // CORE-23).
     //
     // Project checks both payload types and the envelope, so a frame reaches a controller only as the
@@ -53,14 +55,22 @@ namespace Argus.Simulation.Core
                     $"The controller projection of sensor '{frame.SensorId}' changed the frame's {changed}.");
             }
 
+            if (projected.Status != frame.Status &&
+                (projected.Status != SensorFrameStatus.Unavailable || frame.Status == SensorFrameStatus.Invalid))
+            {
+                throw new InvalidOperationException(
+                    $"The controller projection of sensor '{frame.SensorId}' changed a {frame.Status} frame " +
+                    $"to {projected.Status}.");
+            }
+
             return projected;
         }
 
         // The controller's frame for one frame whose payload is InputPayloadType. It must keep the
-        // envelope and may change the status, for example to Unavailable when it drops the payload.
+        // envelope, and keeps the status or makes the frame Unavailable when it drops the payload.
         protected abstract ISensorFrame ProjectCore(ISensorFrame frame);
 
-        // The status is not part of the envelope: a projection may withhold a payload.
+        // The status is not part of the envelope: Project checks it separately.
         private static string ChangedEnvelopeField(ISensorFrame frame, ISensorFrame projected)
         {
             if (!string.Equals(frame.RunId, projected.RunId, StringComparison.Ordinal))

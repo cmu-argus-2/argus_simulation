@@ -37,7 +37,7 @@ namespace Argus.Simulation.Tests
             Assert.Throws<ArgumentNullException>(() => ControllerProjection.Identity<ImuMeasurement>().Project(null));
         }
 
-        // A projection may drop truth and change the status (a camera frame without a Sun becomes
+        // A projection may drop truth and lower the status (a camera frame without a Sun becomes
         // Unavailable), but not the payload type it declared or the envelope a recorded frame joins on.
         [TestCase("Status", null)]
         [TestCase("payload type", "returned a AngularRateMeasurement payload, not its declared ImuMeasurement.")]
@@ -66,11 +66,64 @@ namespace Argus.Simulation.Tests
             Assert.That(error.Message, Does.Not.Contain("0.125"));
         }
 
+        // A projection keeps a frame's status or makes it Unavailable to withhold its payload; any other
+        // change would show a controller a payload its sensor didn't produce (Stale and Valid carry one),
+        // or hide a fault (#151 review, item 1).
+        [TestCase(SensorFrameStatus.Valid, SensorFrameStatus.Unavailable, true)]
+        [TestCase(SensorFrameStatus.Stale, SensorFrameStatus.Unavailable, true)]
+        [TestCase(SensorFrameStatus.Invalid, SensorFrameStatus.Invalid, true)]
+        [TestCase(SensorFrameStatus.Unavailable, SensorFrameStatus.Valid, false)]
+        [TestCase(SensorFrameStatus.Stale, SensorFrameStatus.Valid, false)]
+        [TestCase(SensorFrameStatus.Invalid, SensorFrameStatus.Valid, false)]
+        [TestCase(SensorFrameStatus.Unavailable, SensorFrameStatus.Stale, false)]
+        [TestCase(SensorFrameStatus.Valid, SensorFrameStatus.Stale, false)]
+        [TestCase(SensorFrameStatus.Invalid, SensorFrameStatus.Unavailable, false)]
+        public void AProjectionMayOnlyKeepTheStatusOrMakeItUnavailable(
+            SensorFrameStatus input, SensorFrameStatus output, bool allowed)
+        {
+            SensorFrame<ImuMeasurement> frame = Frame(Imu(0.125), input);
+            ControllerProjection projection = new Restating(output);
+
+            if (allowed)
+            {
+                Assert.That(projection.Project(frame).Status, Is.EqualTo(output));
+                return;
+            }
+
+            InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => projection.Project(frame));
+            Assert.That(
+                error.Message,
+                Is.EqualTo($"The controller projection of sensor 'imu.main' changed a {input} frame to {output}."));
+            Assert.That(error.Message, Does.Not.Contain("0.125"));
+        }
+
         private static ImuMeasurement Imu(double rate) =>
             new ImuMeasurement(new Vector3d(rate, 0.0, 0.0), new Vector3d(0.0, 0.0, 0.0));
 
-        private static SensorFrame<T> Frame<T>(T payload) =>
-            new SensorFrame<T>("run-1", "imu.main", "imu_main", 4, 40, 4.0, Utc, SensorFrameStatus.Valid, "basilisk", payload);
+        private static SensorFrame<T> Frame<T>(T payload, SensorFrameStatus status = SensorFrameStatus.Valid) =>
+            new SensorFrame<T>("run-1", "imu.main", "imu_main", 4, 40, 4.0, Utc, status, "basilisk", payload);
+
+        // An identity on ImuMeasurement that gives every frame one status.
+        private sealed class Restating : ControllerProjection
+        {
+            private readonly SensorFrameStatus _status;
+
+            public Restating(SensorFrameStatus status)
+            {
+                _status = status;
+            }
+
+            public override Type InputPayloadType => typeof(ImuMeasurement);
+            public override Type OutputPayloadType => typeof(ImuMeasurement);
+
+            protected override ISensorFrame ProjectCore(ISensorFrame frame)
+            {
+                SensorFrame<ImuMeasurement> f = (SensorFrame<ImuMeasurement>)frame;
+                return new SensorFrame<ImuMeasurement>(
+                    f.RunId, f.SensorId, f.FrameId, f.Sequence, f.StateSequence, f.SimulationTimeSeconds,
+                    f.TimestampUtc, _status, f.Source, f.Payload);
+            }
+        }
 
         // An identity on ImuMeasurement that changes one thing.
         private sealed class Changing : ControllerProjection

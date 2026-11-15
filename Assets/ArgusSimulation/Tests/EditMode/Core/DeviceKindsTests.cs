@@ -549,7 +549,7 @@ namespace Argus.Simulation.Tests
         }
 
         private static SensorDefinition Definition(string sensorId, string source = DeviceSource.Basilisk) =>
-            new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, source, SensorMount.Identity);
+            new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, source, SensorMount.Identity, isControllerVisible: true);
 
         // A kind's own source, or Basilisk's for a name the registry doesn't know.
         private static string SourceOf(string kind) =>

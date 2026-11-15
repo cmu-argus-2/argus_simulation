@@ -599,7 +599,7 @@ namespace Argus.Simulation.Tests
                         changed == "w" ? -0.5 : 0.5));
             AnalyticSimulationEngine engine = Engine();
             DeviceConfiguration device = ImuKind.Instance.Configure(
-                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount, isControllerVisible: true),
                 TestImu.P0LikeProfile());
             SimulationGateway gateway = new SimulationGateway(
                 engine,
@@ -632,7 +632,7 @@ namespace Argus.Simulation.Tests
                 written == "negated" ? new Quaterniond(-turn.X, -turn.Y, -turn.Z, -turn.W) : turn.Normalized());
             AnalyticSimulationEngine engine = Engine();
             DeviceConfiguration device = ImuKind.Instance.Configure(
-                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount),
+                new SensorDefinition("rate.main", "test-rate", "rate.main", 0.1, DeviceSource.Basilisk, mount, isControllerVisible: true),
                 TestImu.P0LikeProfile());
             SimulationGateway gateway = new SimulationGateway(
                 engine,

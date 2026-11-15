@@ -42,6 +42,21 @@ namespace Argus.Simulation.Tests
             Assert.That(configuration.IsValid, Is.EqualTo(isValid));
         }
 
+        // Every sensor definition states whether a controller may see it: a camera built in code is not
+        // shown to a controller by a default nobody chose (#151 review, item 2).
+        [Test]
+        public void EverySensorDefinitionStatesWhetherAControllerMaySeeIt()
+        {
+            System.Reflection.ConstructorInfo[] constructors = typeof(SensorDefinition).GetConstructors();
+            Assert.That(constructors, Is.Not.Empty);
+            foreach (System.Reflection.ConstructorInfo constructor in constructors)
+            {
+                System.Reflection.ParameterInfo visible =
+                    constructor.GetParameters().Single(parameter => parameter.Name == "isControllerVisible");
+                Assert.That(visible.HasDefaultValue, Is.False);
+            }
+        }
+
         // A controller sees a camera through its kind's projection, a CameraObservation without the
         // pose (D7, CORE-23), so a run may show a body camera to the controller. The nadir camera is
         // ground truth, with no projection, so it may never be visible.
@@ -86,7 +101,7 @@ namespace Argus.Simulation.Tests
         public void BackendListsHoldTheBasiliskModelledDevicesInOrder()
         {
             DeviceConfiguration magnetometer = MagnetometerKind.Instance.Configure(
-                new SensorDefinition("mag.main", "test-magnetometer", "mag_main", 0.1, "basilisk", SensorMount.Identity),
+                new SensorDefinition("mag.main", "test-magnetometer", "mag_main", 0.1, "basilisk", SensorMount.Identity, isControllerVisible: true),
                 new MagnetometerProfile(0.0, new Vector3d(0.0, 0.0, 0.0), 1.0, 1.3e-3));
             SimulationConfiguration run = Run(Camera(1.0), Imu(0.1), Camera(1.0, sensorId: "cam.py"), magnetometer);
 

@@ -242,7 +242,7 @@ An observation holds only what a controller can see (D7):
   with its own envelope (run ID, sensor ID, frame ID, sequence, state sequence, simulation time,
   UTC and source) and its status. A sensor that was not sampled at that step has no frame
   (D10). Each frame is its kind's controller projection of the recorded frame: the same
-  envelope, while the status may change, to withhold a payload. A camera's is a
+  envelope and the status, or the status `Unavailable` to withhold a payload (an `Invalid` frame stays `Invalid`). A camera's is a
   `CameraObservation` with no pose or Sun (CORE-23), `Unavailable` and without pixels unless
   the render is a valid raw RGB image lit by the run's Sun (an `Invalid` frame stays
   `Invalid`); a late camera frame keeps its capture state and time (G3);

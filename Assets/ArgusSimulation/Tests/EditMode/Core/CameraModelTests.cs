@@ -286,7 +286,7 @@ namespace Argus.Simulation.Tests
 
             public TestCamera(double periodSeconds, double maximumLatencySeconds, IImageRenderer renderer, SensorMount? mount = null)
                 : base(
-                    new SensorDefinition(CameraId, "test-camera", "cam_test", periodSeconds, "simulation", mount ?? SensorMount.Identity),
+                    new SensorDefinition(CameraId, "test-camera", "cam_test", periodSeconds, "simulation", mount ?? SensorMount.Identity, isControllerVisible: true),
                     TestIntrinsics,
                     0.01,
                     maximumLatencySeconds,

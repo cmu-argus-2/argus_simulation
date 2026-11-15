@@ -25,7 +25,7 @@ Common fields, the same for every kind:
 | `frameId` | Core only | The sensor frame's name in frames and datasets. |
 | `mount` | `mount` | `positionBodyMeters` (lever arm from the centre of mass) and `deviceToBody` (v_body = q v_device q*). It replaces `SensorMount`'s `sensorToBody`. An actuator's axis is a body-frame parameter, so its `deviceToBody` must be the identity; a thruster acts at its `positionBodyMeters`. |
 | `samplePeriodSeconds` | `sample_period_ns` | Sensors only: a positive whole number of fixed steps. Actuators have none: they take a command every step. |
-| `controllerVisible` | `controller_visible` | Sensors only; unset means visible, for a camera too. False for ground-truth sensors (D7). A visible device's frames reach a controller through its kind's controller projection (§2); a device whose kind has none, such as the nadir ground-truth camera, may not be visible. |
+| `controllerVisible` | `controller_visible` | Sensors only; the run file requires it, and Core's `SensorDefinition` has no default for it (#151 review). The service wire (`run_configuration.proto`) carries only backend-modelled devices, never a camera, and no Core code reads this field from it. A controller-facing wire (CON-3 #35) must not make a camera visible by default. False for ground-truth sensors (D7). A visible device's frames reach a controller through its kind's controller projection (§2); a device whose kind has none, such as the nadir ground-truth camera, may not be visible. |
 | `parameters` | `parameters` | The kind's fixed values (§3). |
 | `initialState` | `initial_state` | The kind's state at t = 0, for example a wheel's speed. Empty for kinds with no state, which includes the three P0 sensors. |
 
@@ -48,8 +48,8 @@ Each kind declares:
   camera publishes an `ImageFrame`, which holds its render request: the true camera pose and Sun.
 - **what a controller sees (sensors):** its controller projection (`IDeviceKind.ControllerProjection`,
   D7), which the gateway applies to each frame of a visible device. It names the payload it takes
-  and the one it gives, and keeps the frame's envelope (`ControllerProjection`); it may change the
-  status, to withhold a payload. A Basilisk-modelled kind's measurement
+  and the one it gives, and keeps the frame's envelope (`ControllerProjection`); it keeps the
+  status, or makes the frame `Unavailable` to withhold a payload; an `Invalid` frame stays `Invalid`. A Basilisk-modelled kind's measurement
   carries no truth, so its projection is the identity. A `camera` gives a `CameraObservation`:
   the camera ID, the frame's sequence, the exposure start and duration, and raw RGB pixels, with
   no pose, Sun or intrinsics (CORE-23). `nadir_ground_truth_camera` and the actuators have none,

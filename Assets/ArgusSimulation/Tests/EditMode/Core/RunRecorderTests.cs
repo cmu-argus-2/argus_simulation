@@ -214,7 +214,7 @@ namespace Argus.Simulation.Tests
             {
                 recorder.BeginRun(
                     new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, 0.1),
-                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity) });
+                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity, isControllerVisible: true) });
                 recorder.RecordSensorOutput(new SensorOutputSet("test-run", 13, 1.3, new ISensorFrame[]
                 {
                     Frame(late, SensorFrameStatus.Valid, new ImageFrame(late, ImageEncoding.Rgb8, new byte[4 * 2 * 3], "test-renderer"))

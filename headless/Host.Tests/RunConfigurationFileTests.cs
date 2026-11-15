@@ -697,7 +697,7 @@ namespace Argus.Simulation.Host.Tests
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             Vector3d Negate(Vector3d v) => new Vector3d(-v.X, -v.Y, -v.Z);
             SensorDefinition Definition(string sensorId, string modelName, string frameId, SensorMount mount) =>
-                new SensorDefinition(sensorId, modelName, frameId, 0.1, "basilisk", mount);
+                new SensorDefinition(sensorId, modelName, frameId, 0.1, "basilisk", mount, isControllerVisible: true);
             DeviceConfiguration Light(string sensorId, string frameId, Vector3d position, Vector3d sensorX, Vector3d sensorY, Vector3d sensorZ) =>
                 LightSensorKind.Instance.Configure(
                     Definition(sensorId, "placeholder-face-light-sensor", frameId, new SensorMount(position, Quaterniond.FromBasis(sensorX, sensorY, sensorZ))),
