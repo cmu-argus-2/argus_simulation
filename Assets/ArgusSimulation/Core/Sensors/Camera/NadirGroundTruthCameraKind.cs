@@ -11,7 +11,7 @@ namespace Argus.Simulation.Core
         public static readonly NadirGroundTruthCameraKind Instance = new NadirGroundTruthCameraKind();
 
         private NadirGroundTruthCameraKind()
-            : base(KindName, mayBeControllerVisible: false)
+            : base(KindName, projection: null)
         {
         }
 

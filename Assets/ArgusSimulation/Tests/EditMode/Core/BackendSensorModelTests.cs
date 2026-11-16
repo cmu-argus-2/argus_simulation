@@ -54,7 +54,7 @@ namespace Argus.Simulation.Tests
                 "imu_main",
                 0.1,
                 "basilisk",
-                SensorMount.Identity);
+                SensorMount.Identity, isControllerVisible: true);
             return ImuKind.Instance.Configure(definition, profile);
         }
 
