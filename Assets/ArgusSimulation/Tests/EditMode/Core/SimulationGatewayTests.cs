@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Argus.Simulation.Core;
 using NUnit.Framework;
 
@@ -201,6 +204,213 @@ namespace Argus.Simulation.Tests
             Assert.That(DeviceIds(log[5].Requested), Is.Empty);
             Assert.That(DeviceIds(log[5].Applied.Value), Is.EqualTo(new[] { "torque.body", "mtq.x" }));
             Assert.That(log[5].Applied.Value.Commands[0].Values.Vector3("torque_body_n_m"), Is.EqualTo(new Vector3d(0.0, 0.0, 0.0)));
+        }
+
+        // CORE-21: a stop, a backend failure, a finished run and a second Reset each end the run, so the
+        // old camera cancels the render it still has in flight. No camera frame is published either
+        // way, since the held render never completes; the token is the check.
+        [TestCase("finish")]
+        [TestCase("stop")]
+        [TestCase("backend failure")]
+        [TestCase("second reset")]
+        public void EndingARunCancelsTheOldCamerasPendingRenders(string end)
+        {
+            HeldRenderer renderer = new HeldRenderer();
+            ISimulationEngine engine = end == "backend failure"
+                ? new FailingEngine(Engine(), failAtStep: 1, new InvalidOperationException("Basilisk Step failed: Unavailable"))
+                : (ISimulationEngine)Engine();
+            SimulationGateway gateway = new SimulationGateway(engine, device => SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            SimulationConfiguration scenario = Scenario(0.1, Camera("cam.test", isControllerVisible: false));
+
+            gateway.Reset(0, scenario);
+            Assert.That(renderer.Tokens.Count, Is.EqualTo(1));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.False);
+
+            switch (end)
+            {
+                case "stop":
+                    Assert.That(gateway.Stop("test").Status, Is.EqualTo(ObservationStatus.Stopped));
+                    break;
+                case "backend failure":
+                    Assert.That(gateway.Step().Status, Is.EqualTo(ObservationStatus.BackendFailed));
+                    break;
+                case "finish":
+                    gateway.Finish();
+                    break;
+                default:
+                    gateway.Reset(0, scenario);
+                    gateway.Step();
+                    Assert.That(renderer.Tokens.Count, Is.EqualTo(3));
+                    Assert.That(renderer.Tokens[1].IsCancellationRequested, Is.False, "the new run's render");
+                    break;
+            }
+
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
+            Assert.That(outputs, Has.All.Matches<SensorOutputSet>(output => output.Frames.Count == 0));
+        }
+
+        // CORE-21 review: a renderer whose cancellation callback throws stops nothing. The camera's other
+        // pending render is still cancelled, and a backend failure still ends the run as BackendFailed
+        // instead of throwing from Step.
+        [Test]
+        public void ACancellationCallbackThatThrowsStopsNoOtherCleanup()
+        {
+            HeldRenderer renderer = new HeldRenderer { ThrowOnCancelAt = 0 };
+            FailingEngine engine = new FailingEngine(Engine(), failAtStep: 2, new InvalidOperationException("Basilisk Step failed: Unavailable"));
+            SimulationGateway gateway = new SimulationGateway(engine, device => SensorFactory.Create(device, renderer));
+            List<Observation> terminated = new List<Observation>();
+            gateway.RunTerminated += terminated.Add;
+            List<Exception> endFailures = new List<Exception>();
+            gateway.SensorEndFailed += endFailures.Add;
+            gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
+            gateway.Step();
+            Assert.That(renderer.Tokens.Count, Is.EqualTo(2));
+
+            Observation failed = gateway.Step();
+
+            Assert.That(failed.Status, Is.EqualTo(ObservationStatus.BackendFailed));
+            Assert.That(terminated.Count, Is.EqualTo(1));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
+            Assert.That(renderer.Tokens[1].IsCancellationRequested, Is.True, "the render after the one whose callback threw");
+            Assert.That(endFailures.Count, Is.EqualTo(1), "the callback's failure is reported, not lost");
+            Assert.That(endFailures[0].ToString(), Does.Contain("The renderer's cancellation callback failed."));
+        }
+
+        // A camera the factory returns again for the next run is ended before it is reset, so a
+        // cancellation callback that throws is reported and the Reset still starts the new run.
+        [Test]
+        public void AReusedCameraWhoseCancellationThrowsStillResets()
+        {
+            HeldRenderer renderer = new HeldRenderer { ThrowOnCancelAt = 0 };
+            Dictionary<string, ISensor> built = new Dictionary<string, ISensor>();
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => built.TryGetValue(device.Definition.SensorId, out ISensor sensor)
+                    ? sensor
+                    : built[device.Definition.SensorId] = SensorFactory.Create(device, renderer));
+            List<Exception> endFailures = new List<Exception>();
+            gateway.SensorEndFailed += endFailures.Add;
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
+
+            Assert.DoesNotThrow(() => gateway.Reset(1, Scenario(0.1, Camera("cam.test", isControllerVisible: false))));
+
+            Assert.That(gateway.IsRunning, Is.True);
+            Assert.That(endFailures.Count, Is.EqualTo(1));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
+            renderer.Complete(1);
+            gateway.Step();
+            Assert.That(outputs[outputs.Count - 1].TryGetFrame("cam.test", out SensorFrame<ImageFrame> frame), Is.True);
+            Assert.That((frame.Sequence, frame.Status), Is.EqualTo((0L, SensorFrameStatus.Valid)));
+        }
+
+        // A finished run raises no RunTerminated, since nothing went wrong, and takes no more commands.
+        [Test]
+        public void AFinishedRunRaisesNoTerminationAndTakesNoMoreCommands()
+        {
+            SimulationGateway gateway = new SimulationGateway(Engine());
+            List<Observation> terminated = new List<Observation>();
+            gateway.RunTerminated += terminated.Add;
+            gateway.Reset(0, Scenario(0.1, Rate("rate.main", isControllerVisible: true)));
+            gateway.Step();
+
+            gateway.Finish();
+            gateway.Finish();
+
+            Assert.That(gateway.IsRunning, Is.False);
+            Assert.That(terminated, Is.Empty);
+            Assert.Throws<InvalidOperationException>(() => gateway.Step());
+            Assert.That(gateway.Stop("after finish"), Is.Null);
+        }
+
+        // CORE-21: a render that faults after its run ended has its exception observed, so it never
+        // reaches TaskScheduler.UnobservedTaskException. A faulted task nobody observes is the control:
+        // if this runtime does not finalize it here, the check cannot run.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ARenderThatFaultsAfterItsRunEndedIsObserved(bool callbackThrows)
+        {
+            List<string> unobserved = new List<string>();
+            EventHandler<UnobservedTaskExceptionEventArgs> record = (sender, args) =>
+            {
+                foreach (Exception exception in args.Exception.InnerExceptions)
+                {
+                    unobserved.Add(exception.Message);
+                }
+
+                args.SetObserved();
+            };
+            TaskScheduler.UnobservedTaskException += record;
+            try
+            {
+                FaultAfterTheRunEnds("render lost after stop", callbackThrows);
+                FaultUnobserved("control");
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                }
+            }
+            finally
+            {
+                TaskScheduler.UnobservedTaskException -= record;
+            }
+
+            if (!unobserved.Contains("control"))
+            {
+                Assert.Inconclusive("This runtime did not finalize the unobserved control task.");
+            }
+
+            Assert.That(unobserved, Does.Not.Contain("render lost after stop"));
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void FaultAfterTheRunEnds(string message, bool callbackThrows)
+        {
+            HeldRenderer renderer = new HeldRenderer { ThrowOnCancelAt = callbackThrows ? 0 : -1 };
+            SimulationGateway gateway = new SimulationGateway(Engine(), device => SensorFactory.Create(device, renderer));
+            gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
+            gateway.Stop("test");
+            renderer.Fail(0, message);
+            renderer.Forget();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void FaultUnobserved(string message)
+        {
+            TaskCompletionSource<ImageFrame> render = new TaskCompletionSource<ImageFrame>();
+            render.SetException(new InvalidOperationException(message));
+        }
+
+        // CORE-21: a sensor with nothing pending is unaffected by its run ending, and ending it twice
+        // (a stop, then the Reset that replaces it) is harmless.
+        [Test]
+        public void SensorsWithNothingPendingCarryOnAfterTheRunEnds()
+        {
+            HeldRenderer renderer = new HeldRenderer();
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => device.KindDefinition is CameraKind ? SensorFactory.Create(device, renderer) : SameDefinitionStandIn(device));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            SimulationConfiguration scenario = Scenario(0.1, Rate("rate.body", isControllerVisible: true), Camera("cam.test", isControllerVisible: false));
+
+            gateway.Reset(0, scenario);
+            gateway.Step();
+            gateway.Stop("test");
+            gateway.Reset(0, scenario);
+            Observation observation = gateway.Step();
+
+            Assert.That(observation.Status, Is.EqualTo(ObservationStatus.Ok));
+            Assert.That(observation.Frames.Count, Is.EqualTo(1));
+            Assert.That(observation.Frames[0].SensorId, Is.EqualTo("rate.body"));
+            Assert.That(observation.Frames[0].Sequence, Is.EqualTo(1));
+            Assert.That(renderer.Tokens.Count, Is.EqualTo(4));
+            Assert.That(new[] { 0, 1 }, Has.All.Matches<int>(index => renderer.Tokens[index].IsCancellationRequested));
+            Assert.That(new[] { 2, 3 }, Has.All.Matches<int>(index => !renderer.Tokens[index].IsCancellationRequested));
         }
 
         // Over an engine that applies commands (BasiliskEngine, BSK-8), a non-idle command is applied
@@ -551,6 +761,30 @@ namespace Argus.Simulation.Tests
             Assert.DoesNotThrow(() => gateway.Step());
         }
 
+        // CORE-22 with CORE-21: Reset checks the new sensors before it ends the old ones, so a refused
+        // Reset leaves the old camera's render in flight, and its frame is still published.
+        [Test]
+        public void ARefusedResetLeavesTheOldCamerasRenderInFlight()
+        {
+            HeldRenderer renderer = new HeldRenderer();
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => device.Definition.SensorId == "rate.bad"
+                    ? new IdealBodyRateSensorModel("rate.bad", "rate.bad", 0.1, "simulation")
+                    : SensorFactory.Create(device, renderer));
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
+
+            Assert.Throws<ArgumentException>(() => gateway.Reset(0, Scenario(0.1, Rate("rate.bad", isControllerVisible: true))));
+
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.False);
+            renderer.Complete(0);
+            gateway.Step();
+            Assert.That(outputs[1].TryGetFrame("cam.test", out SensorFrame<ImageFrame> frame), Is.True);
+            Assert.That((frame.Sequence, frame.Status), Is.EqualTo((0L, SensorFrameStatus.Valid)));
+        }
+
         [Test]
         public void ResetRejectsAFactoryThatBuildsNoSensor()
         {
@@ -588,10 +822,53 @@ namespace Argus.Simulation.Tests
                 frame = null;
                 return false;
             }
+
+            public void End()
+            {
+            }
         }
 
         private static AnalyticSimulationEngine Engine() => new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
+        // Each render stays in flight until the test faults it; it records the token it was given.
+        private sealed class HeldRenderer : IImageRenderer
+        {
+            private readonly List<TaskCompletionSource<ImageFrame>> _renders = new List<TaskCompletionSource<ImageFrame>>();
+
+            public string RendererName => "held-renderer";
+            public List<CancellationToken> Tokens { get; } = new List<CancellationToken>();
+            public List<RenderRequest> Requests { get; } = new List<RenderRequest>();
+
+            // The render at this index registers a cancellation callback that throws; -1 for none.
+            public int ThrowOnCancelAt { get; set; } = -1;
+
+            public Task<ImageFrame> RenderAsync(RenderRequest request, CancellationToken cancellationToken)
+            {
+                if (Tokens.Count == ThrowOnCancelAt)
+                {
+                    cancellationToken.Register(() => throw new InvalidOperationException("The renderer's cancellation callback failed."));
+                }
+
+                Tokens.Add(cancellationToken);
+                Requests.Add(request);
+                TaskCompletionSource<ImageFrame> render = new TaskCompletionSource<ImageFrame>();
+                _renders.Add(render);
+                return render.Task;
+            }
+
+            public void Fail(int index, string message) => _renders[index].SetException(new InvalidOperationException(message));
+
+            // Completes a render with a mid-grey image of the requested size.
+            public void Complete(int index)
+            {
+                RenderRequest request = Requests[index];
+                byte[] pixels = new byte[request.Intrinsics.WidthPixels * request.Intrinsics.HeightPixels * 3];
+                _renders[index].SetResult(new ImageFrame(request, ImageEncoding.Rgb8, pixels, RendererName));
+            }
+
+            // Drops every render, so only the camera could still be observing one.
+            public void Forget() => _renders.Clear();
+        }
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds, params DeviceConfiguration[] sensors) =>
             new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: sensors);

@@ -56,6 +56,29 @@ namespace Argus.Simulation.Core
             _isReset = true;
         }
 
+        // Ends every sensor's run (ISensor.End), so nothing stays in flight once the run is over. Every
+        // sensor is ended even if one throws; the failures are thrown together at the end.
+        public void End()
+        {
+            List<Exception> failures = null;
+            for (int index = 0; index < _sensors.Count; index++)
+            {
+                try
+                {
+                    _sensors[index].End();
+                }
+                catch (Exception exception)
+                {
+                    (failures ??= new List<Exception>()).Add(exception);
+                }
+            }
+
+            if (failures != null)
+            {
+                throw new AggregateException("Not every sensor's run could be ended.", failures);
+            }
+        }
+
         public SensorOutputSet Sample(SensorSampleContext context)
         {
             if (!_isReset)

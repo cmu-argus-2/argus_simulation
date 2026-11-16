@@ -52,6 +52,11 @@ namespace Argus.Simulation.Core
         // rejected, raised before the engine runs it or Step throws.
         public event Action<CommandRecord> CommandLogged;
 
+        // A sensor that could not release what it held when its run ended, such as a renderer whose
+        // cancellation callback throws (CORE-21). The run ends as it would have; this only reports the
+        // failure, for logs. A subscriber that throws is ignored.
+        public event Action<Exception> SensorEndFailed;
+
         // The backend exception that ended the run, for logs; never shown to a controller.
         public Exception Failure { get; private set; }
 
@@ -84,6 +89,14 @@ namespace Argus.Simulation.Core
             _isRunning = false;
             _hasStartedRun = false;
             Failure = null;
+            // The run in progress, if any, ends here: its sensors are replaced without being sampled
+            // again, so they release their renders first (CORE-21). End is idempotent, so sensors a
+            // stop, failure or Finish already ended are unaffected. Only after BuildSensors, so a
+            // refused Reset leaves the run in progress and its renders untouched (CORE-22). Before
+            // the new sensors' Reset, so a sensor the factory returns again has nothing left to
+            // release there, and a failure to release is reported (SensorEndFailed), not thrown.
+            EndSensors();
+            sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             _engine.Initialize(run);
             _scenario = run;
             _sensors = sensors;
@@ -203,6 +216,23 @@ namespace Argus.Simulation.Core
             return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
         }
 
+        // The run reached its last step: no sensor is sampled again, so each releases what it holds,
+        // such as a camera's renders (CORE-21), and Step refuses further commands. Nothing went wrong,
+        // so there is no terminal observation and RunTerminated is not raised; the recording ends as
+        // complete. Does nothing when no run is running. Every driver that stops stepping at a run's
+        // last step calls it (headless/Host does); otherwise the sensors keep their renders until
+        // the next Reset.
+        public void Finish()
+        {
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            _isRunning = false;
+            EndSensors();
+        }
+
         // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
         // backend's own; the reason names the step that failed.
         private Observation Terminate(Exception failure)
@@ -223,8 +253,33 @@ namespace Argus.Simulation.Core
                 Array.Empty<ISensorFrame>(),
                 status,
                 reason);
+            // No sensor is sampled again for this run, so each releases what it holds, such as a
+            // camera's renders (CORE-21).
+            EndSensors();
             RunTerminated?.Invoke(observation);
             return observation;
+        }
+
+        // Ends the current sensors' run. A sensor that throws (a renderer's token callback) is
+        // reported through SensorEndFailed instead of thrown: every other sensor has still been ended
+        // (SensorManager.End), and it must not change how the run ended, such as a BackendFailed
+        // observation becoming an exception from Step.
+        private void EndSensors()
+        {
+            try
+            {
+                _sensors?.End();
+            }
+            catch (Exception failure)
+            {
+                try
+                {
+                    SensorEndFailed?.Invoke(failure);
+                }
+                catch
+                {
+                }
+            }
         }
 
         // Ends a running run before an exception propagates, so RunTerminated still tells subscribers
@@ -477,6 +532,8 @@ namespace Argus.Simulation.Core
                      command.Value.ApplyAtSimulationTimeSeconds));
         }
 
+        // Builds and checks the run's sensors without resetting them: Reset resets them once the run in
+        // progress has ended.
         private SensorManager BuildSensors(SimulationConfiguration run)
         {
             SensorManager sensors = new SensorManager();
@@ -503,7 +560,6 @@ namespace Argus.Simulation.Core
                 }
             }
 
-            sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             return sensors;
         }
 

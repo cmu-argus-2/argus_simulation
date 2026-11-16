@@ -14,7 +14,8 @@ namespace Argus.Simulation.Core
     // Frames are published in sequence order. An exposure that is not rendered within
     // MaximumLatencySeconds of simulation time, or whose render fails, is published as Unavailable;
     // a camera never publishes a black or approximated image. TrySample never waits for a render.
-    // An exposure still pending when the run ends or the camera resets is never published.
+    // An exposure still pending when the run ends (End) or the camera resets is never published, and
+    // its render is cancelled (CORE-21).
     public abstract class CameraModel : SensorModel<ImageFrame>
     {
         private const double TimeToleranceSeconds = 1e-9;
@@ -87,12 +88,35 @@ namespace Argus.Simulation.Core
         }
 
         // Cancels pending exposures without publishing them. A reset has no output path, and the
-        // frames belong to the run directory the reset just ended (G3).
-        protected override void OnReset(SensorResetContext context)
+        // frames belong to the run directory the reset just ended (G3). If a cancellation throws, the
+        // camera is still reset and Reset then throws it. The gateway ends a camera before resetting
+        // it, so there it has nothing pending and the failure is reported as SensorEndFailed.
+        protected override void OnReset(SensorResetContext context) => AbandonPending();
+
+        // The run ended (a stop, a backend failure, Finish, or a Reset that replaces this camera):
+        // the same, so no render for a finished run keeps going (CORE-21).
+        protected override void OnEnd() => AbandonPending();
+
+        // Every pending exposure is abandoned even if one's cancellation throws (a renderer's token
+        // callback); the failures are thrown together at the end.
+        private void AbandonPending()
         {
+            List<Exception> failures = null;
             while (_pending.Count > 0)
             {
-                Abandon(_pending.Dequeue());
+                try
+                {
+                    Abandon(_pending.Dequeue());
+                }
+                catch (Exception exception)
+                {
+                    (failures ??= new List<Exception>()).Add(exception);
+                }
+            }
+
+            if (failures != null)
+            {
+                throw new AggregateException($"Camera '{Definition.SensorId}' could not cancel every pending render.", failures);
             }
         }
 
@@ -203,11 +227,12 @@ namespace Argus.Simulation.Core
         private static ImageFrame WithoutPixels(RenderRequest request) =>
             new ImageFrame(request, default, null, null);
 
-        // Not disposed: the renderer may still hold the token.
+        // Not disposed: the renderer may still hold the token. Observed first, because Cancel rethrows
+        // an exception from a token callback, and the render's later fault must still be observed.
         private static void Abandon(PendingExposure exposure)
         {
-            exposure.Cancellation?.Cancel();
             Observe(exposure.Render);
+            exposure.Cancellation?.Cancel();
         }
 
         // Marks a failed or abandoned render's exception as observed, now or when it finishes.

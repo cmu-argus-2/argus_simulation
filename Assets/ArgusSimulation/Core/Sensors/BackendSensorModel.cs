@@ -39,6 +39,11 @@ namespace Argus.Simulation.Core
             _isReset = true;
         }
 
+        // A backend sensor holds nothing between steps.
+        public void End()
+        {
+        }
+
         public bool TrySample(SensorSampleContext context, out ISensorFrame frame)
         {
             if (!_isReset)
