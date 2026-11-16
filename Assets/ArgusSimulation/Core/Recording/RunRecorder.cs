@@ -151,7 +151,9 @@ namespace Argus.Simulation.Core
             SimulationConfiguration run,
             IReadOnlyList<SensorDefinition> sensors,
             string dynamicsBackendVersion = null,
-            AnalyticOrbit? analyticOrbit = null)
+            AnalyticOrbit? analyticOrbit = null,
+            string spacecraftProfileId = null,
+            string spacecraftProfilePath = null)
         {
             if (!run.IsValid || !IsPathSafeId(run.RunId))
             {
@@ -161,6 +163,11 @@ namespace Argus.Simulation.Core
             if (sensors == null)
             {
                 throw new ArgumentNullException(nameof(sensors));
+            }
+
+            if (spacecraftProfileId == null && spacecraftProfilePath != null)
+            {
+                throw new ArgumentException("A spacecraft profile path needs the profile's ID.", nameof(spacecraftProfileId));
             }
 
             SensorDefinition[] definitions = new SensorDefinition[sensors.Count];
@@ -188,7 +195,15 @@ namespace Argus.Simulation.Core
 
                 _lastSegments[run.RunId] = segment;
                 _hasRun = true;
-                Push(new BeginItem(run, definitions, dynamicsBackendVersion, analyticOrbit, segment, DateTimeOffset.UtcNow));
+                Push(new BeginItem(
+                    run,
+                    definitions,
+                    dynamicsBackendVersion,
+                    analyticOrbit,
+                    spacecraftProfileId,
+                    spacecraftProfilePath,
+                    segment,
+                    DateTimeOffset.UtcNow));
             }
         }
 
@@ -435,6 +450,8 @@ namespace Argus.Simulation.Core
                 SensorDefinition[] sensors,
                 string dynamicsBackendVersion,
                 AnalyticOrbit? analyticOrbit,
+                string spacecraftProfileId,
+                string spacecraftProfilePath,
                 int segment,
                 DateTimeOffset createdUtc)
             {
@@ -442,6 +459,8 @@ namespace Argus.Simulation.Core
                 Sensors = sensors;
                 DynamicsBackendVersion = dynamicsBackendVersion;
                 AnalyticOrbit = analyticOrbit;
+                SpacecraftProfileId = spacecraftProfileId;
+                SpacecraftProfilePath = spacecraftProfilePath;
                 Segment = segment;
                 CreatedUtc = createdUtc;
             }
@@ -450,6 +469,8 @@ namespace Argus.Simulation.Core
             public SensorDefinition[] Sensors { get; }
             public string DynamicsBackendVersion { get; }
             public AnalyticOrbit? AnalyticOrbit { get; }
+            public string SpacecraftProfileId { get; }
+            public string SpacecraftProfilePath { get; }
             public int Segment { get; }
             public DateTimeOffset CreatedUtc { get; }
         }
@@ -793,6 +814,21 @@ namespace Argus.Simulation.Core
                 WriteInitialOrbit(json, run.InitialOrbit);
                 json.Key("spacecraft");
                 WriteSpacecraft(json, run.Spacecraft);
+                // Which profile the body and devices came from; the resolved values are spacecraft
+                // and devices, so the dataset stands alone (docs/device-model.md §4).
+                json.Key("spacecraft_profile");
+                if (_begin.SpacecraftProfileId == null)
+                {
+                    json.Null();
+                }
+                else
+                {
+                    json.BeginObject()
+                        .Key("profile_id").Value(_begin.SpacecraftProfileId)
+                        .Key("path").Value(_begin.SpacecraftProfilePath)
+                        .EndObject();
+                }
+
                 json.Key("analytic_orbit");
                 WriteAnalyticOrbit(json, _begin.AnalyticOrbit);
                 json.EndObject().Key("devices").BeginArray();

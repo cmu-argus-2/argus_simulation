@@ -22,7 +22,7 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   camera frame carries the true camera pose, so a run may not make a camera
   controller-visible (`IDeviceKind.MayBeControllerVisible`, D7). The four body cameras stay
   non-visible; a controller-safe camera observation without pose is CORE-23 (#125,
-  `TODO(D7)`). `runs/p0-default.json` configures them as `cam.px`, `cam.py`, `cam.mx` and
+  `TODO(D7)`). `spacecraft/argus-p0.json`, the P0 profile, configures them as `cam.px`, `cam.py`, `cam.mx` and
   `cam.my` (flight's cam1–cam4, ids 0–3) with the DATA-6 profile and mounts, sampled every
   15 s, flight's capture interval. Their exposure is 0.5 ms, the driver's minimum: a v0
   estimate for sunlit Earth, where flight uses auto exposure between 0.5 and 65.5 ms (#42
@@ -39,7 +39,7 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   East-North-Up frame, which the Unity rig's ground-truth camera uses today, takes the
   ellipsoid gradient at the spacecraft instead; at 500 km the two differ by about 0.01
   degrees. It is ground truth, so it is never controller-visible (D7): its frames reach the
-  recorder, never a gateway observation. `runs/p0-default.json` does not include it.
+  recorder, never a gateway observation. `spacecraft/argus-p0.json` does not include it.
 
 A kind whose sensor is a camera implements `ICameraKind` (`Core/Contracts/ICameraKind.cs`):
 the recorder lists it in the manifest's `cameras`, and cameras that share a profile ID must

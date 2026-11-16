@@ -3,7 +3,8 @@
 Frozen run files for `Argus.Basilisk/scripts/check_reference_runs.py`, which checks the Basilisk path against
 independent references. Their values don't follow P0 or DATA-1 updates: change a value only by adding a new case.
 Run-file format changes, such as HOST-9's profile split or the removal of a device `source`, are applied here too.
-`RunConfigurationFileTests` parses every file.
+Each case gives its spacecraft profile inline (`spacecraftProfile` is the profile, not a path), so a case stays one
+frozen file and changing one case's body never changes another's. `RunConfigurationFileTests` parses every file.
 
 Common to all files:
 - **Epoch:** 2026-06-01T12:00:00Z.

@@ -70,8 +70,8 @@ The endpoint comes from `--basilisk-endpoint`, then `ARGUS_BASILISK_ENDPOINT`, t
 host binary. Exit codes: 0 on success or Ctrl+C, 1 on a failure (for example
 `Basilisk ConfigureRun failed: Unimplemented: …` against a service that has not built a
 configured sensor, or `Unavailable` with no service), 2 on bad arguments or a run
-configuration file that is unreadable or invalid. A bad file exits before the host connects
-to the service, and the message names the field.
+configuration file or spacecraft profile that is unreadable or invalid. A bad file exits
+before the host connects to the service, and the message names the file and the field.
 
 Against the service, the full P0 run (`--duration-s 600`, the default run file) exits 0 with
 no mapper, period or freshness error. HOST-5 (#29) checked its output against CSPICE and an
@@ -99,14 +99,28 @@ never delays a step, and `manifest.json` counts anything it had to drop.
 ## Run configuration files
 
 A run configuration file defines one run once (G5): epoch, fixed step, seed, kernel set,
-orbit, spacecraft and devices. `RunConfigurationFile` reads it into Core
-`SimulationConfiguration`, and `BasiliskEngine` sends it to the service as
-`argus.sim.v1.RunConfiguration`, without the devices Argus computes. The run ID is not in the
-file; the host gives each run its own.
+orbit, initial attitude and rate, and the spacecraft profile it flies, which holds the body and
+its devices (D11, `docs/device-model.md` §4, HOST-9). `RunConfigurationFile` reads both into
+Core `SimulationConfiguration`, and `BasiliskEngine` sends it to the service as
+`argus.sim.v1.RunConfiguration`, without the devices Argus computes. Only the host reads
+profiles; the service never reads files. The run ID is not in the file; the host gives each run
+its own.
 
-- **Location:** `headless/Host/runs/`; HOST-8's frozen reference cases are in `runs/reference/`
-  (see its README). The build copies every `runs/*.json` and `runs/reference/*.json` next to the
-  host binary.
+- **Location:** run files in `headless/Host/runs/`, the repo's spacecraft profiles in
+  `headless/Host/spacecraft/` (`argus-p0.json`, which `runs/p0-default.json` flies). A team keeps
+  its profile anywhere. HOST-8's frozen reference cases are in `runs/reference/` (see its
+  README). The build copies every `runs/*.json`, `runs/reference/*.json` and `spacecraft/*.json`
+  next to the host binary.
+- **Run file:** `epochUtc`, `fixedStepSeconds`, `randomSeed`, `kernelSetId`, `initialOrbit`,
+  `initialAttitude` (`bodyToJ2000`, `angularVelocityBodyRadiansPerSecond`) and
+  `spacecraftProfile`: the profile's path, relative to the run file (or absolute), such as
+  `"../spacecraft/argus-p0.json"`, or the profile object itself, which keeps a frozen reference
+  case in one file. A run file from before the split, with `spacecraft` and `devices`, is told
+  where they went.
+- **Spacecraft profile:** `profileId` (`[a-z0-9][a-z0-9._-]{0,63}`), `body` (`massKilograms`,
+  `inertiaBodyKilogramSquareMeters`) and `devices`. The manifest records the profile in
+  `configuration.spacecraft_profile` (`profile_id`, and `path` as the run file wrote it, or
+  `null` inline) beside the resolved body and devices, so a dataset stands alone.
 - **Format:** JSON whose field names are the Core property names in camelCase, in SI units
   with the unit in the name (`semiMajorAxisMeters`, `samplePeriodSeconds`). Vectors are
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
@@ -136,17 +150,20 @@ file; the host gives each run its own.
   `momentum_wheel` has one (`speed_rad_per_s`), and the field is optional for the other kinds. `controllerVisible` is `false` for a ground-truth sensor: the gateway
   never returns its frames to a controller, though the recorder still receives them (D7). It
   must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
-  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
+  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `spacecraft/argus-p0.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
   a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device that rejects
   anything past 1e-4 N·m per axis, as DATA-2 (#68) gives for the ideal torque, until DATA-2's six
-  coils land in the file. The list may hold any subset of the devices,
+  coils land in the profile. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
-  file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
+  profile.
 - **Validation:** every field is required and unknown fields are rejected, including
   parameters the kind does not declare. Each part is checked with its Core `IsValid` and
   each device by its kind, so the file accepts exactly what Core accepts and an error names
-  the key (`devices[1].parameters["range_tesla"]: is required`). Every
+  the key. An error in a profile file starts with the file, as the run file found it, and a
+  duplicate device ID or an unknown kind also names the device
+  (`spacecraft profile runs/../spacecraft/argus-p0.json: devices[1].deviceId: 'imu.main' is
+  already devices[0]'s ID`); one in an inline profile starts with `spacecraftProfile.`. Every
   `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
   at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
   one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
@@ -155,7 +172,7 @@ file; the host gives each run its own.
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
+`runs/p0-default.json` and `spacecraft/argus-p0.json` are placeholder data, not confirmed hardware. Its magnetometer and
 light-sensor noise are 0 until DATA-1 (#67) gives the sigmas; the service accepts both
 (`Argus.Basilisk/README.md` §9).
 TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and

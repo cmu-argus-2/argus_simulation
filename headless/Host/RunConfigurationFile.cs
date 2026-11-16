@@ -3,19 +3,43 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Argus.Simulation.Core;
 
 namespace Argus.Simulation.Host
 {
-    // Reads a run configuration file (G5) into a Core SimulationConfiguration. The file mirrors Core
-    // property names in camelCase, in SI units with the unit in each name; headless/README.md
-    // documents the format. Every field is required and unknown fields are rejected, so a typo never
-    // falls back to a default. The run ID is not in the file: each run gets its own.
+    // Reads a run configuration file (G5) and the spacecraft profile it names (D11,
+    // docs/device-model.md §4) into a Core SimulationConfiguration. Both files mirror Core property
+    // names in camelCase, in SI units with the unit in each name; headless/README.md documents the
+    // format. Every field is required and unknown fields are rejected, so a typo never falls back to
+    // a default. The run ID is not in the file: each run gets its own.
     public static class RunConfigurationFile
     {
         private const string EpochFormat = "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'";
+        private static readonly Regex ProfileIdPattern = new Regex("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.CultureInvariant);
 
-        public static SimulationConfiguration Load(string path, string runId)
+        // The run file and its profile, resolved.
+        public sealed class LoadedRun
+        {
+            internal LoadedRun(SimulationConfiguration configuration, string profileId, string profilePath)
+            {
+                Configuration = configuration;
+                ProfileId = profileId;
+                ProfilePath = profilePath;
+            }
+
+            public SimulationConfiguration Configuration { get; }
+
+            // The profile's profileId.
+            public string ProfileId { get; }
+
+            // spacecraftProfile as the run file wrote it, or null for a profile given inline.
+            public string ProfilePath { get; }
+        }
+
+        public static SimulationConfiguration Load(string path, string runId) => Read(path, runId).Configuration;
+
+        public static LoadedRun Read(string path, string runId)
         {
             string text;
             try
@@ -27,25 +51,37 @@ namespace Argus.Simulation.Host
                 throw new RunConfigurationException($"cannot read the file: {exception.Message}");
             }
 
-            return Parse(text, runId);
+            return Parse(text, runId, Path.GetDirectoryName(path));
         }
 
-        public static SimulationConfiguration Parse(string json, string runId)
-        {
-            JsonDocument document;
-            try
-            {
-                document = JsonDocument.Parse(json);
-            }
-            catch (JsonException exception)
-            {
-                throw new RunConfigurationException($"not valid JSON: {exception.Message}");
-            }
+        // A run whose spacecraftProfile is the profile itself; a path needs Read, which knows where
+        // the run file is.
+        public static SimulationConfiguration Parse(string json, string runId) => Parse(json, runId, null).Configuration;
 
-            using (document)
+        private static LoadedRun Parse(string json, string runId, string runDirectory)
+        {
+            using (JsonDocument document = Document(json, ""))
             {
                 JsonElement root = document.RootElement;
-                Fields(root, "", "epochUtc", "fixedStepSeconds", "randomSeed", "kernelSetId", "initialOrbit", "spacecraft", "devices");
+                // A run file from before the split is told where its body and devices went.
+                foreach (string moved in new[] { "spacecraft", "devices" })
+                {
+                    Check(
+                        root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(moved, out _),
+                        moved,
+                        "is no longer a run-file field; the body and devices are in the spacecraftProfile, the attitude and rate in initialAttitude (device-model §4)");
+                }
+
+                Fields(
+                    root,
+                    "",
+                    "epochUtc",
+                    "fixedStepSeconds",
+                    "randomSeed",
+                    "kernelSetId",
+                    "initialOrbit",
+                    "initialAttitude",
+                    "spacecraftProfile");
 
                 DateTimeOffset epochUtc = Epoch(root, "epochUtc");
                 double fixedStepSeconds = Number(root, "fixedStepSeconds", "");
@@ -59,8 +95,35 @@ namespace Argus.Simulation.Host
                     "must match [a-z0-9][a-z0-9._-]{0,63}");
 
                 ClassicalOrbitElements orbit = Orbit(Field(root, "initialOrbit", ""), "initialOrbit");
-                SpacecraftConfiguration spacecraft = Spacecraft(Field(root, "spacecraft", ""), "spacecraft");
-                DeviceConfiguration[] devices = Devices(Field(root, "devices", ""), "devices", runId, epochUtc, fixedStepSeconds);
+                JsonElement attitude = Field(root, "initialAttitude", "");
+                Fields(attitude, "initialAttitude", "bodyToJ2000", "angularVelocityBodyRadiansPerSecond");
+                Quaterniond bodyToJ2000 = Quaternion(attitude, "bodyToJ2000", "initialAttitude");
+                Vector3d angularVelocity = Vector(attitude, "angularVelocityBodyRadiansPerSecond", "initialAttitude");
+
+                // The profile is a path relative to the run file (a team keeps it anywhere), or the
+                // profile itself, which keeps a frozen reference case in one file.
+                JsonElement profileField = Field(root, "spacecraftProfile", "");
+                string profilePath = null;
+                SpacecraftProfile profile;
+                if (profileField.ValueKind == JsonValueKind.String)
+                {
+                    profilePath = profileField.GetString();
+                    Check(profilePath.Trim().Length > 0, "spacecraftProfile", "must not be blank");
+                    Check(runDirectory != null, "spacecraftProfile", "is a path, which only a run file read from disk can resolve");
+                    profile = ReadProfileFile(Path.Combine(runDirectory, profilePath), runId, epochUtc, fixedStepSeconds);
+                }
+                else
+                {
+                    Check(profileField.ValueKind == JsonValueKind.Object, "spacecraftProfile", "must be a path or a profile object");
+                    profile = ReadProfile(profileField, "spacecraftProfile", runId, epochUtc, fixedStepSeconds);
+                }
+
+                SpacecraftConfiguration spacecraft = new SpacecraftConfiguration(
+                    profile.MassKilograms, profile.Inertia, bodyToJ2000, angularVelocity);
+                Check(
+                    spacecraft.IsValid,
+                    "initialAttitude",
+                    "needs a unit quaternion and a finite rate");
 
                 SimulationConfiguration configuration = new SimulationConfiguration(
                     runId,
@@ -70,10 +133,87 @@ namespace Argus.Simulation.Host
                     randomSeed: randomSeed,
                     kernelSetId: kernelSetId,
                     spacecraft: spacecraft,
-                    devices: devices);
+                    devices: profile.Devices);
                 Check(configuration.IsValid, "", "is not a valid run configuration");
-                return configuration;
+                return new LoadedRun(configuration, profile.ProfileId, profilePath);
             }
+        }
+
+        private static JsonDocument Document(string json, string path)
+        {
+            try
+            {
+                return JsonDocument.Parse(json);
+            }
+            catch (JsonException exception)
+            {
+                throw Error(path, $"not valid JSON: {exception.Message}");
+            }
+        }
+
+        // A profile file; its errors name the file, as the run file found it.
+        private static SpacecraftProfile ReadProfileFile(string path, string runId, DateTimeOffset epochUtc, double fixedStepSeconds)
+        {
+            string text;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                throw Error("spacecraftProfile", $"cannot read the spacecraft profile {path}: {exception.Message}");
+            }
+
+            try
+            {
+                using (JsonDocument document = Document(text, ""))
+                {
+                    return ReadProfile(document.RootElement, "", runId, epochUtc, fixedStepSeconds);
+                }
+            }
+            catch (RunConfigurationException exception)
+            {
+                throw new RunConfigurationException($"spacecraft profile {path}: {exception.Message}");
+            }
+        }
+
+        // The body and its devices (docs/device-model.md §4). The initial attitude and rate vary per
+        // run, so they are the run file's.
+        private static SpacecraftProfile ReadProfile(JsonElement element, string path, string runId, DateTimeOffset epochUtc, double fixedStepSeconds)
+        {
+            Fields(element, path, "profileId", "body", "devices");
+            string profileId = Text(element, "profileId", path);
+            Check(ProfileIdPattern.IsMatch(profileId), Join(path, "profileId"), "must match [a-z0-9][a-z0-9._-]{0,63}");
+
+            JsonElement body = Field(element, "body", path);
+            string bodyPath = Join(path, "body");
+            Fields(body, bodyPath, "massKilograms", "inertiaBodyKilogramSquareMeters");
+            double massKilograms = Number(body, "massKilograms", bodyPath);
+            Matrix3d inertia = Matrix(body, "inertiaBodyKilogramSquareMeters", bodyPath);
+            // The body's checks need an attitude; the identity at rest leaves only the body's own.
+            Check(
+                new SpacecraftConfiguration(massKilograms, inertia, new Quaterniond(0.0, 0.0, 0.0, 1.0), new Vector3d(0.0, 0.0, 0.0)).IsValid,
+                bodyPath,
+                "needs mass > 0 and a symmetric positive-definite inertia");
+
+            DeviceConfiguration[] devices = Devices(Field(element, "devices", path), Join(path, "devices"), runId, epochUtc, fixedStepSeconds);
+            return new SpacecraftProfile(profileId, massKilograms, inertia, devices);
+        }
+
+        private sealed class SpacecraftProfile
+        {
+            public SpacecraftProfile(string profileId, double massKilograms, Matrix3d inertia, DeviceConfiguration[] devices)
+            {
+                ProfileId = profileId;
+                MassKilograms = massKilograms;
+                Inertia = inertia;
+                Devices = devices;
+            }
+
+            public string ProfileId { get; }
+            public double MassKilograms { get; }
+            public Matrix3d Inertia { get; }
+            public DeviceConfiguration[] Devices { get; }
         }
 
         private static ClassicalOrbitElements Orbit(JsonElement element, string path)
@@ -98,24 +238,6 @@ namespace Argus.Simulation.Host
             return orbit;
         }
 
-        private static SpacecraftConfiguration Spacecraft(JsonElement element, string path)
-        {
-            Fields(
-                element,
-                path,
-                "massKilograms",
-                "inertiaBodyKilogramSquareMeters",
-                "initialBodyToJ2000",
-                "initialAngularVelocityBodyRadiansPerSecond");
-            SpacecraftConfiguration spacecraft = new SpacecraftConfiguration(
-                Number(element, "massKilograms", path),
-                Matrix(element, "inertiaBodyKilogramSquareMeters", path),
-                Quaternion(element, "initialBodyToJ2000", path),
-                Vector(element, "initialAngularVelocityBodyRadiansPerSecond", path));
-            Check(spacecraft.IsValid, path, "needs mass > 0, a symmetric positive-definite inertia, a unit quaternion and a finite rate");
-            return spacecraft;
-        }
-
         private static DeviceConfiguration[] Devices(
             JsonElement element,
             string path,
@@ -129,7 +251,7 @@ namespace Argus.Simulation.Host
             }
 
             DeviceConfiguration[] devices = new DeviceConfiguration[element.GetArrayLength()];
-            HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, int> indexById = new Dictionary<string, int>(StringComparer.Ordinal);
             Dictionary<string, DeviceConfiguration> cameraByProfileId = new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
             int index = 0;
             foreach (JsonElement device in element.EnumerateArray())
@@ -142,7 +264,13 @@ namespace Argus.Simulation.Host
                     new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, devices: new[] { devices[index] }).IsValid,
                     Join(devicePath, "samplePeriodSeconds"),
                     "must be a whole multiple of fixedStepSeconds");
-                Check(deviceIds.Add(devices[index].Definition.SensorId), Join(devicePath, "deviceId"), "duplicates another device's ID");
+                string deviceId = devices[index].Definition.SensorId;
+                if (indexById.TryGetValue(deviceId, out int firstIndex))
+                {
+                    throw Error(Join(devicePath, "deviceId"), $"'{deviceId}' is already {path}[{firstIndex}]'s ID");
+                }
+
+                indexById.Add(deviceId, index);
                 if (devices[index].KindDefinition is ICameraKind camera)
                 {
                     // A profile ID names one parameter set (CameraProfile.IsSameParameterSetAs, CORE-6).
@@ -209,7 +337,15 @@ namespace Argus.Simulation.Host
                 "is no longer a run-file field; the device's kind sets it (device-model §1)");
             string kindName = Text(element, "kind", path);
             IDeviceKind kind = DeviceKinds.Find(kindName);
-            Check(kind != null, Join(path, "kind"), $"'{kindName}' is not a registered device kind ({DeviceKinds.Names})");
+            if (kind == null)
+            {
+                // Named by its ID too, so a team finds it in a long list.
+                string named = element.TryGetProperty("deviceId", out JsonElement id) && id.ValueKind == JsonValueKind.String
+                    ? $" of {id.GetString()}"
+                    : "";
+                throw Error(Join(path, "kind"), $"'{kindName}'{named} is not a registered device kind ({DeviceKinds.Names})");
+            }
+
             bool isActuator = kind.Role == DeviceRole.Actuator;
             Fields(
                 element,

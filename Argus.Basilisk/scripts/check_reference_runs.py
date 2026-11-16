@@ -388,8 +388,8 @@ def echo_problems(manifest: dict, run: dict) -> list[str]:
     """The manifest's echo of the configuration must carry the run file's values (compared by value, not text)."""
     c = manifest.get("configuration") or {}
     o, oc = run["initialOrbit"], c.get("initial_orbit") or {}
-    sc, scc = run["spacecraft"], c.get("spacecraft") or {}
-    q = sc["initialBodyToJ2000"]
+    body, attitude, scc = run["spacecraftProfile"]["body"], run["initialAttitude"], c.get("spacecraft") or {}
+    q = attitude["bodyToJ2000"]
     expected = {
         "random_seed": (c.get("random_seed"), run["randomSeed"]),
         "semi_major_axis_m": (oc.get("semi_major_axis_m"), o["semiMajorAxisMeters"]),
@@ -398,11 +398,11 @@ def echo_problems(manifest: dict, run: dict) -> list[str]:
         "raan_deg": (oc.get("raan_deg"), o["raanDegrees"]),
         "argument_of_periapsis_deg": (oc.get("argument_of_periapsis_deg"), o["argumentOfPeriapsisDegrees"]),
         "true_anomaly_deg": (oc.get("true_anomaly_deg"), o["trueAnomalyDegrees"]),
-        "mass_kg": (scc.get("mass_kg"), sc["massKilograms"]),
-        "inertia_body_kg_m2": (scc.get("inertia_body_kg_m2"), sc["inertiaBodyKilogramSquareMeters"]),
+        "mass_kg": (scc.get("mass_kg"), body["massKilograms"]),
+        "inertia_body_kg_m2": (scc.get("inertia_body_kg_m2"), body["inertiaBodyKilogramSquareMeters"]),
         "initial_body_to_j2000_xyzw": (scc.get("initial_body_to_j2000_xyzw"), [q["x"], q["y"], q["z"], q["w"]]),
         "initial_angular_velocity_body_rad_s": (scc.get("initial_angular_velocity_body_rad_s"),
-                                                sc["initialAngularVelocityBodyRadiansPerSecond"]),
+                                                attitude["angularVelocityBodyRadiansPerSecond"]),
     }
     problems = [f"{key} in the manifest is {got!r}, the run file has {want!r}"
                 for key, (got, want) in expected.items() if got != want]
@@ -411,7 +411,7 @@ def echo_problems(manifest: dict, run: dict) -> list[str]:
         problems.append(f"epoch_utc in the manifest is {c.get('epoch_utc')!r}, the run file has {run['epochUtc']!r}")
     listed = [str(d.get("device_id")) for d in manifest.get("devices") or []]
     recorded = {d.get("device_id"): _manifest_device(d) for d in manifest.get("devices") or []}
-    wanted = {d["deviceId"]: _run_device(d) for d in run["devices"]}
+    wanted = {d["deviceId"]: _run_device(d) for d in run["spacecraftProfile"]["devices"]}
     if sorted(listed) != sorted(wanted):  # a list, so a device listed twice is refused too
         problems.append(f"devices in the manifest are {sorted(listed)}, the run file has {sorted(wanted)}")
     for device_id in sorted(set(recorded) & set(wanted)):
@@ -528,7 +528,7 @@ def recording_problems(case: Case, run: dict, directory) -> list[str]:
     directory = Path(directory)
     manifest = json.loads((directory / "manifest.json").read_text())
     states, out_of_step = _scan_states(directory / "states.jsonl", case.step_s, run["epochUtc"])
-    frames, undeclared = _scan_sensors(directory / "sensors.jsonl", {d["deviceId"] for d in run["devices"]})
+    frames, undeclared = _scan_sensors(directory / "sensors.jsonl", {d["deviceId"] for d in run["spacecraftProfile"]["devices"]})
     lines_read = {"states.jsonl": states, "sensors.jsonl": frames}
     gate_case = {"duration_s": case.duration_s, "step_s": case.step_s, "kernel_set_id": run["kernelSetId"]}
     return dataset_problems(manifest, lines_read, gate_case) + out_of_step + undeclared + echo_problems(manifest, run)
@@ -544,19 +544,19 @@ def check_dataset(case: Case, run: dict, directory, ephemeris, tolerances: dict 
     """Compare one recording with its reference case. Nothing is compared unless `recording_problems` is empty."""
     directory = Path(directory)
     report = Report()
-    unchecked = {d["kind"] for d in run["devices"]} - DEVICE_KINDS.get(case.kind, set())
+    unchecked = {d["kind"] for d in run["spacecraftProfile"]["devices"]} - DEVICE_KINDS.get(case.kind, set())
     if unchecked:
         raise ValueError(f"a {case.kind!r} case compares no {sorted(unchecked)} device, so the run file can't carry one")
     report.problems += recording_problems(case, run, directory)
     if report.problems:
         return report
 
-    step, sc = case.step_s, run["spacecraft"]
+    step, attitude = case.step_s, run["initialAttitude"]
     ephemeris = _RecentSun(ephemeris)
     et0 = ephemeris.et_of(run["epochUtc"])
-    q0 = _quat(sc["initialBodyToJ2000"])
-    w0 = np.asarray(sc["initialAngularVelocityBodyRadiansPerSecond"], float)
-    inertia = np.asarray(sc["inertiaBodyKilogramSquareMeters"], float)
+    q0 = _quat(attitude["bodyToJ2000"])
+    w0 = np.asarray(attitude["angularVelocityBodyRadiansPerSecond"], float)
+    inertia = np.asarray(run["spacecraftProfile"]["body"]["inertiaBodyKilogramSquareMeters"], float)
     r, v = initial_state(run)
     rate, axis = float(np.linalg.norm(w0)), (w0 / np.linalg.norm(w0) if np.linalg.norm(w0) else w0)
     if case.kind in ("spin", "spin_drift"):
@@ -664,7 +664,7 @@ def _valid_frames(device: dict, directory: Path, steps: int, step_s: float, repo
 
 
 def _check_imu(run, directory, w0, steps, step_s, m, report):
-    for device in (d for d in run["devices"] if d["kind"] == "imu"):
+    for device in (d for d in run["spacecraftProfile"]["devices"] if d["kind"] == "imu"):
         valid = _valid_frames(device, directory, steps, step_s, report)
         if valid is None:
             continue
@@ -683,7 +683,7 @@ def _check_imu(run, directory, w0, steps, step_s, m, report):
 def _check_irradiance(run, directory, ephemeris, positions, steps, step_s, m, report):
     """Each light sensor must read 1361·scale·(AU/d)², which holds only with its boresight on the Sun. R5's start
     puts its one sensor there; a sensor pointed elsewhere fails here."""
-    for sensor in (d for d in run["devices"] if d["kind"] == "light_sensor"):
+    for sensor in (d for d in run["spacecraftProfile"]["devices"] if d["kind"] == "light_sensor"):
         valid = _valid_frames(sensor, directory, steps, step_s, report)
         if valid is None:
             continue
