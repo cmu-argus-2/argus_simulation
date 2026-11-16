@@ -312,8 +312,8 @@
         "deviceToBody": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 }
       },
       "parameters": {
-        "max_torque_body_n_m": [0.001, 0.001, 0.001],
-        "limit_policy": "clamp"
+        "max_torque_body_n_m": [0.0001, 0.0001, 0.0001],
+        "limit_policy": "reject"
       }
     }
   ]

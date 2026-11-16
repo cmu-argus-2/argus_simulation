@@ -48,6 +48,10 @@ namespace Argus.Simulation.Host
 
         public string BackendName => "basilisk";
         public bool IsInitialized { get; private set; }
+
+        // The service builds every actuator kind it accepts and refuses the rest at ConfigureRun
+        // (UNIMPLEMENTED; Argus.Basilisk/README.md §9 "Actuators"), so every command it gets acts.
+        public bool AppliesActuatorCommands => true;
         public string BasiliskVersion { get; private set; }
 
         // clockSynch overruns since ConfigureRun or Reset; 0 when unpaced.
@@ -169,8 +173,7 @@ namespace Argus.Simulation.Host
                 RunId = _configuration.RunId,
                 Sequence = (ulong)sequence,
                 SimTimeNs = (ulong)checked(sequence * _fixedStepNanoseconds),
-                // TODO(G1): the service runs only idle actuator commands until BSK-8 applies the
-                // rest; the gateway sends every configured actuator, idle ones included.
+                // The gateway sends every configured actuator, idle ones included.
                 Commands = BasiliskProtoMapper.ToProto(command)
             };
             // Step(n) carries command n-1 and names its step, so the service rejects a command sent
