@@ -40,6 +40,8 @@ namespace Argus.Simulation.Core
             OnReset(context);
         }
 
+        public void End() => OnEnd();
+
         public bool TrySample(SensorSampleContext context, out ISensorFrame frame)
         {
             if (!_isReset)
@@ -95,6 +97,11 @@ namespace Argus.Simulation.Core
 
             frame = null;
             return false;
+        }
+
+        // What End releases; nothing by default.
+        protected virtual void OnEnd()
+        {
         }
 
         protected virtual void OnReset(SensorResetContext context)

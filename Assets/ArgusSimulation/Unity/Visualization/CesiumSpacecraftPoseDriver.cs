@@ -5,8 +5,13 @@ using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(G1): attitude nudges become engine commands. They currently change the rendered pose
-    // without changing engine truth. NavigationEpisodeExporter snapshots both poses explicitly.
+    // Places the CubeSat at the host's truth pose. The stream is decimated (CON-1), so the pose is
+    // interpolated between the last two received states, one arrival interval behind the latest:
+    // at each arrival it starts from the previous state and reaches the new one after the interval
+    // they arrived apart. Published states are never changed. After a gap more than JumpFactor times
+    // the previous one (a reconnect, a stalled host) it jumps to the new state rather than gliding
+    // across the gap; the threshold follows the stream's own cadence, so a steady stream glides at
+    // any rate. Hold shows one state exactly, for a capture whose images must match its metadata.
     [RequireComponent(typeof(CesiumGlobeAnchor))]
     public sealed class CesiumSpacecraftPoseDriver : MonoBehaviour
     {
@@ -14,9 +19,19 @@ namespace Argus.Simulation.Unity
         [SerializeField] private CesiumGlobeAnchor globeAnchor;
         [SerializeField] private bool applyAttitude = true;
 
-        private Vector3 _manualAttitudeOffsetDegrees;
+        private const double JumpFactor = 3.0;
 
-        public Vector3 ManualAttitudeOffsetDegrees => _manualAttitudeOffsetDegrees;
+        private SpacecraftState _from;
+        private SpacecraftState _to;
+        private double _fromArrivalSeconds;
+        private double _toArrivalSeconds;
+        private int _received;
+        private double _previousIntervalSeconds;
+        private bool _jumps;
+        private bool _isHeld;
+
+        public bool IsHeld => _isHeld;
+        public SimulationState HeldState { get; private set; }
 
         private void Reset()
         {
@@ -32,89 +47,132 @@ namespace Argus.Simulation.Unity
 
             globeAnchor.adjustOrientationForGlobeWhenMoving = false;
             globeAnchor.detectTransformChanges = false;
-
-            if (runner != null)
-            {
-                runner.StateProduced += ApplyState;
-            }
+            Subscribe();
         }
 
         private void OnDisable()
         {
-            if (runner != null)
-            {
-                runner.StateProduced -= ApplyState;
-            }
+            Unsubscribe();
         }
 
         public void Configure(SimulationRunner simulationRunner, CesiumGlobeAnchor anchor)
         {
-            if (runner != null && isActiveAndEnabled)
+            if (isActiveAndEnabled)
             {
-                runner.StateProduced -= ApplyState;
+                Unsubscribe();
             }
 
             runner = simulationRunner;
             globeAnchor = anchor;
-
-            if (runner != null && isActiveAndEnabled)
+            ClearHistory();
+            if (isActiveAndEnabled)
             {
-                runner.StateProduced += ApplyState;
+                Subscribe();
             }
         }
 
-        public void NudgeAttitude(Vector3 deltaDegrees)
+        // Shows exactly this state until Release, while states keep arriving.
+        public void Hold(SimulationState state)
         {
-            _manualAttitudeOffsetDegrees += deltaDegrees;
-            _manualAttitudeOffsetDegrees.x = NormalizeAngle(_manualAttitudeOffsetDegrees.x);
-            _manualAttitudeOffsetDegrees.y = NormalizeAngle(_manualAttitudeOffsetDegrees.y);
-            _manualAttitudeOffsetDegrees.z = NormalizeAngle(_manualAttitudeOffsetDegrees.z);
-            ReapplyLatestState();
+            HoldCurrent(state);
+            Apply(state.Spacecraft.PositionEcefMeters, state.Spacecraft.BodyToEcef);
         }
 
-        public void ResetManualAttitude()
+        // Freeze presentation without replacing Inspector edits or the interpolated pose.
+        public void HoldCurrent(SimulationState sourceState)
         {
-            _manualAttitudeOffsetDegrees = Vector3.zero;
-            ReapplyLatestState();
+            HeldState = sourceState;
+            _isHeld = true;
         }
 
-        private void ApplyState(SimulationState simulationState)
+        public void Release()
         {
-            SpacecraftState state = simulationState.Spacecraft;
-            Vector3d position = state.PositionEcefMeters;
-            globeAnchor.positionGlobeFixed = new double3(position.X, position.Y, position.Z);
+            _isHeld = false;
+        }
 
-            if (!applyAttitude)
+        // In Update, so cameras and anchors that follow the CubeSat in LateUpdate see this frame's pose.
+        private void Update()
+        {
+            if (_isHeld || _received == 0)
             {
                 return;
             }
 
-            Quaterniond rotation = state.BodyToEcef;
-            quaternion bodyToGlobeFixed = new quaternion(
-                (float)rotation.X,
-                (float)rotation.Y,
-                (float)rotation.Z,
-                (float)rotation.W);
-            Quaternion offsetUnity = Quaternion.Euler(_manualAttitudeOffsetDegrees);
-            quaternion offset = new quaternion(
-                offsetUnity.x,
-                offsetUnity.y,
-                offsetUnity.z,
-                offsetUnity.w);
-            globeAnchor.rotationGlobeFixed = math.mul(bodyToGlobeFixed, offset);
+            if (_received == 1)
+            {
+                Apply(_to.PositionEcefMeters, _to.BodyToEcef);
+                return;
+            }
+
+            double interval = _toArrivalSeconds - _fromArrivalSeconds;
+            if (_jumps)
+            {
+                Apply(_to.PositionEcefMeters, _to.BodyToEcef);
+                return;
+            }
+
+            double t = interval > 0.0
+                ? math.saturate((Time.realtimeSinceStartupAsDouble - _toArrivalSeconds) / interval)
+                : 1.0;
+            Vector3d position = _from.PositionEcefMeters + (_to.PositionEcefMeters - _from.PositionEcefMeters) * t;
+            Quaternion rotation = Quaternion.Slerp(ToUnity(_from.BodyToEcef), ToUnity(_to.BodyToEcef), (float)t);
+            Apply(position, new Quaterniond(rotation.x, rotation.y, rotation.z, rotation.w));
         }
 
-        private void ReapplyLatestState()
+        private void HandleState(SimulationState state)
         {
-            if (runner != null && runner.HasState)
+            _from = _to;
+            _fromArrivalSeconds = _toArrivalSeconds;
+            _to = state.Spacecraft;
+            _toArrivalSeconds = Time.realtimeSinceStartupAsDouble;
+            _received = Mathf.Min(_received + 1, 2);
+            if (_received == 2)
             {
-                ApplyState(runner.LastState);
+                double interval = _toArrivalSeconds - _fromArrivalSeconds;
+                _jumps = _previousIntervalSeconds > 0.0 && interval > JumpFactor * _previousIntervalSeconds;
+                _previousIntervalSeconds = interval;
             }
         }
 
-        private static float NormalizeAngle(float angle)
+        private void ClearHistory()
         {
-            return Mathf.Repeat(angle + 180f, 360f) - 180f;
+            _received = 0;
+            _previousIntervalSeconds = 0.0;
+            _jumps = false;
         }
+
+        private void Apply(Vector3d position, Quaterniond bodyToEcef)
+        {
+            globeAnchor.positionGlobeFixed = new double3(position.X, position.Y, position.Z);
+            if (applyAttitude)
+            {
+                globeAnchor.rotationGlobeFixed = new quaternion(
+                    (float)bodyToEcef.X,
+                    (float)bodyToEcef.Y,
+                    (float)bodyToEcef.Z,
+                    (float)bodyToEcef.W);
+            }
+        }
+
+        private void Subscribe()
+        {
+            if (runner != null)
+            {
+                runner.StateProduced += HandleState;
+                runner.HistoryReset += ClearHistory;
+            }
+        }
+
+        private void Unsubscribe()
+        {
+            if (runner != null)
+            {
+                runner.StateProduced -= HandleState;
+                runner.HistoryReset -= ClearHistory;
+            }
+        }
+
+        private static Quaternion ToUnity(Quaterniond value) =>
+            new Quaternion((float)value.X, (float)value.Y, (float)value.Z, (float)value.W);
     }
 }

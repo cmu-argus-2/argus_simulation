@@ -43,6 +43,10 @@ namespace Argus.Simulation.Core
         public DateTimeOffset ExposureStartUtc { get; }
         public double ExposureDurationSeconds { get; }
         public Vector3d CameraPositionEcefMeters { get; }
+        // Rotates camera-frame vectors into the Earth-fixed frame. The camera frame is OpenCV's:
+        // +x is image right, +y is image down and +z points out of the lens (the boresight), as in
+        // the Argus flight and GNC code and the DATA-6 (#71) mounts. A renderer converts it to its
+        // own camera axes in one place (UNITY-4).
         public Quaterniond CameraToEcef { get; }
         public CameraIntrinsics Intrinsics { get; }
 

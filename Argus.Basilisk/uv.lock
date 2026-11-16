@@ -43,7 +43,7 @@ tools = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bsk", marker = "extra == 'basilisk'", specifier = "==2.11.1" },
+    { name = "bsk", marker = "extra == 'basilisk'", specifier = "==2.12.2" },
     { name = "grpcio", specifier = "==1.81.0" },
     { name = "grpcio-tools", specifier = "==1.81.0" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },
@@ -74,7 +74,7 @@ wheels = [
 
 [[package]]
 name = "bsk"
-version = "2.11.1"
+version = "2.12.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bokeh" },
@@ -89,12 +89,12 @@ dependencies = [
     { name = "sgp4" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/14/d5/dc05965c8483b0950b4d568d0a412a182c6a55bbadf4ae378959de6dabae/bsk-2.11.1.tar.gz", hash = "sha256:ea2072ca233c6ec24eba18e039319bf9e4ab3a0a41bd75bae95c3f93d64e14f7", size = 29645314, upload-time = "2026-07-27T18:48:16.629Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/67/a8a5f043a44a1ecc674214652b40c62e0737dee9e8e5593a38589afdbb9d/bsk-2.12.2.tar.gz", hash = "sha256:8608b6d65be41efddbae518089f97084a1ecd08b95a99f52fd88810cbc95a801", size = 30002900, upload-time = "2026-11-01T21:28:29.784Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/ee/2bd5a8df9f59fe66fd7f378a3fe9f509d93eae634904713ebf8921c8357a/bsk-2.11.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:f179faa2e4a2ecfa2f65bbde73a4eebf0a12f20158c5faaec1fb630d90634f73", size = 87327504, upload-time = "2026-07-27T18:47:50.428Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/84/cb5528fb8241f920c058151e16a64680265c857ebb08e8a8baa575828ead/bsk-2.11.1-cp39-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:bcfed0f23f12078fa5b28ce17027d668385d7d7766010a34c023c9feaae7ec4a", size = 80304055, upload-time = "2026-07-27T18:47:54.667Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/e2/84328657c508c9bdb8c5fa1df377e128d6cea2898b4cc038f7a866b21d21/bsk-2.11.1-cp39-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:89bc5ef549f16f04935e2dbb4a5ce2f3cc424d5ff21e9f9ed21ce2246f5ca01d", size = 86339082, upload-time = "2026-07-27T18:47:58.894Z" },
-    { url = "https://files.pythonhosted.org/packages/48/46/029a16ebc8a7dcaf99d087e1ebaa1d57d8e70a904d6e53bd980e181bd71c/bsk-2.11.1-cp39-abi3-win_amd64.whl", hash = "sha256:4d932881e630319fe751abf4e1ecde3aee8e7380cce579ec5447cf9652689b11", size = 65982040, upload-time = "2026-07-27T18:48:03.53Z" },
+    { url = "https://files.pythonhosted.org/packages/33/9e/8cb3ce3ace2d262d314d14bece644028500afcb6bda33ff00faa740180a1/bsk-2.12.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:ed0ab8b4e660db127b60334f6175a0347511076cc3ba78644fd812f72ac65dfd", size = 74650523, upload-time = "2026-11-01T21:28:02.272Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/32/52f7753cd40bb8950d78ff456d7dd8f85a05b2ef7662faf8dc0ed878ba97/bsk-2.12.2-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8b3b8bfa54d748d9bde24400a83be5eaf2e8428865e0a1048f7ceb748f65e819", size = 68500503, upload-time = "2026-11-01T21:28:06.826Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/77/9be218552256e9a65f967da6b8fd5ecf90e9ea84a0eccf970d1370abaf57/bsk-2.12.2-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:9218d6c5fe99b77f470d6abe251dcbbefd77617f12c46f2e8dcdb327322d5302", size = 73321766, upload-time = "2026-11-01T21:28:11.37Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/8b/cc100717b871b1e9672612fb6e1ee5d428e2db42506329744e43bd632cb4/bsk-2.12.2-cp39-abi3-win_amd64.whl", hash = "sha256:db43095b1bf3fdc484289eeca8fa2798cefae54b2200ae2aa5539c3d941027a4", size = 59179434, upload-time = "2026-11-01T21:28:16.184Z" },
 ]
 
 [[package]]

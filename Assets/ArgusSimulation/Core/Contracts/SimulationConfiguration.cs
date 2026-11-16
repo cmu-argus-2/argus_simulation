@@ -11,6 +11,8 @@ namespace Argus.Simulation.Core
         private const int MaximumKernelSetIdLength = 64;
 
         private readonly DeviceConfiguration[] _devices;
+        private readonly DeviceConfiguration[] _backendDevices;
+        private readonly DeviceConfiguration[] _backendSensors;
 
         public SimulationConfiguration(
             string runId,
@@ -30,6 +32,8 @@ namespace Argus.Simulation.Core
             KernelSetId = kernelSetId;
             Spacecraft = spacecraft;
             _devices = devices == null ? null : Copy(devices);
+            _backendDevices = Where(_devices, device => device.IsBackendModelled);
+            _backendSensors = Where(_backendDevices, device => device.IsBackendSensor);
         }
 
         public string RunId { get; }
@@ -45,6 +49,15 @@ namespace Argus.Simulation.Core
         // Every configured device, in configuration order (D11).
         public IReadOnlyList<DeviceConfiguration> Devices => _devices ?? Array.Empty<DeviceConfiguration>();
 
+        // The devices the dynamics backend models, in configuration order: what ConfigureRun sends
+        // (D10, CORE-18). Worked out once, when the configuration is built (CORE-22).
+        public IReadOnlyList<DeviceConfiguration> BackendDevices => _backendDevices ?? Array.Empty<DeviceConfiguration>();
+
+        // The backend devices that are sensors the backend samples (DeviceConfiguration.IsBackendSensor),
+        // in configuration order: the ones whose measurements come back, on the steps their sample
+        // periods divide. A backend-modelled actuator (CON-2) is in BackendDevices only.
+        public IReadOnlyList<DeviceConfiguration> BackendSensors => _backendSensors ?? Array.Empty<DeviceConfiguration>();
+
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(RunId) &&
             FixedStepSeconds > 0.0 &&
@@ -55,6 +68,25 @@ namespace Argus.Simulation.Core
             RandomSeed >= 0 &&
             (KernelSetId == null || IsKernelSetId(KernelSetId)) &&
             AreDevicesValid(Devices, FixedStepSeconds);
+
+        private static DeviceConfiguration[] Where(DeviceConfiguration[] devices, Func<DeviceConfiguration, bool> keep)
+        {
+            if (devices == null)
+            {
+                return null;
+            }
+
+            List<DeviceConfiguration> kept = new List<DeviceConfiguration>();
+            foreach (DeviceConfiguration device in devices)
+            {
+                if (keep(device))
+                {
+                    kept.Add(device);
+                }
+            }
+
+            return kept.ToArray();
+        }
 
         private static DeviceConfiguration[] Copy(IReadOnlyList<DeviceConfiguration> devices)
         {
@@ -67,25 +99,42 @@ namespace Argus.Simulation.Core
             return copy;
         }
 
-        // Every sensor samples only at step states, so its period must be a whole number of steps:
+        // Every sensor samples only at step states, so its period must be a whole number of steps
+        // (an actuator has none, DeviceConfiguration.IsValid):
         // otherwise an Argus sensor samples unevenly under a period it never keeps (CORE-18). Basilisk
         // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor whose
         // frames carry truth may not be controller-visible, because the gateway forwards those frames
         // unchanged (D7, IDeviceKind.MayBeControllerVisible). Device IDs are unique across the run.
+        // Cameras that share a profile ID share its parameter set, so the recorded profile_id names
+        // one set (ICameraKind, CORE-6); the profile is read only once the device is valid.
         private static bool AreDevicesValid(IReadOnlyList<DeviceConfiguration> devices, double fixedStepSeconds)
         {
             HashSet<string> deviceIds = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, CameraProfile> cameraProfiles = new Dictionary<string, CameraProfile>(StringComparer.Ordinal);
             foreach (DeviceConfiguration device in devices)
             {
                 if (!device.IsValid ||
-                    !IsWholeNumberOfSteps(device.Definition.SamplePeriodSeconds, fixedStepSeconds) ||
+                    (!device.IsActuator && !IsWholeNumberOfSteps(device.Definition.SamplePeriodSeconds, fixedStepSeconds)) ||
                     (device.Definition.IsControllerVisible && !device.MayBeControllerVisible) ||
-                    !deviceIds.Add(device.Definition.SensorId))
+                    !deviceIds.Add(device.Definition.SensorId) ||
+                    (device.KindDefinition is ICameraKind camera && !IsConsistent(cameraProfiles, camera.Profile(device))))
                 {
                     return false;
                 }
             }
 
+            return true;
+        }
+
+        // The first camera with a profile ID sets its parameter set; every later one must match it.
+        private static bool IsConsistent(Dictionary<string, CameraProfile> profiles, CameraProfile profile)
+        {
+            if (profiles.TryGetValue(profile.ProfileId, out CameraProfile first))
+            {
+                return profile.IsSameParameterSetAs(first);
+            }
+
+            profiles.Add(profile.ProfileId, profile);
             return true;
         }
 

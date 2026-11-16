@@ -29,9 +29,8 @@ flowchart TB
     subgraph UNITY["Unity app — Argus.Simulation.Unity"]
         globe["Globe view + visualization<br/>Cesium, GIBS layers, CubeSat pose, orbit trail"]
         camr["Camera rig — CubeSatCameraRig<br/>(planned: IImageRenderer)"]
-        runner["SimulationRunner<br/>clock (planned: follower)"]
-        src["State source<br/>AnalyticStateSource<br/>(planned: StateStreamClient)"]
-        sens["Sensor runtime<br/>SimulationSensorRuntime"]
+        runner["SimulationRunner<br/>follower of the host"]
+        src["State source<br/>StateStreamClient"]
         dash["Mission dashboard<br/>SimulatorDashboard"]
         exporter["NavigationEpisodeExporter<br/>(UNITY-9 retires it once its reader moves to dataset v1)"]
     end
@@ -57,16 +56,10 @@ flowchart TB
     globe --> ion
     globe --> gibs
     runner -->|StateProduced: SimulationState| globe
-    runner -->|StateProduced: SimulationState| sens
-    runner -->|TryStep| src
-    globe -->|TryPredictState, one orbit| src
-    dash -->|reads, pause, reset| runner
-    dash -->|orbit nudges| src
-    dash -->|attitude offset| globe
-    dash -->|reads| sens
+    src -->|StateProduced| runner
+    dash -->|reads| runner
+    dash -->|reads status| src
     dash -->|capture| exporter
-    src -->|TryStep| dyn
-    sens -->|Sample| smod
     gate -->|TryStep| dyn
     exporter -->|renders| camr
     exporter --> data
@@ -78,7 +71,7 @@ flowchart TB
     bsk -.- spice
     spice -.->|loads| naif
     dyn -.->|states| rec
-    dyn -.->|decimated state stream, G2| src
+    dyn -->|decimated state stream, argus/stream/v1| src
     smod -.->|all sensor frames| rec
     smod -.->|controller-visible frames| gate
     gate -.->|command log| rec
@@ -95,20 +88,19 @@ flowchart TB
 |---|---|---|---|---|
 | Globe view + visualization | `Unity/Cesium/`, `Unity/Visualization/` | Cesium tileset, GIBS layers, globe camera, CubeSat pose, orbit trail; fixed Sun light | Sun light and night side follow the state's environment; orbit trail from state history | main (environment lighting planned) |
 | Camera rig / renderer | `Unity/Cameras/` | `CubeSatCameraRig` renders 4 body cameras and a north-up nadir ground-truth camera every frame | Implements `IImageRenderer`: renders each `CameraModel` `RenderRequest` and returns an `ImageFrame` | main (renderer role planned) |
-| SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | Publishes whole `SimulationState`s from its `ISimulationStateSource`; clock for the step-driven analytic source (fixed 0.1 s steps from Unity frame time × time scale) | Follower: broadcasts states received from the headless core | main (follower planned) |
-| State source | `Unity/Runtime/AnalyticStateSource.cs` (`IStepDrivenStateSource`) | Wraps the analytic engine in the Unity process and publishes whole states | `StateStreamClient` (`ISimulationStateSource`) for Basilisk runs; `BasiliskEngine` runs in the headless core (G2). The analytic source stays for development | main (stream client planned) |
-| Sensor runtime | `Unity/Sensors/` | Temporary bridge feeding each state to a Core `SensorManager` | Moves into the headless core (G2); Unity only displays frames | main (temporary) |
-| Mission dashboard | `Unity/UI/` | Truth from `SimulationState`, body-rate status from the sensor runtime, camera status from the rig, fixed text for the other sensors, orbit and attitude nudges, GT imagery date, capture | Same, listing sensors from received frames; nudges become engine commands | main (received sensor list (G2) and nudges as commands (G1) planned) |
+| SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | Follower: publishes the host's states as `StateStreamClient` delivers them, never stepping, re-timing or pausing them; `CesiumSpacecraftPoseDriver` interpolates between them for display | Same | main (UNITY-6) |
+| State source | `Unity/Runtime/StateStreamClient.cs` (`ISimulationStateSource`) | The scene's only source: the host's state stream (UNITY-5). Unity runs no simulation of its own, so the host's run file is the one configuration (G5) | Same | main |
+| Mission dashboard | `Unity/UI/` | Truth from the host's `SimulationState`, the stream's status and rate, camera status from the rig, fixed text for the other sensors, GT imagery date, capture. No pause, step, time scale, reset or nudges: the host owns the run | Lists the host's sensor frames (UNITY-7); nudges return as engine commands sent to the host (UNITY-11) | main (sensor list and commands planned) |
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | UNITY-9 (#63) retires it once its reader moves to dataset v1 (D6, #69) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a `SimulationState` with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
-| Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor`; `CameraModel` and the Argus-computed `ArducamImx708CameraModel`, built by `SensorFactory` with the renderer the host or Unity supplies (CORE-18) | Adds the DATA-6 camera profile and the other camera models; the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (camera profiles planned) |
-| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` and `Step(command k)` over `ISimulationEngine` in the DATA-5 order; returns controller-visible observations, and truth only through `StateProduced`; owns the run's `SensorManager`; logs every command it receives, applied or rejected, through `CommandLogged` (`CommandRecord`); used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for HIL flight computers and other external controllers: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; limits CORE-10, authority CORE-9) |
-| BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; checked on real Basilisk without sensors (HOST-4, #28) | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main (full P0 run with sensors HOST-5, #29) |
+| Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor`; `CameraModel` and the Argus-computed `BodyCameraModel` and `NadirGroundTruthCameraModel` (CORE-8), built by `CameraKind` and `NadirGroundTruthCameraKind` through `SensorFactory` with the renderer the host or Unity supplies (CORE-18) | Adds rendering on request (UNITY-4); the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (the four P0 body cameras with the DATA-6 profile, CORE-6) |
+| Simulation gateway | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` and `Step(command k)` over `ISimulationEngine` in the DATA-5 order; returns controller-visible observations, and truth only through `StateProduced`; owns the run's `SensorManager`; logs every command it receives, applied or rejected, through `CommandLogged` (`CommandRecord`); used by the tests (analytic engine) and by `headless/Host` (over `BasiliskEngine`) | Live link for HIL flight computers and other external controllers: controller-visible sensor frames out, commands in, command log to the recorder | main (host and tests; limits done, CORE-10 #46; authority CORE-9) |
+| BasiliskEngine | `headless/Host/Basilisk/`, `Core/Basilisk/` | gRPC client of the v1 Basilisk link over the internal Core mapping; verified on real Basilisk and SPICE with the full P0 scenario (HOST-4 #28, HOST-5 #29); carries per-device commands, which the service applies (BSK-8, #21) | Builds states from Basilisk state + SPICE; maps sensor messages; carries commands | main |
 | Run recorder | `Core/Recording/RunRecorder.cs` (`IRunRecorder`) | Writes dataset v1 (manifest, states, sensors, commands, PNG images) off the step loop; `headless/Host --record` feeds it from the gateway's events | The single export route for run data: states, every `SensorFrame`, the gateway command log | main (v0; Unity capture UNITY-9) |
-| Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link; gateway, stream and renderer planned) |
-| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1), the IMU (step 2), the magnetometer (step 3) and the light sensors with albedo (step 4); pacing, actuators and sensor noise beyond the IMU UNIMPLEMENTED; pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-4 on main; Basilisk/SPICE team implements the rest |
+| Argus contracts | `Argus.Contracts/` | v1 Basilisk link: `argus.sim.v1` (shared types, commands, P0 sensors, run configuration) and `argus.basilisk.v1` (`BasiliskSimulationService`) | Versioned Protobuf schemas for every cross-process message | main (Basilisk link and the state stream, CON-1; gateway and renderer planned) |
+| Basilisk service + SPICE | `Argus.Basilisk/` | gRPC service with spacecraft, SPICE and eclipse (build step 1), the IMU (step 2), the magnetometer (step 3) and the light sensors with albedo (step 4); seeded magnetometer and light-sensor noise drawn in the service (BSK-9, BSK-13), CERES albedo (BSK-14); ClockSynch pacing (step 5, BSK-7); the ideal body torque and magnetic torquer actuators (step 6, BSK-8), with momentum wheels and thrusters UNIMPLEMENTED (BSK-17, #152); pinned kernel manifest, implementation brief | Python service; dynamics, sensors, actuators; SPICE via `spiceInterface` | steps 1-6 on main (wheels and thrusters BSK-17, #152) |
 | Flight computer (HIL) | `Argus.Hardware/` | README placeholder | HIL hardware adapters talking to the gateway | planned |
-| Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` from a run configuration file (placeholder P0 data) and records it with `--record` | Hosts the headless core process (G2): recorder, gateway server, Unity state stream | main (host skeleton) |
+| Headless build + host | `headless/` | Builds Core and runs the EditMode tests with `dotnet`; `headless/Host` runs the gateway and sensors over `BasiliskEngine` from a run configuration file (placeholder P0 data), records it with `--record` and streams it to Unity (HOST-3) | Hosts the headless core process (G2): recorder, gateway server, Unity state stream | main (host skeleton) |
 
 `Unity/Export/CesiumReferenceMapExporter.cs` is an offline tool that renders reference-map
 tiles. It is not run data and sits outside D6.
@@ -118,15 +110,15 @@ tiles. It is not run data and sits outside D6.
 | # | Decision | Why | Consequence |
 |---|---|---|---|
 | D1 | The core is headless: `Argus.Simulation.Core` never references Unity. Unity is a client and a renderer. | Runs, SIL and HIL must work without the GUI. | The Core asmdef sets `noEngineReferences`, and `headless/` builds Core with plain `dotnet`. |
-| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` becomes a follower. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Whether lockstep SIL runs also use Basilisk is open (§11). |
-| D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. |
+| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` is a follower (UNITY-6): Unity never steps or paces a run. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Lockstep SIL runs use Basilisk too, unpaced (DATA-10, #75; §4). |
+| D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. One exception (HOST-8, #32): the offline checker `Argus.Basilisk/scripts/check_reference_runs.py` and its tests read the same pinned, SHA-checked set through spiceypy to verify Basilisk's output; the service, Core and the host never load a second SPICE. |
 | D4 | Environment data travels inside `SimulationState` as `EnvironmentState` (Sun vector, J2000 ↔ ITRF93 orientation, eclipse). There is no separate environment service. | It is per-step data produced together with the dynamics. | Lighting, camera models and the recorder read it through the state broadcast. |
-| D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | Unity uses a separate disabled request camera for Core exposures; dashboard feeds remain live display previews and can be disabled independently. A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. |
+| D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | Dashboard previews stay live on separate cameras; request rendering preserves their Cesium tile selection except for one-frame readiness probes (alternating with live-view frames by default) and applies capture lighting only during synchronous render. A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. The camera frame is OpenCV's (+x image right, +y image down, +z out of the lens; pixel (0, 0) is the centre of the top-left pixel), as in the Argus flight and GNC code, so the DATA-6 mounts are used unchanged (CORE-6); the renderer converts to its own axes. |
 | D6 | One export route for run data: the run recorder, fed by states, all `SensorManager` output, and the gateway's command log. | One dataset format with the same run ID, sequence and timestamps for truth and every sensor. | Decided in DATA-4 (#69) with the navigation owner: dataset v1 replaces the exporter output with no compatibility layer, and UNITY-9 (#63) retires `NavigationEpisodeExporter` once its one Python reader has moved to dataset v1. Until G2, the recorder runs in the process that owns the step loop, `headless/Host` in Basilisk runs and Unity in Unity-driven analytic runs (fed by the temporary sensor bridge); after G2 every run records in the headless core. Layout: `Core/Recording/README.md`. |
-| D7 | The gateway and the recorder are separate roles. The gateway never exposes truth. | The gateway is on the control loop's critical path; the recorder is a passive archive that must never block the loop. | The gateway forwards only controller-visible sensor frames (no ground-truth sensors) and returns observations, not `SimulationState`. A kind whose frames carry truth may not be controller-visible (`SensorConfiguration.MayBeControllerVisible`): a camera frame carries its true pose, so `SimulationConfiguration` rejects a controller-visible camera until CORE-6 (#42) decides what a controller sees of one. The gateway's `Reset(seed, scenario)` returns observation 0 and `Step(command k)` returns observation k+1 (§4). The recorder receives everything, including the gateway's command log. |
+| D7 | The gateway and the recorder are separate roles. The gateway never exposes truth. | The gateway is on the control loop's critical path; the recorder is a passive archive that must never block the loop. | The gateway forwards only controller-visible sensor frames (no ground-truth sensors) and returns observations, not `SimulationState`. A kind whose frames carry truth may not be controller-visible (`IDeviceKind.MayBeControllerVisible`): a camera frame carries its true pose, so `SimulationConfiguration` rejects a controller-visible camera. CORE-6 (#42) keeps the body cameras non-visible; a controller-safe camera observation without pose is CORE-23 (#125). The gateway's `Reset(seed, scenario)` returns observation 0 and `Step(command k)` returns observation k+1 (§4). The recorder receives everything, including the gateway's command log. |
 | D8 | Unity never sees Basilisk-specific types. | Keeps the backend replaceable. | All Basilisk data enters through `BasiliskEngine` as Argus contracts. |
-| D9 | The analytic engine stays as a development and test fixture. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. |
-| D10 | Sensors that Basilisk models (IMU, magnetometer, light sensor) keep their physics and cadence in Basilisk. | One implementation of each sensor's physics, timed by the clock that owns the run (D2). | `BasiliskEngine` maps each step's Basilisk sensor messages into `SimulationState.SensorMeasurements`; a `BackendSensorModel<T>` publishes a frame exactly when its sensor was sampled and never computes, holds or repeats a value. Each `SensorKind` declares whether Basilisk models it (`SensorConfiguration.IsBackendModelled`): only those go to ConfigureRun and `MapMeasurements`, and the sensors Argus computes, such as cameras, stay in the run configuration but never reach Basilisk (CORE-18). |
+| D9 | The analytic engine stays as a test fixture, in Core only. | Fast, deterministic tests without Basilisk. | It fills `SpacecraftState` tagged `AnalyticEarthFixed` (not ITRF93) and reports no `EnvironmentState`; it never approximates SPICE data (D3). Its circular orbit comes from its constructor. Unity has no analytic source: it only follows the host, so one run configuration drives both (UNITY-6). |
+| D10 | Sensors that Basilisk models (IMU, magnetometer, light sensor) keep their physics and cadence in Basilisk. | One implementation of each sensor's physics, timed by the clock that owns the run (D2). | `BasiliskEngine` maps each step's Basilisk sensor messages into `SimulationState.SensorMeasurements`; a `BackendSensorModel<T>` publishes a frame exactly when its sensor was sampled and never computes, holds or repeats a value. Each device kind declares whether Basilisk models it (`IDeviceKind.IsBackendModelled`, D11): only those go to ConfigureRun and `MapMeasurements`, and the sensors Argus computes, such as cameras, stay in the run configuration but never reach Basilisk (CORE-18). |
 | D11 | A spacecraft is a body plus a list of configured devices. Every sensor and actuator is a device: an instance of a generic device kind, registered by name and configured with an ID, mount, rate and that kind's parameters. Commands address actuators by device ID. | Argus is a platform for many spacecraft, not one, and their hardware is not fixed in advance. A team adopts its spacecraft by writing a profile, not by changing contracts or code. When the hardware is unknown, the device starts as an ideal kind and takes a real part's parameters later. | A spacecraft profile file (body and devices) is kept apart from the run file (orbit, epoch, initial conditions, seed). Kinds are physics models, not part numbers: IMU (gyroscope and accelerometer, one kind as Basilisk's `imuSensor` models them), magnetometer and light sensor; ideal body torque, momentum wheel, magnetic torquer and thruster. A specific part is a parameter set for its kind. Adding a kind adds one Core model and, when Basilisk models its physics (D10), one service builder, each registered by kind name. The gateway, recorder, command log and file formats do not change. Each kind validates its own parameters and command values, so actuator limits are per device (CORE-10). `SensorKind`, the sensor profile oneofs and the fixed three-vector `ActuatorCommandSet` are replaced (CON-4). Actuator kinds come after the sensor work, starting with ideal body torque. Schema: [device-model.md](device-model.md) (CON-5, #110). |
 
 ## 4. Run modes
@@ -164,11 +156,44 @@ sequenceDiagram
 
 The controller calls `Reset(seed, scenario)` and then `Step(commands)` on the gateway, which
 advances the engine by a fixed interval and returns observations. On `main`,
-`SimulationGateway` already exposes `Initialize`, `Reset()` and `Step(commands)` over the
-analytic engine in the tests and over `BasiliskEngine` in `headless/Host`, but it returns
-truth `SimulationState`s.
-`Reset(seed, scenario)` and observation-only returns are planned (§5, D7; CORE-4, #40). Whether
-Basilisk also runs lockstep (faster than real time, paced by the caller) is an open question (§11).
+`SimulationGateway` exposes `Reset(seed, scenario)`, which returns observation 0, and
+`Step(command k)`, which returns observation k+1, over the analytic engine in the tests and
+over `BasiliskEngine` in `headless/Host` (§5, D7; CORE-4, #40). The observations are
+controller-visible; truth leaves the gateway only through `StateProduced`.
+
+Which engine a lockstep run uses (DATA-10, #75):
+- **SIL runs use Basilisk unpaced** (`real_time_factor` 0, paced by the caller). The analytic
+  fixture reports no environment and no backend measurements (D9, D10), so a controller run on
+  the P0 sensors needs Basilisk.
+- **Unit and gateway tests stay on the analytic fixture** (D9). They need no bsk install and no
+  kernels. Unity's analytic development runs (below) are unchanged.
+
+Measured through `headless/Host` on one laptop (i7-1165G7, WSL2), 4 Nov 2026; CI runners differ.
+- Each run is unpaced: 600 s at 0.1 s steps.
+- The table gives the median of 5 runs, interleaved across configurations after a warm-up run,
+  with nothing else running.
+- An earlier set of 3 runs each agreed within 9%.
+- Measured at `070ff4b`, before CORE-6 (#42) added the four body cameras to
+  `runs/p0-default.json`, so "P0" here means its eight other sensors. Without a renderer the
+  cameras only publish `Unavailable` frames; their cost has not been measured.
+
+| devices | steps per second (range) | × real time (steps per second × 0.1 s) |
+|---|---|---|
+| none | 1,107 (1,014–1,159) | 111 |
+| IMU | 1,030 (963–1,048) | 103 |
+| magnetometer | 1,005 (990–1,013) | 100 |
+| 1 light sensor (with albedo) | 615 (606–637) | 62 |
+| 6 light sensors (with albedo) | 237 (229–245) | 24 |
+| P0 sensors (IMU, magnetometer, 6 light sensors; no cameras) | 229 (223–233) | 23 |
+
+- **Per-step budget:** about 1 ms per step for the dynamics and SPICE, with the IMU and the
+  magnetometer adding little, plus about 0.5 to 0.7 ms per light sensor. That makes about 4.4 ms
+  per P0 step. Extrapolated from these runs, one orbit (about 56,800 steps) takes about
+  4 minutes, and 24 hours about 1 hour.
+- **Where the time goes:** the service is the bottleneck. Its CPU time is 75% of the loop time
+  without sensors and 87% for P0.
+- **Other costs:** recording costs about 3% (`--record`, about 23 MB per 600 s P0 run). Starting
+  a run (process start through `Reset`) takes about 0.3 s.
 
 Step ordering (decided in DATA-5, #70), so the controller computes command k from
 observation k with no actuation delay:
@@ -208,18 +233,18 @@ An observation holds only what a controller can see (D7):
 It never carries a `SimulationState`, `SpacecraftState` or `EnvironmentState`; truth reaches the
 recorder and Unity through `StateProduced`.
 
-### Analytic development run (what `main` does today)
+### Unity following the host (UNITY-5, UNITY-6)
 
-1. `SimulationRunner` accumulates Unity frame time and steps every 0.1 s.
-2. `AnalyticStateSource.TryStep` calls `AnalyticSimulationEngine.TryStep`, which samples
-   `CircularOrbitModel`, and publishes the whole `SimulationState` (no environment, no
-   backend measurements). It applies no command, so its states have no `AppliedCommands`.
-3. The runner raises `StateProduced` with that state. `CesiumSpacecraftPoseDriver` moves the
-   CubeSat from `state.Spacecraft`, and `SimulationSensorRuntime` samples the Core sensors
-   under the state's run ID.
-4. `OrbitTrailRenderer` asks the analytic source to predict one orbit period.
-   `SimulatorDashboard` polls the runner and the sensor runtime, and writes orbit and
-   attitude nudges straight into the analytic source and pose driver.
+1. `headless/Host` runs the gateway over `BasiliskEngine` from its run file and serves the
+   decimated state stream (HOST-3).
+2. `StateStreamClient` receives each pair and publishes it on Unity's main thread.
+   `SimulationRunner` republishes each state unchanged and measures how fast the run advances
+   (`SimulationRate`); a new run or subscription raises `HistoryReset`.
+3. `CesiumSpacecraftPoseDriver` interpolates the CubeSat between the last two states, one
+   arrival interval behind; `OrbitTrailRenderer` draws the received track; `NadirTilePriority`
+   loads the nadir view first after each jump, without holding the run.
+4. `SimulatorDashboard` shows truth and the stream's status. A capture holds the CubeSat at the
+   captured state while its tiles load, so the images match the exported state.
 
 ## 5. Contract changes needed
 
@@ -234,11 +259,11 @@ recorder and Unity through `StateProduced`.
 | P0 sensors | `Core/Sensors/ImuSensor.cs`, `MagnetometerSensor.cs`, `LightSensor.cs` | `BackendSensorModel<T>` subclasses built by their registered kinds (`ImuKind`, `MagnetometerKind`, `LightSensorKind`) from a `DeviceConfiguration` | D10, D11 | done |
 | `SensorDefinition` | `Core/Sensors/SensorDefinition.cs` | Mark ground-truth sensors as not controller-visible | D7 | planned |
 | `SimulationRunner.StateProduced` | `Unity/Runtime/SimulationRunner.cs` | Publishes the whole `SimulationState` | D2, D4 | done |
-| `ISpacecraftStateSource` | `Core/Abstractions/ISimulationStateSource.cs`, `IStepDrivenStateSource.cs` | Replaced by `ISimulationStateSource`, which carries the whole state; the analytic source is also `IStepDrivenStateSource` | D2, G2 | done (stream client planned) |
-| `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Add the Sun direction; add a Unity implementation | D5 | planned |
-| `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` (scenario = `SimulationConfiguration`) returns observation 0; `Step(command k)` returns observation k+1 (controller-visible frames, never `SimulationState`; §4); command log; authority and heartbeat | D7, G1 | observations and command log done; limits and authority planned (CORE-10, CORE-9) |
-| Devices | `Core/Contracts/` (`DeviceConfiguration`, `IDeviceKind`, `DeviceKinds`) | Sensors and actuators as configured devices of a spacecraft profile; kinds registered by name; one typed value map for parameters, state, outputs and commands ([device-model.md](device-model.md)) | D11, G5 | sensors done (CORE-19, #111): `DeviceKinds` registers `imu`, `magnetometer`, `light_sensor` and `camera` in Core, and the service registers the Basilisk-modelled three; profile files HOST-9 (#113) |
-| Actuator commands | `Core/Contracts/DeviceCommandSet.cs` → `BasiliskEngine` | Per-device commands (device ID and the kind's values) in place of three fixed body-frame vectors; an omitted actuator is idle; an engine that applies them ([device-model.md](device-model.md) §6) | D11, G1 | per-device commands done (CORE-20, #112): the gateway rejects a command for a device the run does not configure as an actuator, which is every device until CON-2 (#34); applying them BSK-8 (#21) |
+| `ISpacecraftStateSource` | `Core/Abstractions/ISimulationStateSource.cs` | Replaced by `ISimulationStateSource`, which carries the whole state and raises `HistoryReset` for a new run; `IStepDrivenStateSource` was removed with Unity's analytic source (UNITY-6) | D2, G2 | done |
+| `RenderRequest` / `IImageRenderer` | `Core/Imaging/`, `Core/Abstractions/` | Sun-aware requests; UnityImageRenderer implements on-request GPU capture | D5 | implemented (host render transport: UNITY-10) |
+| `SimulationGateway` | `Core/Runtime/SimulationGateway.cs` | `Reset(seed, scenario)` (scenario = `SimulationConfiguration`) returns observation 0; `Step(command k)` returns observation k+1 (controller-visible frames, never `SimulationState`; §4); command log; authority and heartbeat | D7, G1 | observations, command log and per-device limits done (CORE-10, #46: each kind holds a command to its device's limits, and the gateway clamps or rejects per `limit_policy`); authority planned (CORE-9) |
+| Devices | `Core/Contracts/` (`DeviceConfiguration`, `IDeviceKind`, `DeviceKinds`) | Sensors and actuators as configured devices of a spacecraft profile; kinds registered by name; one typed value map for parameters, state, outputs and commands ([device-model.md](device-model.md)) | D11, G5 | sensors done (CORE-19, #111): `DeviceKinds` registers `imu`, `magnetometer`, `light_sensor` and `camera` in Core, and the service registers the Basilisk-modelled three; actuator kinds done (CON-2, #34): `ideal_body_torque`, `momentum_wheel`, `magnetic_torquer` and `thruster` in `Core/Actuators/` and `argus_basilisk/devices/`; the service builds `ideal_body_torque` and `magnetic_torquer` (BSK-8, #21) and refuses the other two (UNIMPLEMENTED); profile files HOST-9 (#113) |
+| Actuator commands | `Core/Contracts/DeviceCommandSet.cs` → `BasiliskEngine` | Per-device commands (device ID and the kind's values) in place of three fixed body-frame vectors; an omitted actuator is idle; an engine that applies them ([device-model.md](device-model.md) §6) | D11, G1 | per-device commands done (CORE-20, #112): the gateway rejects a command for a device the run does not configure as an actuator; actuator kinds done (CON-2, #34): `ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`, and the gateway runs omitted actuators at their idle values; applying them done (BSK-8, #21) for `ideal_body_torque` (`extForceTorque`) and `magnetic_torquer` (`MtbEffector`) |
 
 ## 6. Frames, units and time
 
@@ -260,16 +285,18 @@ recorder and Unity through `StateProduced`.
 
 | # | Gap | Notes |
 |---|---|---|
-| G1 | No backend applies actuator commands | `SimulationGateway.Step` forwards a per-device `DeviceCommandSet` to `ISimulationEngine.TryStep`, but `AnalyticSimulationEngine` only records it in the state; `BasiliskEngine` sends it as `StepRequest.commands`. No actuator kind exists yet, so the gateway rejects a command naming any device, and the service returns INVALID_ARGUMENT for one, leaving the empty set (no output). The gateway also rejects non-finite or repeated commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; hardware-limit validation (clamp or reject per actuator profile), authority and heartbeat are still missing. The Unity runner path bypasses the gateway and applies no command. Under D11, commands address actuators by device ID (CORE-20, #112; [device-model.md](device-model.md) §6); actuator kinds follow the sensor work, starting with ideal body torque (CON-2, #34). |
-| G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. `headless/Host` already runs the gateway, `BasiliskEngine`, the P0 sensors and the recorder; the gateway server and the state stream (`StateStreamServer`, `StateStreamClient`, `state_stream.proto`) are placeholders. |
-| G3 | Camera timing in real time | A Cesium render can take longer than a step. Decided (CORE-3 #38): stamp with capture time. `CameraModel` starts each exposure at its slot and publishes the frame on the step its render finishes, with the capture state's sequence and time, in sequence order. An exposure not rendered within the camera's latency limit (simulation time), or whose render fails, is published as `Unavailable`; frames are never dropped silently, marked `Stale`, or black. A step loop that must not outrun the renderer waits until `PendingExposureCount` is 0. With no `EnvironmentState` (analytic runs, D9) the camera still renders and the request records that it has no Sun position; the Sun is never approximated. |
-| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. The full P0 run with sensors is HOST-5 (#29). |
-| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels, and only the backend-modelled sensors are sent to it (CORE-18). Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). The run file names its profile by a path relative to itself ([device-model.md](device-model.md) §4, HOST-9 #113). |
+| G1 | Actuator commands: authority and the other kinds | `SimulationGateway.Step` forwards a per-device `DeviceCommandSet` to `ISimulationEngine.TryStep`. `BasiliskEngine` sends it as `StepRequest.commands`, and the service applies it over the step it is for (BSK-8, #21): `ideal_body_torque` as `extForceTorque` and `magnetic_torquer` as `MtbEffector` on the WMM field. It refuses a run with a `momentum_wheel` or `thruster` (UNIMPLEMENTED), which P0 doesn't carry (DATA-2, #68), and, as a backstop, a command past a device's limits (INVALID_ARGUMENT), which the gateway never sends: per-device limit validation is done (CORE-10, #46). Each kind holds a command to its device's limits (`IActuatorKind.Limit`), and the gateway clamps it (`Clamped`, with the requested and applied command and the reason) or rejects the whole command (`Rejected`) per the device's `limit_policy`. `AnalyticSimulationEngine` only records commands (`AppliesActuatorCommands` false), so over it the gateway logs any command other than its kind's idle values as `Rejected` and the run continues. The P0 run file configures one `ideal_body_torque` device, `reject` at 1e-4 N·m per axis as DATA-2 gives, until DATA-2's six coils land in it. The gateway also rejects non-finite or repeated commands and commands for the wrong sequence or time, and checks each engine state's run ID, sequence and time; authority and heartbeat are still missing (CORE-9). The Unity runner path bypasses the gateway and applies no command. Under D11, commands address actuators by device ID (CORE-20, #112; [device-model.md](device-model.md) §6), and each command carries exactly its kind's keys (CON-2, #34). |
+| G2 | The core runs inside Unity | Target: a headless core process owning the gateway, `BasiliskEngine`, sensors and recorder. Unity becomes a client of a decimated state stream. `headless/Host` already runs the gateway, `BasiliskEngine`, the P0 sensors and the recorder; it serves the state stream (`argus/stream/v1`, CON-1) from `Streaming/StateStreamServer` (HOST-3), Unity's `StateStreamClient` receives it (UNITY-5), and `SimulationRunner` follows it, the only source in Unity (UNITY-6). The gateway server is a placeholder. |
+| G3 | Camera timing in real time | A Cesium render can take longer than a step. Decided (CORE-3 #38): stamp with capture time. `CameraModel` starts each exposure at its slot and publishes the frame on the step its render finishes, with the capture state's sequence and time, in sequence order. An exposure not rendered within the camera's latency limit (simulation time), or whose render fails, is published as `Unavailable`; frames are never marked `Stale` or black, and are not dropped during a run. An exposure still pending when the run ends or the camera resets is abandoned, not published, so a run directory's camera frames can stop short of its last slot, with no gap in their `sequence`; its render is cancelled on every path: a stop, a backend or step failure, a run that reached its last step (`SimulationGateway.Finish`) and a second `Reset` (CORE-21, #119). `PendingExposureCount` is not a wait condition, because it falls only on a later step; how a lockstep step loop waits for the renderer is left to the first renderer (UNITY-4 #57). With no `EnvironmentState` (analytic runs, D9) the camera still renders and the request records that it has no Sun position; the Sun is never approximated. |
+| G4 | Frame and unit mapping | Basilisk inertial frame + MRP vs `SpacecraftState` ECEF + quaternion. Frame tags, `Core/Basilisk/BasiliskStateMapper` and its tests exist; `BasiliskEngine` in `headless/Host` calls them. HOST-4 (#28) checked them on real Basilisk and SPICE (kernel set `argus-2026-10-20`, no sensors). Step(0) at 2025-01-15T00:00Z matches an independent CSPICE computation from the same kernels to about 4e-16 relative (position, velocity, Sun, Earth rate). 600 s runs pass every mapper check, and both gateway `Reset` and engine `Reset` reproduce 6,000 steps bit-identically. HOST-5 (#29) ran the full P0 scenario (IMU, magnetometer, six light sensors; kernel set `argus-2026-11-02`) for 600 s: every sensor reports exactly on its period, also with mixed periods of 0.1 to 1.0 s; the IMU is Unavailable at t = 0 and Valid after; and against CSPICE and an independent propagation from the run file's elements (Earth point mass plus the Sun as a third body), the J2000-to-ITRF93 rotation, Sun and Earth rate agree to about 8e-16 relative, the orbit to 14 µm (a service defect HOST-8 later fixed) and 5e-8 m/s, and body to J2000 stays the initial attitude to 7e-16. Two runs with the same seed record identical states, frames and commands. HOST-8 (#32) checked the Basilisk path against independent references over up to 24 h, and found and fixed one defect: see [G4 results](#g4-results-host-8-32). |
+| G5 | One shared run configuration | Epoch, orbit, kernel-set ID, seed and sensor profiles defined once and shared by Basilisk and Argus; only Basilisk loads the kernels at run time (D3), and only the backend-modelled sensors are sent to it (CORE-18). Defined in Core as `SimulationConfiguration`; `KernelSetId` names `Argus.Basilisk/kernel_sets/<id>.json`. `headless/Host` reads it from a run configuration file (`headless/Host/runs/`, format in `headless/README.md`); `runs/p0-default.json` holds placeholder values until DATA-1 (#67). Under D11, the spacecraft's body and its devices (sensors and actuators) move to a spacecraft profile kept apart from the run file, so a team adopts its spacecraft by writing a profile (CON-4, #105). The run file names its profile by a path relative to itself ([device-model.md](device-model.md) §4, HOST-9 #113). |
 
-**Not built yet:** the Basilisk service's pacing, actuators, and magnetometer and light-sensor
-noise (only spacecraft, SPICE, eclipse and the noise-free P0 sensors are built; `BasiliskEngine` is checked on real Basilisk without sensors, and the full P0 run is HOST-5 (#29)); camera models; the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
+**Not built yet:** the Basilisk service's `momentum_wheel` and `thruster` effectors (spacecraft,
+SPICE, eclipse, the P0 sensors with their seeded noise, ClockSynch pacing (BSK-7, #20) and the
+`ideal_body_torque` and `magnetic_torquer` effectors (BSK-8, #21) are built, and the Basilisk path
+is verified with the full P0 scenario, HOST-5 #29); camera rendering on request (UNITY-4, #57); the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
-the run recorder, dataset format and replay of recorded runs; gateway safety (authority,
+replay of recorded runs; gateway safety (authority,
 hardware-limit validation, heartbeat, failsafe).
 
 The Foundation tileset uses the project-owned `ArgusFourOverlayTileset` material,
@@ -285,44 +312,205 @@ for provenance and the offline GPU validation command.
 - The scene's Sun light is fixed.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
-- Attitude nudges are scene edits. Their physical integration through engine commands remains
-  planned (G1). The temporary navigation exporter records rendered and engine poses separately.
+- Orbit and attitude nudges are gone until they can be engine commands sent to the host
+  (UNITY-11), so the CubeSat can only be moved by the host's run file.
 
-## 8. Teammate branches that diverge from these decisions
+### G4 results: HOST-8 (#32)
 
-These branches are not on `main`. They need to be reconciled with the decisions above
-before they merge.
+HOST-8 checks the Basilisk path (the service, `BasiliskEngine` and the mapper) against independent
+references over up to 24 h:
+- **Cases:** frozen in `headless/Host/runs/reference/`; its README gives each value's source.
+- **Checker:** `Argus.Basilisk/scripts/check_reference_runs.py` compares a recording with its case.
+- **What it shows:** the references use the service's own physics (Earth and the Sun as point
+  masses with bsk's μ, and a torque-free rigid body). So these results show the configured
+  physics is solved and mapped correctly, not that it is realistic.
+- **Tolerances:** the error budgets of the plan on #32 (7 Nov 2026), far below a camera pixel
+  (58″, or 163 m at nadir).
 
-- `spice-integration` (and the local `spice-unity-presentation` ref) generate SPICE
-  environment tables offline with `Argus.Spice/generate_reference.py`, and Unity loads
-  them at runtime. `runtime-spice-integration` (merged into `origin/spice-unity-presentation`
-  as PR #11) runs a persistent Python SPICE worker (`runtime_service.py`). Both add a
-  SPICE source outside Basilisk, which conflicts with D3. Both also add a separate
-  ephemeris provider (`IEphemerisProvider` in `Core/Abstractions/`, `EphemerisSample` and
-  `SunObservation` in `Core/Contracts/`, implementations in `Core/Environment/`) instead of
-  `EnvironmentState` in the state, which conflicts with D4.
+Measured 11 Nov 2026 with HOST-8's service fix on bsk 2.12.2 (BSK-15, #140): epoch 2026-06-01T12:00Z, kernel set
+`argus-2026-11-02`. The recordings stamp `00396f5`, the branch head before its last merge with `main`. Each manifest
+records the bsk the service ran, 2.12.2. The merged code reproduces R1 at 1 s, R1e, R2, R3 and R5 bit for bit.
+R2-long from the identity start at 0.1 s stopped early three times on the stock server, with ResourceExhausted
+(#144). It finished with BSK-16's server change, which leaves the physics untouched: its orbit, frame, Sun and
+Earth-rate metrics are bit-identical to R1 at 0.1 s, which ran on the stock server. Its manifest can't show that
+change.
 
-  Port/drop list for `spice-integration` (DATA-9, #74):
-  - Ported: `Argus.Spice/kernels.json` → `Argus.Basilisk/kernel_sets/argus-2026-09-25.json`
-    (on `main`); `ensure_kernels`, `download`, `sha256_file` and `check_coverage` from
-    `generate_reference.py` → `Argus.Basilisk/scripts/fetch_kernels.py` (SPICE-1, #12); the
-    t = 0 values of `foundation_one_orbit.json` → `BasiliskStateMapperTests` (on `main`;
-    BSK-3, #16, checks the service against them). `Matrix3d` and `AssemblyInfo` are already
-    on `main`.
-  - Dropped: the rest of `Argus.Spice/` (reference-table generation, `regenerate.sh`,
-    `scenarios/`) and `Assets/StreamingAssets/Argus/Spice/` (offline tables, D3);
-    `IEphemerisProvider`, `EphemerisSample`, `SunObservation`, `TabulatedEphemerisProvider`,
-    `SpiceReferenceFile`, `SolarGeometry`, `EarthShadowModel` and their tests (Sun and
-    eclipse come from Basilisk in `EnvironmentState`, D3 and D4).
-  - To confirm with the branch owners before the branch is closed: the `Quaterniond`,
-    `CircularOrbitModel`, `AnalyticSimulationEngine`, `AnalyticOrbitStateSource` and
-    `OrbitTrailRenderer` changes, `Core/Serialization/JsonReader` and the orbit-trail PlayMode
-    tests.
-- `basilisk-integration` replays an offline Basilisk recording from `dynamics/basilisk/`.
-  This conflicts with D2. Its Unity `BasiliskReplayStateSource` also parses Basilisk output
-  inside Unity and supplies gyro measurements outside `BasiliskEngine` and the Core sensor
-  models, which conflicts with D8. It is also based on a `main` from before the sensor PRs.
-  Its Basilisk work belongs in `Argus.Basilisk/`.
+On bsk 2.11.1 (8 Nov), the orbit figures differed slightly: R1 was 3.0e-5 m and 3.2e-8 m/s at 0.1 s and 5.9e-5 m and
+6.4e-8 m/s at 1 s, R1e 2.5e-6 m and 2.5e-9 m/s, and R3's 600 s orbit 3.5e-8 m (HOST-5 below). R2's accelerometer read
+4.3e-12 m/s². The attitude, gyro, frame, Sun, Earth-rate, irradiance, drift and R4 figures are the same. Before the
+fix (`66911d4`, bsk 2.11.1), R1 at 1 s drifted 1.45 m.
+
+| Case | Checks | Worst over the run | Tolerance |
+|---|---|---|---|
+| R1 orbit, 24 h | orbit integration and the J2000 → ITRF93 mapping | 4.1e-5 m and 4.5e-8 m/s at 0.1 s steps; 7.7e-5 m and 8.4e-8 m/s at 1 s | 1 cm, 10 µm/s |
+| R1e eccentric, 2 h | the element conversion (e = 0.01, generic angles) | 2.4e-6 m, 2.2e-9 m/s | 1 cm, 10 µm/s |
+| all ten | the frame, the Sun's position and the Earth rate, at every step | 2.2e-16 rad; 1.2e-15 and 5.7e-16 relative | 1e-10 |
+| R2 spin, 600 s | attitude conventions: a tilted start spinning at 20.17°/s about +Y | 2.7e-8 rad; ω exact | 1e-6 rad, 1e-6 relative |
+| R2, its IMU | a noise-free IMU on a skewed, offset mount, from step 1 | gyro 5.6e-17 rad/s, accelerometer 8.7e-19 m/s² | 1e-14 rad/s, 1e-9 m/s² |
+| R3 tumble, 600 s | products of inertia and Euler's equations | 4.3e-8 rad, ω 3.4e-8 relative; momentum 3.3e-9, energy 5.4e-10 | 1e-6 each |
+| R5 Sun-pointing, 60 s | a light sensor on a 35° mount, its boresight on the Sun, reading 1361 × (1 AU/d)² W/m² | 2.1e-10 relative | 1e-3, which catches a pointing error above about 2.6°; an ignored or inverted mount is 34° or 68° off |
+| R2-long, 24 h at 20°/s | attitude drift against the step size | 0.88° (identity start) and 2.19° (R2's start) at 1 s steps, or 55 and 136 IMX708 pixels; 0.3″ and 0.8″ at 0.1 s | the start: 1e-6 rad; the drift: measured only |
+
+- **A recording passes only if:**
+  - it is a closed run with nothing dropped;
+  - it uses the case's step, kernel set and backend;
+  - it has one state per step, in order, with UTC stamps at the epoch plus the simulation time
+    and a unit frame quaternion, plus a unit body attitude in the attitude cases (R2, R2-long, R3);
+  - it echoes the run file's configuration and devices by value;
+  - each declared sensor has one frame per state, and no undeclared sensor has any.
+
+  The three 24 h runs at 0.1 s each recorded all 864,001 states with no drops (the recorder queue
+  holds 65,536).
+- **Defect found and fixed in HOST-8.**
+  - **What it was:** Earth's gravity body read its SPICE planet message. Earth is the central body
+    and SPICE's zero base.
+  - **Why it mattered:** bsk (2.11.1 and 2.12.2 alike) steps the message's orientation linearly inside each step, so
+    the orbit converged at second order. It drifted about 1.4 m a day at 1 s steps (1.45 m on 2.11.1,
+    1.35 m on 2.12.2), and halving the step cut the error 4×. A message with the orientation but no rate leaves the
+    orbit exact.
+  - **The fix:** Earth's gravity body now reads no message (`Argus.Basilisk/README.md`, scenario
+    notes).
+  - **Effect on HOST-5:** its 14 µm orbit figure (G4) was this defect. The 600 s cases here, R2 and
+    R3, gave 1.4e-5 m before the fix, and 3.4e-8 m after.
+- **R4, the analytic fixture (development only, D9).** It starts on Basilisk's orbit at t = 0, in
+  ITRF93 axes frozen at t = 0. It deviates by up to 27.5 m, at 11.6 h:
+
+  | t | total | radial | along-track | cross-track |
+  |---|---|---|---|---|
+  | 0 s | 7e-9 m | | | |
+  | 96 min (one fixture orbit is 96.3 min) | 4.24 m | −0.0001 m | −4.18 m | +0.71 m |
+  | 6 h | 20.8 m | −0.35 m | −4.11 m | +20.38 m |
+  | 24 h | 5.51 m | −0.01 m | −5.46 m | +0.78 m |
+
+  To split it, Basilisk's own J2000 path is mapped through the fixture's Earth instead of ITRF93:
+  - the fixture's Earth model, a constant-rate turn about ITRF93's z axis at t = 0, accounts for up
+    to 31.5 m (at 12.4 h);
+  - its orbit physics (no Sun, the WGS-84 μ, a circular orbit) accounts for up to 9.9 m, with
+    6.8 m along-track at 24 h;
+  - the two partly cancel.
+
+  Only R1 has an R4 counterpart, and its 1 s recording is enough, since R4 compares every 60 s.
+  The fixture has no eccentricity, attitude dynamics or sensors, so R1e, R2, R2-long, R3 and R5
+  have nothing to compare.
+- **Not verified:**
+  - mass and the inertia's scale, to which a torque-free body is blind;
+  - any torque;
+  - J2 and drag, which the service doesn't model;
+  - the eclipse factor, beyond R5's full sunlight;
+  - the recorded body attitude and rate in the zero-rate cases (R1, R1e, R5); R2 and R3 check their mapping.
+
+## 8. Teammate branches reconciled with these decisions
+
+Five early branches came before these decisions. DATA-9 (#74) records what was ported from each
+and what was dropped. No ports remain, and none of the branches is left on the remote; every commit
+stays reachable through its pull request's ref (`git fetch origin pull/<n>/head`).
+
+| branch | owner | PR | state |
+|---|---|---|---|
+| `spice-integration` | Rsarabu28, narrowed by sidqian123 | #5, closed 28 Sep | ports merged; branch deleted 4 Nov (kept by `pull/5/head` and `pull/7/head`) |
+| `spice-unity-presentation` | sidqian123 | #7, closed 28 Sep | `spice-integration` plus Unity presentation, attitude overrides and #11; nothing more ported; branch deleted 4 Nov (kept by `pull/7/head`) |
+| `runtime-spice-integration` | sidqian123 | #11, merged into `spice-unity-presentation` 28 Sep, never into `main` | branch deleted (kept by `pull/11/head` and `pull/7/head`) |
+| `dynamics/basilisk-integration` | Songdddd | #6, closed 30 Sep | ports merged; branch deleted (kept by `pull/6/head`) |
+| `basilisk-integration` | — | — | not on the remote; presumed to be #6's `dynamics/basilisk/` work, which BSK-4 (#17) cites as `basilisk-integration:dynamics/basilisk/experiments` |
+
+**`spice-integration` (#5).** It generates SPICE environment tables offline with
+`Argus.Spice/generate_reference.py`, and Unity loads them at runtime. That is a SPICE source
+outside Basilisk (D3). It also adds an ephemeris provider (`IEphemerisProvider`,
+`EphemerisSample`, `SunObservation`) instead of `EnvironmentState` in the state (D4).
+- Ported:
+  - `Argus.Spice/kernels.json` → `Argus.Basilisk/kernel_sets/argus-2026-09-25.json`, with the
+    same files, URLs and hashes. That file's comment cites `origin/spice-integration`; the same
+    `kernels.json` is at `f2e9fc8` (`pull/5/head`);
+  - `ensure_kernels`, `download`, `sha256_file` and `check_coverage` from `generate_reference.py`
+    → `Argus.Basilisk/scripts/fetch_kernels.py` (SPICE-1, #12);
+  - the t = 0 values of `foundation_one_orbit.json` → `BasiliskStateMapperTests` (BSK-3, #16,
+    checks the service against them; `Argus.Basilisk/README.md` §13);
+  - the Hamilton product and `Rotate` in `Quaterniond`: the same formulas are on `main` (`493e482`).
+- Dropped:
+  - the rest of `Argus.Spice/` (reference-table generation, `regenerate.sh`, `scenarios/`, its
+    README and requirements) and `Assets/StreamingAssets/Argus/Spice/` (offline tables, D3);
+  - `IEphemerisProvider`, `EphemerisSample`, `SunObservation`, `TabulatedEphemerisProvider`,
+    `SpiceReferenceFile`, `SolarGeometry` and `EarthShadowModel` (Sun and eclipse come from Basilisk
+    in `EnvironmentState`, D3 and D4);
+  - `Core/Serialization/JsonReader`, whose only production caller was `SpiceReferenceFile`;
+  - the branch's `Matrix3d` and `AssemblyInfo`. `main` has its own: a smaller `Matrix3d` for the
+    SPICE matrices, and an `AssemblyInfo` that grants the host rather than the PlayMode tests;
+  - the `CircularOrbitModel` and `AnalyticSimulationEngine` changes and their three new
+    `CircularOrbitModelTests`. They route the analytic fixture through `IEphemerisProvider`, and the
+    fixture never approximates SPICE data (D9);
+  - the `AnalyticOrbitStateSource` and `OrbitTrailRenderer` changes. `main` renamed the source
+    `AnalyticStateSource` when Unity moved to `ISimulationStateSource` (`e08660b`), and the trail
+    stays the analytic-fixture trail until G2. The orbit-trail PlayMode test goes with them. Its
+    check that building the trail neither advances nor publishes the live run is worth keeping when
+    G2 rebuilds the trail;
+  - `Quaterniond.Identity`, `Conjugate` and `FromAxisAngle`, whose callers are all dropped code and
+    its tests;
+  - the tests of the dropped code: `SpiceFrameConversionTests`, `SpiceMilestoneValidationTests`,
+    `SpiceReferenceEphemerisTests`, `SunGeometryTests`, the Sun-geometry and analytic-source
+    PlayMode tests, and the spacecraft reference fixture. On `main`, `BasiliskStateMapperTests` and
+    the HOST-4 (#28) check against CSPICE cover the frame mapping (G4);
+  - `SpacecraftState.WithBodyToEcef`, which exists only in `f2e9fc8` (`e2825fa` removed it), and
+    the `MockSensorSuite` Sun-geometry wiring, which went when the branch merged `main` (`9573e60`)
+    because `main` had deleted that file;
+  - the README, `docs/code-organization.md` and `docs/system-architecture.md` edits, which describe
+    this design.
+
+**`spice-unity-presentation` (#7) and `runtime-spice-integration` (#11).** Their history contains
+`spice-integration`, but their tree replaces the offline tables with a persistent Python SPICE
+worker: `generate_reference.py`, `JsonReader`, `SpiceReferenceFile` and the tables are deleted.
+Nothing more is ported.
+- Dropped:
+  - `Argus.Spice/runtime_service.py`, `run_runtime.sh` and `SpiceRuntimeEphemerisProvider` (a SPICE
+    worker outside Basilisk, D3), with the rest of `Argus.Spice/`. That includes the Earth PCK
+    update in its `kernels.json`; kernel files change only through a new kernel set in
+    `Argus.Basilisk/kernel_sets/`;
+  - the attitude overrides: `IAttitudeOverrideTarget`, `AttitudeOverrideCommand`, their tests, and
+    their wiring through the analytic engine, `AnalyticOrbitStateSource`, `SimulationRunner`,
+    `SimulatorDashboard` and `CesiumSpacecraftPoseDriver` (whose manual `NudgeAttitude` moves into
+    the override). Attitude nudges are to become engine commands (§10);
+  - the rest of the `SimulationRunner` and `SimulatorDashboard` changes: the dashboard's
+    environment panel, which shows SPICE Earth orientation and Sun and eclipse status from
+    `SunObservation` (D4), and the runner pausing when `StepOnce` returns no state. That pause is
+    worth keeping for step-driven sources; under G2 a stalled stream needs its own handling;
+  - the `NasaGibsRasterController` change, which converts the light direction to Earth-fixed
+    coordinates. UNITY-1 (#54) made the same fix on `main`;
+  - `SunLightDriver`, which aims the scene light from `EphemerisSample`, and its
+    `FoundationSceneBuilder` wiring. `main` keeps a placeholder `SunLightDriver` with `TODO(D4)` for
+    UNITY-3 (#59). The branch version (`pull/7/head`) is a reference for aiming the Cesium light,
+    but its Sun direction must come from `EnvironmentState`;
+  - the docs edits, as on `spice-integration`.
+
+**`dynamics/basilisk-integration` (#6).** It replays an offline Basilisk recording from
+`dynamics/basilisk/` (D2). Its Unity `BasiliskReplayStateSource` also parses Basilisk output inside
+Unity and supplies gyro measurements outside `BasiliskEngine` and the Core sensor models (D8).
+- Ported by BSK-4 (#17, PR #90) as service checks in `Argus.Basilisk/tests/test_devices.py`:
+  - `accel_truth_test` →
+    `test_noise_free_accelerometer_reads_applied_force_over_mass_but_not_gravity`;
+  - the ideal case of `gyro_truth_test` and the rotated case of `imu_mounting_test` →
+    `test_noise_free_imu_reads_the_body_rate_in_sensor_axes` (the same quarter turn about z).
+- Replaced: the experiment's default random-walk transition matrix. The service sets A = I
+  explicitly when a bias random walk is set, which
+  `test_bias_random_walk_uses_an_identity_a_matrix` checks.
+- Dropped:
+  - `BasiliskReplayStateSource`, `IGyroMeasurementSource`, `BasiliskReplayTests`, and the
+    `ISpacecraftStateSource`, `AnalyticOrbitStateSource`, `MockSensorSuite`, `SimulationRunner`,
+    `SimulatorDashboard` and `OrbitTrailRenderer` changes, with the `SimulatorDashboard` PlayMode
+    test and EditMode `.asmdef` changes (replay inside Unity, D2 and D8);
+  - the rest of `dynamics/basilisk/`: `orbit/argus_truth_sim.py`, `export_gyro.py`,
+    `frame_adapter.py` and its test, `experiments/synchronized_gyro.py`, `samples/`, its README,
+    `VALIDATION.md` and requirements. They export recordings for replay (D2), and Argus converts
+    frames once, in `BasiliskStateMapper`;
+  - the experiments' illustrative noise settings. Noise comes from the device parameters
+    (DATA-1, #67).
+
+**Check.** `git grep` on `main` for the dropped names (`IEphemerisProvider`, `EphemerisSample`,
+`SunObservation`, `TabulatedEphemerisProvider`, `SpiceReferenceFile`,
+`SpiceRuntimeEphemerisProvider`, `SolarGeometry`, `EarthShadowModel`, `JsonReader`,
+`IAttitudeOverrideTarget`, `AttitudeOverrideCommand`, `BasiliskReplayStateSource`,
+`IGyroMeasurementSource`, `runtime_service`, `generate_reference`, `export_gyro`, `frame_adapter`)
+finds them only in this section. `Argus.Spice` and `dynamics/basilisk` appear only in provenance
+notes and the porting rule in `Argus.Basilisk/README.md`. `SunLightDriver` is on `main` as the
+UNITY-3 placeholder, not the branch version.
 
 ## 9. Code layout
 
@@ -384,11 +572,11 @@ Argus.Hardware/            HIL adapters                                        p
       orbit trail from state history in Basilisk runs.
 - [x] Protobuf v1 for the Basilisk link in `Argus.Contracts/`.
 - [ ] `Argus.Basilisk/` service with SPICE (spacecraft, SPICE, eclipse and the P0 sensors on
-      main; the Basilisk/SPICE team implements pacing, actuators and the remaining sensor
+      main, with pacing; the Basilisk/SPICE team implements actuators and the remaining sensor
       noise).
 - [x] `BasiliskEngine` gRPC client and the headless host (`headless/Host`).
 - [ ] The headless core process serving the recorder, the gateway and the Unity stream
-      (G1, G2). Port teammate Basilisk and SPICE work into this layout per §8.
+      (G1, G2). Teammate Basilisk and SPICE work is reconciled with this layout (§8).
 - [ ] Orbit and attitude nudges become engine commands, so rendered images match the
       recorded state.
 
@@ -401,11 +589,15 @@ the gateway.
   CON-5 (#110): one map from key to a typed `DeviceValue` (number, vector, quaternion, matrix,
   flag or text) for parameters, initial state, outputs, commands and per-step state. Each kind
   rejects unknown, missing, mistyped or out-of-range keys, so a new kind needs no contracts
-  change ([device-model.md](device-model.md) §3). The change is made in v1 before HOST-5 (#29)
-  closes (§8 there).
+  change ([device-model.md](device-model.md) §3). The change was made in v1 before HOST-5 (#29)
+  froze it (§8 there).
 - Do lockstep SIL runs use Basilisk faster than real time, or only the analytic fixture?
-  (D2) The v1 link and `BasiliskEngine` accept `real_time_factor` 0 (unpaced; the service
-  rejects any other value until BSK-7 (#20) builds pacing); whether lockstep runs use it stays open.
+  (D2) Answered by DATA-10 (#75): both, for different tests (§4).
+  - SIL runs use Basilisk at `real_time_factor` 0, at about 23× real time for the P0 sensors on a laptop;
+  - unit and gateway tests keep the analytic fixture (D9).
+
+  So SIL tests in CI need the bsk install and the kernels: about 45 MB, mostly `de440s.bsp` and the
+  Earth PCK. They run in BSK-11's (#24) job, **Basilisk service and host run**, not HOST-2's.
 - Must dataset v1 stay compatible with `NavigationEpisodeExporter`'s current output for the
   Python navigation code? (D6) Answered by DATA-4 (#69) with the navigation owner: no.
   Dataset v1 replaces it, and the one reader moves to dataset v1. Layout and field mapping:

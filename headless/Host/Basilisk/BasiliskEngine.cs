@@ -48,6 +48,10 @@ namespace Argus.Simulation.Host
 
         public string BackendName => "basilisk";
         public bool IsInitialized { get; private set; }
+
+        // The service builds every actuator kind it accepts and refuses the rest at ConfigureRun
+        // (UNIMPLEMENTED; Argus.Basilisk/README.md §9 "Actuators"), so every command it gets acts.
+        public bool AppliesActuatorCommands => true;
         public string BasiliskVersion { get; private set; }
 
         // clockSynch overruns since ConfigureRun or Reset; 0 when unpaced.
@@ -80,12 +84,11 @@ namespace Argus.Simulation.Host
             }
 
             // SimulationConfiguration.IsValid already requires whole steps for every sensor; Basilisk
-            // also needs its own sensors' periods in exact nanoseconds. Argus-computed sensors schedule
-            // themselves in SensorModel (CORE-18).
-            foreach (DeviceConfiguration sensor in configuration.Devices)
+            // also needs the period of every device it is sent in exact nanoseconds. Argus-computed
+            // sensors schedule themselves in SensorModel (CORE-18).
+            foreach (DeviceConfiguration sensor in configuration.BackendDevices)
             {
-                if (sensor.IsBackendModelled &&
-                    BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
+                if (BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds) % fixedStepNanoseconds != 0)
                 {
                     throw new ArgumentException(
                         $"Sensor '{sensor.Definition.SensorId}' period is not a multiple of the fixed step.",
@@ -170,8 +173,7 @@ namespace Argus.Simulation.Host
                 RunId = _configuration.RunId,
                 Sequence = (ulong)sequence,
                 SimTimeNs = (ulong)checked(sequence * _fixedStepNanoseconds),
-                // TODO(G1): the gateway rejects a command naming any device until actuator kinds
-                // exist (CON-2), so only the empty set reaches the service before BSK-8 applies them.
+                // The gateway sends every configured actuator, idle ones included.
                 Commands = BasiliskProtoMapper.ToProto(command)
             };
             // Step(n) carries command n-1 and names its step, so the service rejects a command sent
@@ -194,7 +196,7 @@ namespace Argus.Simulation.Host
                 _configuration.EpochUtc,
                 step,
                 environment);
-            SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.Devices);
+            SensorMeasurementSet measurements = BasiliskStateMapper.MapMeasurements(step, _configuration.BackendSensors);
             SimulationState state = new SimulationState(
                 _configuration.RunId,
                 BackendName,
@@ -255,7 +257,9 @@ namespace Argus.Simulation.Host
 
         // The service echoes every requested sensor in request order. The echo must be exactly the
         // configuration's backend-modelled sensors, in order; checking it against the configuration
-        // rather than the request also catches a mapper that drops one (CORE-18).
+        // rather than the request also catches a mapper that drops one (CORE-18). It filters
+        // configuration.Devices itself instead of using BackendDevices, which the request is built
+        // from, so a wrong precomputed list still fails here (CORE-22). It runs once per Initialize.
         internal static bool HasSensorsInOrder(IReadOnlyList<string> configuredIds, IReadOnlyList<DeviceConfiguration> sensors)
         {
             int next = 0;

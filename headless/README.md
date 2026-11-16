@@ -29,12 +29,24 @@ code), runs the headless EditMode tests and the host tests, and compiles every `
 `Argus.Contracts/proto` into a temporary descriptor set. Any failed command fails
 the job, including a failing test. Generated output is not committed.
 
+The **Basilisk service and host run** job (BSK-11, #24) checks the two sides of the
+Basilisk link together. It installs the service from `Argus.Basilisk/uv.lock` (bsk
+included), generates its Protobuf code, and fetches and verifies the P0 kernel set
+(cached; `Argus.Basilisk/README.md` §8 "Kernels in CI"). It runs the service tests,
+where only the `argus-2026-09-25` tests may skip, then starts the service and runs the
+host against it for 60 s of the P0 run file. Last, it applies a torque through the gateway and
+`BasiliskEngine` and checks the body rate over that step
+(`AGatewayOverTheServiceAppliesATorqueOverItsStep`, BSK-8 #21). Both sides build from `Argus.Contracts/proto`,
+so a contract change that one side does not follow fails the job: the host build, a
+service test, or the host run (`StepResponse.spacecraft_shadow_factor is unset.`, exit 1).
+
 The workflow also supports manual runs from the Actions tab. New commits replace
-outdated runs for the same pull request. It does not launch the Basilisk service
-or Unity; Basilisk service tests and Unity PlayMode tests are separate work.
+outdated runs for the same pull request. No job launches Unity; Unity PlayMode
+tests are separate work.
 
 To require a passing result before merge, select **Headless build, tests and
-schemas** as a required status check in the repository's branch rules.
+schemas** and **Basilisk service and host run** as required status checks in the
+repository's branch rules.
 
 ## Run
 
@@ -61,6 +73,23 @@ configured sensor, or `Unavailable` with no service), 2 on bad arguments or a ru
 configuration file that is unreadable or invalid. A bad file exits before the host connects
 to the service, and the message names the field.
 
+Against the service, the full P0 run (`--duration-s 600`, the default run file) exits 0 with
+no mapper, period or freshness error. HOST-5 (#29) checked its output against CSPICE and an
+independent orbit propagation (target-architecture G4), so the Basilisk path is verified and
+v1 is additive only (`Argus.Contracts/README.md`).
+
+The host also serves the state stream to Unity (`argus/stream/v1`, CON-1,
+`Argus.Contracts/README.md` "State stream"). It listens on `--stream-endpoint`, then
+`ARGUS_STREAM_ENDPOINT`, then `127.0.0.1:50052`, a loopback `host:port` only, in cleartext
+HTTP/2. Each client receives at most `--stream-rate-hz` (then `ARGUS_STREAM_RATE_HZ`, then 10)
+pairs per second of wall-clock time: the latest state with the latest frame of each non-camera
+sensor. The rate must be above 0 and at most 1000 Hz, and its period is rounded up to whole
+milliseconds (400 Hz sends every 3 ms). The web host reads no `appsettings.json` or
+`ASPNETCORE_`/`DOTNET_` variables, so nothing but `--stream-endpoint` opens a listener. The step
+loop only replaces that latest pair, so a slow or stalled client never delays a step; it just
+receives fewer pairs. A port already in use exits 1 before the host configures the service. An
+unpaced run may finish before a client connects.
+
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
 including ground-truth sensors, and every command the gateway logged, applied or rejected
@@ -75,28 +104,43 @@ orbit, spacecraft and devices. `RunConfigurationFile` reads it into Core
 `argus.sim.v1.RunConfiguration`, without the devices Argus computes. The run ID is not in the
 file; the host gives each run its own.
 
-- **Location:** `headless/Host/runs/`. The build copies every `runs/*.json` next to the
+- **Location:** `headless/Host/runs/`; HOST-8's frozen reference cases are in `runs/reference/`
+  (see its README). The build copies every `runs/*.json` and `runs/reference/*.json` next to the
   host binary.
 - **Format:** JSON whose field names are the Core property names in camelCase, in SI units
   with the unit in the name (`semiMajorAxisMeters`, `samplePeriodSeconds`). Vectors are
   `[x, y, z]`, matrices are three such rows, and quaternions are `{"x", "y", "z", "w"}`
   objects. `epochUtc` is a UTC time ending in `Z`, such as `2025-01-15T00:00:00Z`.
 - **Devices** (D11, `docs/device-model.md`): each entry holds the common fields (`deviceId`,
-  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `source`, `controllerVisible`,
+  `kind`, `modelName`, `frameId`, `samplePeriodSeconds`, `controllerVisible`,
   `mount` with `positionBodyMeters` and `deviceToBody`) and `parameters`, the keys its kind
-  declares. `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
-  `magnetometer` and `light_sensor`, which Basilisk models, and `camera`, which Argus computes
-  and never sends to the service (CORE-18). Parameter keys are snake_case with their unit,
+  declares. There is no `source`: which side models a device belongs to its kind
+  (`docs/device-model.md` §1), so the host records `basilisk` or `argus` from the kind, and a
+  file that still sets `source` exits 2 naming it (CORE-22). `kind` is a registered name (`Core/Contracts/DeviceKinds.cs`): `imu`,
+  `magnetometer` and `light_sensor`, which Basilisk models, and `camera` and
+  `nadir_ground_truth_camera` (the north-up nadir ground-truth camera, CORE-8), which Argus
+  computes and never sends to the service (CORE-18), and the actuator kinds `ideal_body_torque`,
+  `momentum_wheel`, `magnetic_torquer` and `thruster` (CON-2, `docs/device-model.md` §2). An
+  actuator has no `samplePeriodSeconds` or `controllerVisible`, and its `deviceToBody` must be the
+  identity, since its axis is a body-frame parameter. Both camera kinds take the same keys; a
+  nadir camera needs its own `profile_id`, since cameras that share one share its parameters. Parameter keys are snake_case with their unit,
   the same spelling as on the wire and in the manifest (`noise_std_tesla`,
-  `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists each kind's keys. A
-  key's group may be written as a nested object, so the IMU's
-  `gyroscope.range_rad_per_s` is `"gyroscope": { "range_rad_per_s": ... }`, and the camera's
-  are `intrinsics.width_px` and the other intrinsics, plus `exposure_duration_s`. Each value is
-  read as the type its kind declares. `initialState` is optional and must be empty, since no
-  kind has state yet. `controllerVisible` is `false` for a ground-truth sensor: the gateway
+  `field_of_view_half_angle_rad`); `Argus.Basilisk/README.md` §9 lists the keys of the kinds
+  Basilisk models, and `Core/Sensors/Camera/README.md` the camera's. A key's group may be
+  written as a nested object, so the IMU's `gyroscope.range_rad_per_s` is
+  `"gyroscope": { "range_rad_per_s": ... }`. The camera's parameters are the DATA-6 (#71)
+  profile, each value with where it came from: `profile_id`, `intrinsics.*` with `source` and
+  `calibrated`, `distortion.*` (`model` `brown-conrady-5`, `k1` … `k3` all zero, `source`),
+  `noise.source` (`none`), `exposure_duration_s` and `extrinsics.*`. Each value is read as the
+  type its kind declares. `initialState` holds the kind's initial-state keys: only
+  `momentum_wheel` has one (`speed_rad_per_s`), and the field is optional for the other kinds. `controllerVisible` is `false` for a ground-truth sensor: the gateway
   never returns its frames to a controller, though the recorder still receives them (D7). It
-  must be `false` for a camera, whose frames carry the true camera pose, until CORE-6 (#42)
-  decides what a controller sees of one. The list may hold any subset of the devices,
+  must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
+  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
+  (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
+  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device that rejects
+  anything past 1e-4 N·m per axis, as DATA-2 (#68) gives for the ideal torque, until DATA-2's six
+  coils land in the file. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
 - **Validation:** every field is required and unknown fields are rejected, including
@@ -104,7 +148,10 @@ file; the host gives each run its own.
   each device by its kind, so the file accepts exactly what Core accepts and an error names
   the key (`devices[1].parameters["range_tesla"]: is required`). Every
   `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
-  at steps.
+  at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
+  one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
+  the camera that set it and the part that differs
+  (`devices[12].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 

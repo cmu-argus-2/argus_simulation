@@ -45,5 +45,8 @@ namespace Argus.Simulation.Core
 
         protected override MagnetometerMeasurement Read(DeviceValues output) =>
             new MagnetometerMeasurement(output.Vector3(MagneticField));
+
+        protected override DeviceValues Write(MagnetometerMeasurement measurement) =>
+            new DeviceValues.Builder().Add(MagneticField, measurement.MagneticFieldSensorTesla).Build();
     }
 }

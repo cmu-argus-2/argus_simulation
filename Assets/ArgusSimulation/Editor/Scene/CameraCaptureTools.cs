@@ -26,10 +26,11 @@ namespace Argus.Simulation.Editor
         {
             var exporter = Object.FindAnyObjectByType<NavigationEpisodeExporter>();
             var renderer = Object.FindAnyObjectByType<UnityImageRenderer>();
-            var runner = Object.FindAnyObjectByType<SimulationRunner>();
+            var pose = Object.FindAnyObjectByType<CesiumSpacecraftPoseDriver>();
             Debug.Log($"Camera acceptance: play={EditorApplication.isPlaying}; " +
                 $"capturing={exporter?.IsCaptureInProgress}; status={exporter?.LastCaptureStatus}; " +
-                $"renderer={renderer?.CaptureStatus}; running={runner?.IsRunning}; " +
+                $"renderer={renderer?.CaptureStatus}; held={pose?.IsHeld}; " +
+                $"readiness_probes={renderer?.ReadinessProbeCount}; max_probe_frames={renderer?.MaximumReadinessProbeFrames}; " +
                 $"error={exporter?.LastCaptureError}; directory={exporter?.EpisodeDirectory}");
         }
 

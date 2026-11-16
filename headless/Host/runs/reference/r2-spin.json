@@ -1,0 +1,104 @@
+{
+  "epochUtc": "2026-06-01T12:00:00Z",
+  "fixedStepSeconds": 0.1,
+  "randomSeed": 1,
+  "kernelSetId": "argus-2026-11-02",
+  "initialOrbit": {
+    "semiMajorAxisMeters": 6958137.0,
+    "eccentricity": 0.0,
+    "inclinationDegrees": 97.75,
+    "raanDegrees": 234.06,
+    "argumentOfPeriapsisDegrees": 0.0,
+    "trueAnomalyDegrees": 0.0
+  },
+  "spacecraft": {
+    "massKilograms": 2.6,
+    "inertiaBodyKilogramSquareMeters": [
+      [
+        0.01906,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.01931,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.00824
+      ]
+    ],
+    "initialBodyToJ2000": {
+      "x": 0.14926982818947832,
+      "y": -0.29853965637895663,
+      "z": 0.07463491409473916,
+      "w": 0.9396926207859084
+    },
+    "initialAngularVelocityBodyRadiansPerSecond": [
+      0.0,
+      0.3520329101272563,
+      0.0
+    ]
+  },
+  "devices": [
+    {
+      "deviceId": "imu.ref",
+      "kind": "imu",
+      "modelName": "placeholder-mems-imu",
+      "frameId": "imu_ref",
+      "samplePeriodSeconds": 0.1,
+      "controllerVisible": true,
+      "mount": {
+        "positionBodyMeters": [
+          0.03,
+          0.0,
+          0.04
+        ],
+        "deviceToBody": {
+          "x": 0.06559110802844183,
+          "y": -0.10931851338073637,
+          "z": 0.1749096214091782,
+          "w": 0.9762960071199334
+        }
+      },
+      "parameters": {
+        "gyroscope": {
+          "noise_density_rad_per_s_per_sqrt_hz": 0.0,
+          "bias_random_walk_rad_per_s_per_sqrt_s": 0.0,
+          "bias_random_walk_bound_rad_per_s": 0.0,
+          "constant_bias_sensor_rad_per_s": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale_factor_per_axis": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "range_rad_per_s": 4.363,
+          "resolution_rad_per_s": 0.0
+        },
+        "accelerometer": {
+          "noise_density_m_per_s2_per_sqrt_hz": 0.0,
+          "bias_random_walk_m_per_s2_per_sqrt_s": 0.0,
+          "bias_random_walk_bound_m_per_s2": 0.0,
+          "constant_bias_sensor_m_per_s2": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale_factor_per_axis": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "range_m_per_s2": 19.61,
+          "resolution_m_per_s2": 0.0
+        }
+      }
+    }
+  ]
+}

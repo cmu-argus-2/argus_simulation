@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json.Nodes;
 using Argus.Simulation.Core;
 using NUnit.Framework;
@@ -23,12 +24,16 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(loaded.IsValid, Is.True);
             Assert.That(Request(loaded), Is.EqualTo(Request(expected)));
 
-            // SensorDefinition fields that stay in Argus and never reach the wire.
-            Assert.That(loaded.Devices.Count, Is.EqualTo(expected.Devices.Count));
+            // The file's Basilisk-modelled devices are the compiled P0 devices, in order, with the
+            // SensorDefinition fields that stay in Argus and never reach the wire. Its cameras are
+            // checked in P0FileHasTheFourDataSixBodyCameras.
+            DeviceConfiguration[] backend = loaded.Devices.Where(device => device.IsBackendModelled).ToArray();
+            Assert.That(backend.Length, Is.EqualTo(expected.Devices.Count));
             for (int i = 0; i < expected.Devices.Count; i++)
             {
                 SensorDefinition want = expected.Devices[i].Definition;
-                SensorDefinition got = loaded.Devices[i].Definition;
+                SensorDefinition got = backend[i].Definition;
+                Assert.That(got.SensorId, Is.EqualTo(want.SensorId));
                 Assert.That(got.ModelName, Is.EqualTo(want.ModelName));
                 Assert.That(got.FrameId, Is.EqualTo(want.FrameId));
                 Assert.That(got.Source, Is.EqualTo(want.Source));
@@ -45,6 +50,54 @@ namespace Argus.Simulation.Host.Tests
 
             Assert.That(HostOptions.TryParse(new[] { "--run-config", "staged.json" }, out HostOptions staged, out _), Is.True);
             Assert.That(staged.RunConfigurationPath, Is.EqualTo("staged.json"));
+        }
+
+        // The four body cameras (CORE-6) with the DATA-6 (#71) v0 profile: the Arducam IMX708 spec
+        // estimate, and Argus-2's mounts given as R (camera to body, OpenCV camera frame) and t.
+        [TestCase("cam.px", 0, -1, 0, 0, 0, -1, 1, 0, 0, 0.05116, -0.000198, -0.02927)]
+        [TestCase("cam.py", 1, 0, 0, 0, 0, -1, 0, 1, 0, -0.00018, 0.051362, -0.02927)]
+        [TestCase("cam.mx", 0, 1, 0, 0, 0, -1, -1, 0, 0, -0.05214, 0.000022, -0.02927)]
+        [TestCase("cam.my", -1, 0, 0, 0, 0, -1, 0, -1, 0, -0.00030, -0.051438, -0.02927)]
+        public void P0FileHasTheFourDataSixBodyCameras(
+            string deviceId,
+            double xx, double xy, double xz,
+            double yx, double yy, double yz,
+            double zx, double zy, double zz,
+            double tx, double ty, double tz)
+        {
+            SimulationConfiguration p0 = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, RunId);
+            DeviceConfiguration[] cameras = p0.Devices.Where(device => device.KindDefinition is ICameraKind).ToArray();
+            Assert.That(cameras.Select(camera => camera.Definition.SensorId), Is.EqualTo(new[] { "cam.px", "cam.py", "cam.mx", "cam.my" }));
+            Assert.That(
+                Request(p0).Configuration.Devices.Select(device => device.DeviceId),
+                Is.EqualTo(p0.Devices.Where(device => device.IsBackendModelled).Select(device => device.Definition.SensorId)));
+
+            DeviceConfiguration camera = cameras.Single(c => c.Definition.SensorId == deviceId);
+            SensorDefinition definition = camera.Definition;
+            Assert.That(camera.Kind, Is.EqualTo(CameraKind.KindName));
+            Assert.That((definition.ModelName, definition.Source, definition.IsControllerVisible), Is.EqualTo(("arducam-imx708", "argus", false)));
+            Assert.That(definition.SamplePeriodSeconds, Is.EqualTo(15.0), "flight's capture interval (FSW-Payload dataset_config.toml)");
+
+            // Datasheet: 4608 x 2592 pixels and a 66 degree horizontal field of view.
+            CameraProfile profile = CameraKind.Instance.Profile(camera);
+            CameraIntrinsics intrinsics = profile.Intrinsics;
+            double focalLengthFromFieldOfView = 4608 / 2.0 / Math.Tan(66.0 / 2.0 * Math.PI / 180.0);
+            Assert.That((intrinsics.WidthPixels, intrinsics.HeightPixels), Is.EqualTo((4608, 2592)));
+            Assert.That(intrinsics.FocalLengthXPixels, Is.EqualTo(focalLengthFromFieldOfView).Within(0.5));
+            Assert.That(intrinsics.FocalLengthYPixels, Is.EqualTo(intrinsics.FocalLengthXPixels));
+            Assert.That((intrinsics.PrincipalPointXPixels, intrinsics.PrincipalPointYPixels), Is.EqualTo((2304.0, 1296.0)));
+            Assert.That(profile.ExposureDurationSeconds, Is.EqualTo(0.0005));
+            Assert.That((profile.ProfileId, profile.IntrinsicsSource, profile.IsCalibrated), Is.EqualTo(("imx708-66deg-spec-v0", "spec-estimate", false)));
+            Assert.That(profile.Distortion, Is.EqualTo(CameraDistortion.Zero("none")));
+            Assert.That(profile.NoiseSource, Is.EqualTo(CameraProfile.NoNoise));
+            Assert.That(profile.Extrinsics, Is.EqualTo(new CameraExtrinsicsProvenance("argus-2-config", "assumed-com", false)));
+
+            // The mount takes each camera axis to R's column; q and -q are the same rotation.
+            Quaterniond deviceToBody = definition.Mount.SensorToBody;
+            AssertClose(deviceToBody.Rotate(new Vector3d(1, 0, 0)), new Vector3d(xx, xy, xz), "camera x (image right)");
+            AssertClose(deviceToBody.Rotate(new Vector3d(0, 1, 0)), new Vector3d(yx, yy, yz), "camera y (image down)");
+            AssertClose(deviceToBody.Rotate(new Vector3d(0, 0, 1)), new Vector3d(zx, zy, zz), "camera z (boresight)");
+            AssertClose(definition.Mount.PositionBodyMeters, new Vector3d(tx, ty, tz), "position");
         }
 
         [TestCase(0)]
@@ -71,7 +124,7 @@ namespace Argus.Simulation.Host.Tests
         public void ArgusComputedCameraLoadsButIsNotSentToBasilisk()
         {
             JsonObject root = P0();
-            root["devices"].AsArray().Insert(1, CameraNode("cam.px"));
+            root["devices"].AsArray().Insert(1, CameraNode("cam.test"));
 
             SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
             SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
@@ -81,13 +134,43 @@ namespace Argus.Simulation.Host.Tests
             DeviceConfiguration camera = withCamera.Devices[1];
             Assert.That(camera.Kind, Is.EqualTo("camera"));
             Assert.That(camera.IsBackendModelled, Is.False);
-            Assert.That(camera.Definition.SensorId, Is.EqualTo("cam.px"));
+            Assert.That(camera.Definition.SensorId, Is.EqualTo("cam.test"));
             CameraProfile profile = CameraKind.Instance.Profile(camera);
             Assert.That(profile.Intrinsics.WidthPixels, Is.EqualTo(4608));
             Assert.That(profile.Intrinsics.HeightPixels, Is.EqualTo(2592));
             Assert.That(profile.Intrinsics.FocalLengthXPixels, Is.EqualTo(3548.0));
             Assert.That(profile.Intrinsics.PrincipalPointYPixels, Is.EqualTo(1296.0));
             Assert.That(profile.ExposureDurationSeconds, Is.EqualTo(0.0005));
+            Assert.That(profile.ProfileId, Is.EqualTo("imx708-66deg-spec-v0"));
+            Assert.That((profile.IntrinsicsSource, profile.IsCalibrated), Is.EqualTo(("spec-estimate", false)));
+            Assert.That(profile.Distortion, Is.EqualTo(CameraDistortion.Zero("none")));
+            Assert.That(profile.NoiseSource, Is.EqualTo(CameraProfile.NoNoise));
+            Assert.That(profile.Extrinsics, Is.EqualTo(new CameraExtrinsicsProvenance("argus-2-config", "assumed-com", false)));
+            Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
+        }
+
+        // The nadir ground-truth camera is a devices[] entry of its own kind, with the camera's
+        // DATA-6 parameters and its own profile ID next to P0's body cameras. Argus computes it, so it
+        // is never sent to Basilisk either (CORE-8).
+        [Test]
+        public void NadirGroundTruthCameraLoadsButIsNotSentToBasilisk()
+        {
+            JsonObject root = P0();
+            root["devices"].AsArray().Add(NadirCameraNode("cam.nadir_gt"));
+
+            SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
+
+            Assert.That(withCamera.IsValid, Is.True);
+            DeviceConfiguration camera = withCamera.Devices[withCamera.Devices.Count - 1];
+            Assert.That(camera.Kind, Is.EqualTo("nadir_ground_truth_camera"));
+            Assert.That(camera.IsBackendModelled, Is.False);
+            Assert.That(camera.MayBeControllerVisible, Is.False);
+            Assert.That(camera.Definition.IsControllerVisible, Is.False);
+            CameraProfile profile = NadirGroundTruthCameraKind.Instance.Profile(camera);
+            Assert.That(profile.ProfileId, Is.EqualTo("nadir-gt-768x432-9deg"));
+            Assert.That(profile.Intrinsics.WidthPixels, Is.EqualTo(768));
+            Assert.That(profile.Intrinsics.FocalLengthYPixels, Is.EqualTo(2744.54));
             Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
         }
 
@@ -105,14 +188,30 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("wrong type", "devices[0].mount.positionBodyMeters: must be an array of 3 numbers")]
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
-        [TestCase("invalid camera intrinsics", "devices[8].parameters[\"intrinsics.*\"]: are not valid intrinsics")]
-        [TestCase("fractional pixel count", "devices[8].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
-        [TestCase("period off the step grid", "devices[8].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
-        [TestCase("controller-visible camera", "devices[8].controllerVisible: must be false")]
+        [TestCase("invalid camera intrinsics", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
+        [TestCase("exposure longer than the period", "devices[{new}].parameters[\"exposure_duration_s\"]: must not exceed samplePeriodSeconds (1.5 s > 1 s)")]
+        [TestCase("invalid intrinsics and a long exposure", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
+        [TestCase("fractional pixel count", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
+        [TestCase("period off the step grid", "devices[{new}].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
+        [TestCase("controller-visible camera", "devices[{new}].controllerVisible: must be false")]
+        [TestCase("fisheye", "devices[{new}].parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
+        [TestCase("non-zero distortion", "devices[{new}].parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion")]
+        [TestCase("noise model", "devices[{new}].parameters[\"noise.source\"]: must be \"none\"")]
+        [TestCase("uppercase profile ID", "devices[{new}].parameters[\"profile_id\"]: must match")]
+        [TestCase("blank label", "devices[{new}].parameters[\"extrinsics.origin\"]: must not be blank")]
+        [TestCase("calibrated not a flag", "devices[{new}].parameters.intrinsics.calibrated: must be true or false")]
+        [TestCase("profile ID reused, other intrinsics", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
+        [TestCase("profile ID reused, other distortion source", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in distortion")]
+        [TestCase("coefficients as an array", "devices[{new}].parameters.distortion.coefficients: is not a camera parameter")]
+        [TestCase("invalid nadir camera intrinsics", "devices[{new}].parameters[\"intrinsics.focal_length_y_px\"]: must be > 0")]
+        [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
+        [TestCase("nadir camera with the body cameras' profile ID", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
             JsonArray devices = root["devices"].AsArray();
+            // A camera case appends a test camera after P0's devices.
+            expectedMessage = expectedMessage.Replace("{new}", devices.Count.ToString());
             switch (change)
             {
                 case "missing field":
@@ -163,30 +262,129 @@ namespace Argus.Simulation.Host.Tests
                     root["kernelSetId"] = "Argus 2026";
                     break;
                 case "invalid camera intrinsics":
-                    JsonObject camera = CameraNode("cam.px");
+                    JsonObject camera = CameraNode("cam.test");
                     camera["parameters"]["intrinsics"]["width_px"] = 0;
                     devices.Add(camera);
                     break;
+                case "exposure longer than the period":
+                    JsonObject longExposure = CameraNode("cam.test");
+                    longExposure["parameters"]["exposure_duration_s"] = 1.5;
+                    devices.Add(longExposure);
+                    break;
+                case "invalid intrinsics and a long exposure":
+                    JsonObject both = CameraNode("cam.test");
+                    both["parameters"]["intrinsics"]["width_px"] = 0;
+                    both["parameters"]["exposure_duration_s"] = 1.5;
+                    devices.Add(both);
+                    break;
                 case "fractional pixel count":
-                    JsonObject fractional = CameraNode("cam.px");
+                    JsonObject fractional = CameraNode("cam.test");
                     fractional["parameters"]["intrinsics"]["width_px"] = 4608.5;
                     devices.Add(fractional);
                     break;
                 case "period off the step grid":
-                    JsonObject offGrid = CameraNode("cam.px");
+                    JsonObject offGrid = CameraNode("cam.test");
                     offGrid["samplePeriodSeconds"] = 0.25;
                     devices.Add(offGrid);
                     break;
                 case "controller-visible camera":
-                    JsonObject visible = CameraNode("cam.px");
+                    JsonObject visible = CameraNode("cam.test");
                     visible["controllerVisible"] = true;
                     devices.Add(visible);
+                    break;
+                case "fisheye":
+                    devices.Add(CameraWith("distortion", "model", "kannala-brandt"));
+                    break;
+                case "non-zero distortion":
+                    devices.Add(CameraWith("distortion", "k1", 0.1));
+                    break;
+                case "noise model":
+                    devices.Add(CameraWith("noise", "source", "dark-frames"));
+                    break;
+                case "uppercase profile ID":
+                    JsonObject uppercase = CameraNode("cam.test");
+                    uppercase["parameters"]["profile_id"] = "IMX708";
+                    devices.Add(uppercase);
+                    break;
+                case "blank label":
+                    devices.Add(CameraWith("extrinsics", "origin", ""));
+                    break;
+                case "calibrated not a flag":
+                    devices.Add(CameraWith("intrinsics", "calibrated", "no"));
+                    break;
+                case "profile ID reused, other intrinsics":
+                    // P0's cam.px set imx708-66deg-spec-v0 first.
+                    devices.Add(CameraWith("intrinsics", "focal_length_y_px", 3386.0));
+                    break;
+                case "profile ID reused, other distortion source":
+                    devices.Add(CameraWith("distortion", "source", "checkerboard"));
+                    break;
+                case "coefficients as an array":
+                    JsonObject asArray = CameraNode("cam.test");
+                    JsonObject distortion = asArray["parameters"]["distortion"].AsObject();
+                    foreach (string coefficient in new[] { "k1", "k2", "p1", "p2", "k3" })
+                    {
+                        distortion.Remove(coefficient);
+                    }
+
+                    distortion["coefficients"] = new JsonArray(0.0, 0.0, 0.0, 0.0, 0.0);
+                    devices.Add(asArray);
+                    break;
+                case "invalid nadir camera intrinsics":
+                    JsonObject invalidNadir = NadirCameraNode("cam.nadir_gt");
+                    invalidNadir["parameters"]["intrinsics"]["focal_length_y_px"] = -2744.54;
+                    devices.Add(invalidNadir);
+                    break;
+                case "controller-visible nadir camera":
+                    JsonObject visibleNadir = NadirCameraNode("cam.nadir_gt");
+                    visibleNadir["controllerVisible"] = true;
+                    devices.Add(visibleNadir);
+                    break;
+                case "nadir camera with the body cameras' profile ID":
+                    // Cameras that share a profile ID share its parameters (CORE-6), so the nadir camera
+                    // needs its own.
+                    JsonObject sharedId = NadirCameraNode("cam.nadir_gt");
+                    sharedId["parameters"]["profile_id"] = "imx708-66deg-spec-v0";
+                    devices.Add(sharedId);
                     break;
             }
 
             RunConfigurationException error = Assert.Throws<RunConfigurationException>(
                 () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
             Assert.That(error.Message, Does.StartWith(expectedMessage));
+        }
+
+        // Which side models a device belongs to its kind and is not configured per device
+        // (docs/device-model.md §1), so the run file has no source field: the host sets it from the
+        // kind (CORE-22).
+        [Test]
+        public void ADevicesSourceComesFromItsKind()
+        {
+            JsonObject root = P0();
+            foreach (JsonNode device in root["devices"].AsArray())
+            {
+                Assert.That(device.AsObject().ContainsKey("source"), Is.False, "p0-default.json still sets a device's source");
+            }
+
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            Assert.That(configuration.Devices, Is.Not.Empty);
+            foreach (DeviceConfiguration device in configuration.Devices)
+            {
+                Assert.That(device.Definition.Source, Is.EqualTo(device.IsBackendModelled ? "basilisk" : "argus"), device.Definition.SensorId);
+            }
+        }
+
+        // An old file that still sets source is told why it no longer can (CORE-22).
+        [Test]
+        public void SourceIsNoLongerARunFileField()
+        {
+            JsonObject root = P0();
+            root["devices"][0]["source"] = "basilisk";
+
+            RunConfigurationException error = Assert.Throws<RunConfigurationException>(
+                () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
+            Assert.That(error.Message, Is.EqualTo("devices[0].source: is no longer a run-file field; the device's kind sets it (device-model §1)"));
         }
 
         [Test]
@@ -258,6 +456,106 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
+        // HOST-8 (#32): the reference cases are frozen run files next to P0, checked by
+        // Argus.Basilisk/scripts/check_reference_runs.py. Each must load, validly, at the epoch and
+        // kernel set its checker case assumes.
+        [Test]
+        public void EveryReferenceRunFileLoadsAtTheReferenceEpochAndKernelSet()
+        {
+            Assert.That(Directory.Exists(ReferenceRunDirectory), Is.True, ReferenceRunDirectory);
+            string[] present = Directory.GetFiles(ReferenceRunDirectory, "*.json")
+                .Select(Path.GetFileName)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            Assert.That(present, Is.EqualTo(ReferenceRunFiles.OrderBy(name => name, StringComparer.Ordinal).ToArray()));
+
+            foreach (string name in ReferenceRunFiles)
+            {
+                SimulationConfiguration run = Reference(name);
+                Assert.That(run.IsValid, Is.True, name);
+                Assert.That(run.EpochUtc, Is.EqualTo(new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero)), name);
+                Assert.That(run.KernelSetId, Is.EqualTo("argus-2026-11-02"), name);
+                Assert.That(run.InitialOrbit.HasValue && run.Spacecraft.HasValue, Is.True, name);
+            }
+        }
+
+        // R2's closed form needs a spin about a principal axis that stays put, so +Y is the unique
+        // major axis of a diagonal inertia, and the start is tilted (40° about (1, -2, 0.5)), not
+        // identity, where convention errors are invisible.
+        [Test]
+        public void ReferenceSpinStartsTiltedAndSpinsAboutTheUniqueMajorAxis()
+        {
+            SpacecraftConfiguration spacecraft = Reference("r2-spin.json").Spacecraft.Value;
+            Matrix3d inertia = spacecraft.InertiaBodyKilogramSquareMeters;
+            Assert.That(
+                new[] { inertia.Row0.Y, inertia.Row0.Z, inertia.Row1.X, inertia.Row1.Z, inertia.Row2.X, inertia.Row2.Y },
+                Is.All.EqualTo(0.0));
+            Assert.That(inertia.Row1.Y, Is.GreaterThan(inertia.Row0.X).And.GreaterThan(inertia.Row2.Z));
+
+            double half = 20.0 * Math.PI / 180.0;
+            Vector3d axis = new Vector3d(1.0, -2.0, 0.5) / Math.Sqrt(5.25);
+            Quaterniond q0 = spacecraft.InitialBodyToJ2000;
+            AssertClose(new Vector3d(q0.X, q0.Y, q0.Z), axis * Math.Sin(half), "initial attitude vector part");
+            Assert.That(q0.W, Is.EqualTo(Math.Cos(half)).Within(1e-15), "initial attitude scalar part");
+            AssertClose(
+                spacecraft.InitialAngularVelocityBodyRadiansPerSecond,
+                new Vector3d(0.0, 20.17 * Math.PI / 180.0, 0.0),
+                "spin rate");
+        }
+
+        // With ω = f = 0, an anomaly or argument mix-up in elements → state gives 0 m, so R1e uses
+        // generic angles.
+        [Test]
+        public void ReferenceEccentricOrbitUsesGenericAngles()
+        {
+            ClassicalOrbitElements orbit = Reference("r1e-eccentric.json").InitialOrbit.Value;
+            Assert.That(
+                new[]
+                {
+                    orbit.SemiMajorAxisMeters, orbit.Eccentricity, orbit.InclinationDegrees, orbit.RaanDegrees,
+                    orbit.ArgumentOfPeriapsisDegrees, orbit.TrueAnomalyDegrees,
+                },
+                Is.EqualTo(new[] { 6958137.0, 0.01, 97.75, 251.0, 37.0, 113.0 }));
+        }
+
+        // R5 must catch a misread light-sensor mount, which an identity mount can't. The sensor sits on a 35°
+        // mount, and the start q_s ⊗ q_mount* puts its boresight (device +Z) on the Sun's J2000 direction at the
+        // epoch: RA 69.058°, Dec 22.040° (rounded to 0.001°, so within about 3e-5 rad).
+        [Test]
+        public void ReferenceSunPointingSensorHasARotatedMountAndStartsOnTheSun()
+        {
+            SimulationConfiguration run = Reference("r5-sun-pointing.json");
+            Quaterniond mount = run.Devices.Single(device => device.Kind == "light_sensor").Definition.Mount.SensorToBody;
+            Assert.That(2.0 * Math.Acos(Math.Abs(mount.W)), Is.EqualTo(35.0 * Math.PI / 180.0).Within(1e-12), "mount angle");
+
+            double ra = 69.058 * Math.PI / 180.0;
+            double dec = 22.040 * Math.PI / 180.0;
+            Vector3d sun = new Vector3d(Math.Cos(dec) * Math.Cos(ra), Math.Cos(dec) * Math.Sin(ra), Math.Sin(dec));
+            Vector3d boresight = run.Spacecraft.Value.InitialBodyToJ2000.Rotate(mount.Rotate(new Vector3d(0, 0, 1)));
+            Assert.That(Math.Acos(Math.Min(1.0, Vector3d.Dot(boresight, sun))), Is.LessThan(1e-4), "boresight to the Sun, rad");
+        }
+
+        // R3 must exercise the products of inertia, which a diagonal inertia can't.
+        [Test]
+        public void ReferenceTumbleHasProductsOfInertia()
+        {
+            Matrix3d inertia = Reference("r3-tumble.json").Spacecraft.Value.InertiaBodyKilogramSquareMeters;
+            Assert.That(new[] { inertia.Row0.Y, inertia.Row0.Z, inertia.Row1.Z }, Is.All.Not.EqualTo(0.0));
+        }
+
+        private static readonly string ReferenceRunDirectory =
+            Path.Combine(AppContext.BaseDirectory, "runs", "reference");
+
+        private static readonly string[] ReferenceRunFiles =
+        {
+            "r1-orbit-dt0.1.json", "r1-orbit-dt1.json", "r1e-eccentric.json", "r2-spin.json",
+            "r2-long-q0-dt0.1.json", "r2-long-q0-dt1.json", "r2-long-identity-dt0.1.json", "r2-long-identity-dt1.json",
+            "r3-tumble.json", "r5-sun-pointing.json",
+        };
+
+        private static SimulationConfiguration Reference(string name) =>
+            RunConfigurationFile.Load(Path.Combine(ReferenceRunDirectory, name), RunId);
+
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
 
         // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
@@ -269,7 +567,6 @@ namespace Argus.Simulation.Host.Tests
             ["modelName"] = "arducam-imx708",
             ["frameId"] = deviceId.Replace('.', '_'),
             ["samplePeriodSeconds"] = 1.0,
-            ["source"] = "argus",
             ["controllerVisible"] = false,
             ["mount"] = new JsonObject
             {
@@ -278,6 +575,7 @@ namespace Argus.Simulation.Host.Tests
             },
             ["parameters"] = new JsonObject
             {
+                ["profile_id"] = "imx708-66deg-spec-v0",
                 ["intrinsics"] = new JsonObject
                 {
                     ["width_px"] = 4608,
@@ -285,11 +583,72 @@ namespace Argus.Simulation.Host.Tests
                     ["focal_length_x_px"] = 3548.0,
                     ["focal_length_y_px"] = 3548.0,
                     ["principal_point_x_px"] = 2304.0,
-                    ["principal_point_y_px"] = 1296.0
+                    ["principal_point_y_px"] = 1296.0,
+                    ["source"] = "spec-estimate",
+                    ["calibrated"] = false
                 },
-                ["exposure_duration_s"] = 0.0005
+                ["distortion"] = new JsonObject
+                {
+                    ["model"] = "brown-conrady-5",
+                    ["k1"] = 0.0,
+                    ["k2"] = 0.0,
+                    ["p1"] = 0.0,
+                    ["p2"] = 0.0,
+                    ["k3"] = 0.0,
+                    ["source"] = "none"
+                },
+                ["noise"] = new JsonObject { ["source"] = "none" },
+                ["exposure_duration_s"] = 0.0005,
+                ["extrinsics"] = new JsonObject
+                {
+                    ["source"] = "argus-2-config",
+                    ["origin"] = "assumed-com",
+                    ["orientation_verified"] = false
+                }
             }
         };
+
+        // The Unity ground-truth camera's view (CubeSatCameraRig): 768 x 432 px, 9 degrees vertical,
+        // with its own profile ID. The mount is ignored, so it is the identity.
+        private static JsonObject NadirCameraNode(string deviceId)
+        {
+            JsonObject camera = CameraNode(deviceId);
+            camera["kind"] = "nadir_ground_truth_camera";
+            camera["modelName"] = "nadir-ground-truth";
+            camera["mount"] = new JsonObject
+            {
+                ["positionBodyMeters"] = new JsonArray(0.0, 0.0, 0.0),
+                ["deviceToBody"] = new JsonObject { ["x"] = 0.0, ["y"] = 0.0, ["z"] = 0.0, ["w"] = 1.0 }
+            };
+            JsonNode parameters = camera["parameters"];
+            parameters["profile_id"] = "nadir-gt-768x432-9deg";
+            parameters["intrinsics"]["width_px"] = 768;
+            parameters["intrinsics"]["height_px"] = 432;
+            parameters["intrinsics"]["focal_length_x_px"] = 2744.54;
+            parameters["intrinsics"]["focal_length_y_px"] = 2744.54;
+            parameters["intrinsics"]["principal_point_x_px"] = 384.0;
+            parameters["intrinsics"]["principal_point_y_px"] = 216.0;
+            parameters["intrinsics"]["source"] = "unity-gt-rig";
+            parameters["exposure_duration_s"] = 0.0;
+            parameters["extrinsics"]["source"] = "computed-nadir";
+            parameters["extrinsics"]["origin"] = "spacecraft-position";
+            return camera;
+        }
+
+        private static void AssertClose(Vector3d actual, Vector3d expected, string what)
+        {
+            Assert.That(actual.X, Is.EqualTo(expected.X).Within(1e-12), what + " x");
+            Assert.That(actual.Y, Is.EqualTo(expected.Y).Within(1e-12), what + " y");
+            Assert.That(actual.Z, Is.EqualTo(expected.Z).Within(1e-12), what + " z");
+        }
+
+        // A test camera with one parameter in a group changed.
+        private static JsonObject CameraWith(string group, string key, JsonNode value)
+        {
+            JsonObject camera = CameraNode("cam.test");
+            camera["parameters"][group][key] = value;
+            return camera;
+        }
 
         // What BasiliskEngine.Initialize sends with a real-time factor of 0.
         private static PbBasilisk.ConfigureRunRequest Request(SimulationConfiguration configuration) =>
@@ -330,7 +689,13 @@ namespace Argus.Simulation.Host.Tests
                 Light("light.py", "light_py", new Vector3d(0.0, 0.05, 0.0), z, x, y),
                 Light("light.my", "light_my", new Vector3d(0.0, -0.05, 0.0), Negate(z), x, Negate(y)),
                 Light("light.pz", "light_pz", new Vector3d(0.0, 0.0, 0.05675), x, y, z),
-                Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.05675), x, Negate(y), Negate(z))
+                Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.05675), x, Negate(y), Negate(z)),
+                // An actuator has no period and publishes no frames (docs/device-model.md §1).
+                IdealBodyTorqueKind.Instance.Configure(
+                    new SensorDefinition(
+                        "torque.body", "placeholder-ideal-body-torque", "torque_body", 0.0, "basilisk", SensorMount.Identity,
+                        isControllerVisible: false),
+                    new IdealBodyTorqueProfile(new Vector3d(1e-4, 1e-4, 1e-4), ActuatorLimitPolicy.Reject))
             };
 
             return new SimulationConfiguration(

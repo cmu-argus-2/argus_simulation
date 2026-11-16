@@ -10,15 +10,20 @@ GIBS controller. Other callers can use `Configure` or resolve these scene compon
 
 Dashboard feeds remain live **display previews**, at 768×432 by default. This preserves the
 mission-control UI while Core exposures become on-request. `livePreviewEnabled` can disable
-automatic preview rendering. Preview FOV defaults to the IMX708 calibration (fy=3548 at
-2592 pixels high); these preview textures are not recorded Core exposures.
+automatic preview rendering. Body preview FOV and full-resolution calibration come from Core's
+`CameraKind.Profile` in the host run configuration, not duplicated IMX708 constants.
 
 The rig owns a separate, disabled request camera. The renderer allocates a target at the
-request's exact dimensions, registers that view with Cesium, and renders it once.
-Only the exposure view participates in Cesium tile selection during capture; dashboard,
-observer and look-ahead views are restored afterwards. It does not
-move a preview camera or replace a preview target. The request camera is unregistered and its
-target released on success, failure, cancellation or renderer disable.
+request's exact dimensions, adds the exposure view to Cesium, and renders it once. Dashboard,
+observer, nadir and look-ahead views participate in tile selection except for bounded readiness
+probes. Cesium exposes only combined progress, so the renderer selects only the exposure camera
+for **one frame per two frames** (configurable, minimum interval two frames), samples its progress,
+then immediately restores all views for the remaining frames. The request view stays registered
+throughout. Other views continue rendering; their tile-selection interruption is at most one
+frame per probe, rather than the whole capture. This prevents unrelated views from blocking an
+otherwise ready exposure. The request
+camera is unregistered and its target released on every exit path. A capture starting during
+nadir warm-up immediately restores the temporarily deferred dashboard views.
 
 Cesium's tile-selection FOV conservatively encloses the calibrated off-centre projection;
 rendering itself uses the exact projection matrix. Cesium 1.25.1 reads these selection fields
@@ -39,49 +44,62 @@ the `ImageFrame` retains the original ECEF request throughout.
 
 ## Tile readiness and lighting
 
-The readiness check enumerates current enabled tilesets on every check, including ones created
-or activated during the wait. No enabled tileset means ready. Defaults are 100% progress for
+The readiness check finds tilesets once at the start of each wait and skips destroyed or disabled
+entries. Tilesets created after that snapshot join the next capture. No enabled tileset means ready. Defaults are 100% progress for
 10 consecutive frames, then a 1-second settle. Loading times out after 60 seconds without a
-progress change of at least 0.5 percentage points, or a 240-second total deadline. Progress can
+progress change of at least 0.5 percentage points, or a 1200-second total deadline. Progress can
 drop when Cesium discovers finer tiles; that change also restarts the inactivity timer. The total
 deadline still bounds refinement churn. This lets large captures finish while they are making
 progress, rather than aborting them at 60 seconds regardless of progress.
 It yields Unity frames throughout; it never blocks the main thread waiting for tiles.
-`NadirTilePriority` uses the same progress helper and refreshes its look-ahead render target
-from the nadir preview each frame.
+`NadirTilePriority` uses the same progress helper and retains its own cached tileset list.
 
-A request with a Sun position temporarily selects its night-side direction while loading the
-view, then sets the directional light for the actual render and restores its prior rotation.
-The capture override is separate from UNITY-3's display-light input; clearing it preserves that
-input. A request without a Sun uses existing scene lighting and keeps a null Sun in its metadata.
-A missing directional light for a Sun-lit request, timeout, or render error faults the task;
-the Core camera model decides how to publish `Unavailable`. The renderer never substitutes a
-black image for an error. Naturally dark rendered pixels are still valid pixels.
+Each real-terrain readiness probe restores the view list and main/scene flags before yielding
+another live-view frame, including on timeout, cancellation and disable. No-tileset synthetic
+scenes do not need exclusive probes.
 
-## Waiting and lifecycle
+A request with a Sun position applies the night-side override and directional-light rotation only
+around synchronous render/readback. Both are restored before the frame task succeeds. All cleanup
+operations are attempted even when another restore fails; cleanup failures fault the render task.
+The display is unchanged during loading and settling. Without a Sun position, existing scene
+lighting is used and no Sun model is approximated.
 
-The Foundation analytic `SimulationRunner` is configured with this renderer. While a render is
-queued or running, `StepOnce` returns false and `Update` yields without accumulating wall time.
-After render tasks finish, the next step can call the Core sensors and publish their deferred
-frames. This waits on renderer work (`IsRendering`), never on `CameraModel.PendingExposureCount`.
-Follower streams have their own upstream clock; this local gate cannot pause a remote Host.
+## Runtime ownership and cancellation
+
+`SimulationRunner` follows the headless host. Capture never pauses or gates its state stream.
+The exporter uses `CesiumSpacecraftPoseDriver.HoldCurrent` while snapshotting the displayed
+spacecraft and cameras. A hold that already existed is preserved after capture; otherwise the
+exporter releases its hold on completion, failure, disable or cancellation. Requests and host
+truth are frozen together before yielding; incoming host states do not rewrite active metadata.
+Host-to-Unity Core render transport remains UNITY-10 (#64).
 
 Consumers must await the task or yield frames; do not call `.Wait()` or `.Result` on Unity's
-main thread. Cancellation is observed on the next pump frame. Disabling the component cancels
-active and queued tasks. Ending a run must cancel its requests through their tokens; this does
-not add Core's missing end/reset drain path (CORE-21 #119).
+main thread. A queued request's task cancels immediately when its token is cancelled; active
+requests observe cancellation at the next yielded frame and restore scene resources before
+completing. Disabling the renderer cancels queued and active requests and releases their targets.
 
-`NavigationEpisodeExporter` temporarily uses the same renderer and PNG conversion until UNITY-9
-retires it. Tile-wait and pixel readback live here in one place. Readback currently uses Unity
-`ReadPixels` after `Camera.Render`, with synchronous GPU readback at capture time.
-Host-to-Unity render transport is tracked in UNITY-10 (#64).
+`NavigationEpisodeExporter` delegates to the renderer's PNG capture path until UNITY-9 retires
+it. This encodes directly from the read texture without allocating/flipping raw RGB copies. Core
+`RenderAsync` still returns top-down RGB8; the optional raw-to-PNG helper preserves that contract.
+There is one tile-wait/render/readback path. Readback is synchronous `Camera.Render` / `ReadPixels`.
+
+## Camera run configuration
+
+The rig reads the camera subset of `headless/Host/runs/p0-default.json` by default. Supply the
+**same file as the host's `--run-config`** through Unity's `--run-config <absolute-path>`,
+`ARGUS_RUN_CONFIG`, or the rig's `runConfigurationFile` Inspector field. The stream does not
+transport the active run configuration; selecting a custom host file requires selecting it in
+Unity too. Missing body cameras or invalid profiles fail explicitly. `ConfigureBodyCameras`
+also accepts already parsed Core device configurations. Slots map by ID (`cam.px`, `cam.mx`,
+`cam.py`, `cam.my`), independent of configuration order. Full-resolution requests preserve the
+profile's exact dimensions, fx/fy/cx/cy and exposure duration. Preview targets retain their size.
 
 ## Verification
 
 Run PlayMode tests with a GPU (no `-nographics`). The renderer tests use a small synthetic scene,
 not remote Cesium terrain. They verify off-centre intrinsics and image orientation with coloured
 markers, capture metadata, light restoration, cancellation/disable cleanup, task ordering after
-failure, step-loop gating, and PNG export through the legacy entry point. The separate opt-in scene smoke test covers real Cesium imagery loading and the
+failure, continued host streaming during capture holds, and PNG export through the legacy entry point. The separate opt-in scene smoke test covers real Cesium imagery loading and the
 full-resolution four-camera workload; synthetic tests alone do not establish that result.
 
 ## Manual scene acceptance
@@ -93,37 +111,49 @@ elapsed seconds. Completion and timeouts are also logged in the Console. Outputs
 
 The editor menu **Argus Simulation > Cameras** also provides Capture Preview, Capture Full
 Resolution (4 Body Cameras), Cancel Capture and Log Capture Status. The full-resolution command
-sends four native 4608×2592 requests (DATA-6 v0 fx=fy=3548, cx=2304, cy=1296), without enlarging
-the preview targets. This manual snapshot keeps exposure duration at zero; it is not the
-configured sensor sampling/noise/mount integration owned by CORE-6.
+sends four requests at the configured body-camera native dimensions without enlarging the preview
+targets. The default run currently configures 4608×2592. No Unity simulation pause is needed;
+Unity's Editor toolbar pause stops coroutine progress and must remain off.
 
-Each new JSONL record has `metadata_version: 2`. At capture start the exporter snapshots the
-rendered spacecraft pose and every camera request before waiting for tiles. Manual phase,
-altitude, pitch, yaw, roll, camera mount and preview-FOV changes made before Capture are included.
-Edits made while capture is loading affect subsequent captures; all views in the current capture
-retain their original snapshot. Full-resolution capture uses its documented native calibration.
+New JSONL records use `metadata_version: 3`. At capture start the exporter snapshots the displayed
+spacecraft pose and every camera request. Inspector changes to body position/rotation, camera
+mounts and preview FOV made before Capture are included. Changes while loading affect later
+captures; all views in the current batch retain their original snapshots.
 
-`position_ecef_m` and `rotation_body_to_ecef_xyzw` describe that rendered body pose, including manual
-edits. `source_position_ecef_m`, `source_rotation_body_to_ecef_xyzw` and
-`source_angular_velocity_body_truth_rad_per_s` retain the engine state. ECEF velocity remains the
-engine velocity; `angular_velocity_body_truth_rad_per_s` expresses the engine's angular velocity
-in the rendered body axes. Manual pose edits are instantaneous and do not simulate an actuator or
-an angular impulse. Their physical integration remains G1.
+Legacy `position_ecef_m`, `rotation_body_to_ecef_xyzw` and
+`angular_velocity_body_truth_rad_per_s` retain host truth and its body axes. ECEF velocity remains
+host truth. `rendered_position_ecef_m`, `rendered_rotation_body_to_ecef_xyzw` and
+`rendered_angular_velocity_body_rad_per_s` describe the displayed body; the rate is host angular
+velocity re-expressed in the displayed axes, not a physical model of a manual nudge. `source_*`
+fields remain aliases of host truth for readers of the short-lived v2 schema.
 
-`camera_position_ecef_m`, `camera_to_ecef_xyzw`, `camera_to_body_xyzw`, intrinsics, time,
-`exposure_duration_s`, `renderer`, `has_sun_position` and `sun_position_ecef_m` describe the actual
-render request returned with the pixels. Camera quaternions use OpenCV axes (right, down,
-forward); the legacy `rotation_camera_to_body_unity_xyzw` retains Unity's camera convention.
-When `has_sun_position` is false the scene provides the lighting. Older records without
-`metadata_version` lack these pose snapshots and may omit manual attitude offsets.
+Legacy `cx_px` / `cy_px` retain edge-origin coordinates (W/2 and H/2 for a centred preview).
+`rendered_cx_px` / `rendered_cy_px` explicitly record the exact request's zero-based pixel-centre
+coordinates, including off-centre Core profiles. Legacy values are the exact coordinates plus
+0.5 pixels, preserving the original coordinate origin without discarding off-centre calibration.
+The shared fx/fy values describe the requested image. Consumers reconstructing an exposure must
+use the actual camera ECEF pose and the exact rendered principal point, rather than treating host
+body truth as the rendered pose after a manual edit.
+
+`camera_position_ecef_m`, `camera_to_ecef_xyzw`, `camera_to_body_xyzw`, dimensions, fx/fy,
+`rendered_cx_px`, `rendered_cy_px`, time, `exposure_duration_s`, `renderer`, `has_sun_position` and
+`sun_position_ecef_m` describe the actual request returned with the pixels. Camera quaternions
+use OpenCV axes. `camera_to_body_xyzw` is relative to the **rendered** body. The legacy
+`rotation_camera_to_body_unity_xyzw` retains Unity camera axes. Without a Sun position the scene
+provides lighting. Unversioned records lack rendered pose snapshots; v2 changed the legacy pose
+fields to rendered values, so those historical files must be read according to their version.
 
 `UnityImageRendererCesiumSmokeTests` is opt-in. Set `ARGUS_RUN_CESIUM_SMOKE=1` and select its
 `FoundationSavesPreviewAndFourFullResolutionBodyImages` test to exercise the actual Foundation
-scene, existing Cesium credentials, preview export, then four full-size exports. It retains
+scene, existing Cesium credentials, preview export, then four full-size exports. It supplies a
+deterministic test state source to the unchanged host-following runner; it validates real Cesium
+rendering, not a live Basilisk run or a host-to-Unity render RPC. It retains
 images and metadata for inspection. Normal offline test runs skip this network-dependent test.
 The opt-in test requires enabled terrain and checks Earth-facing PNG content as well as file
-counts and sizes. It sets a 600-second per-view total loading budget for uncached imagery;
-the normal renderer default is 240 seconds, with the same 60-second inactivity limit.
+counts and sizes. It uses the production 1200-second per-view total budget and 60-second inactivity
+limit. The total budget allows cold native-resolution loads that exceeded the previous 240-second
+limit while still advancing. The inactivity limit and explicit Cancel command bound stalled work;
+this is a batch capture path, not a real-time throughput guarantee.
 
 ## Local acceptance record — 2026-11-04
 
@@ -148,4 +178,29 @@ the same replay now passes with the georeference and display light restored. A s
 far-origin red/green marker test verifies actual pixel projection after rebasing. A five-capture
 manual validation batch contained 24 readable PNGs with matching metadata, including 350 km and
 reset-to-500 km states. These files predate the projection fix. Verification of the latest changes
-used offline GPU regression tests. Full network/Cesium validation of these changes is pending.
+used offline GPU regression tests. Full network/Cesium validation was pending at that point;
+the 2026-11-16 validation below covers the subsequent final renderer.
+
+## Host-following regression validation — 2026-11-16
+
+Integrated main at `a980eae` (UNITY-5 / UNITY-6 / HOST-3 / CORE-21). On Unity
+6000.6.0f1 / macOS Metal, 199 EditMode and 26 offline PlayMode tests passed; the opt-in
+Cesium test is run separately. The headless Core suite passed 199 tests and Host passed
+73. New regressions verify continued state delivery during capture holds, preservation of an
+existing hold, exact per-camera Core profiles, legacy metadata coordinate origins and truth,
+manual edits frozen across all views, immediate queued cancellation, propagation of an injected
+origin-restore failure, bounded live-view readiness probes, render-only Sun overrides, export I/O error
+reporting, and pixel-for-pixel agreement between raw RGB and the direct PNG capture path.
+
+The final real-Cesium Foundation test passed separately in 661.5 seconds with production defaults
+(1200-second per-view total budget, 60-second inactivity limit, alternating readiness/live-view
+frames). It saved five 768×432 previews and four 4608×2592 native body images, with nine metadata-v3
+records and unique paths. All PNGs decoded and matched their recorded dimensions; every record
+retained the same frozen state sequence and exposure start time. The report contained zero error
+logs and measured a maximum of one exclusive selection frame across 5048 readiness probes.
+Earth-facing nadir and native Forward images contained real terrain/imagery detail. Artifacts
+remain under `NavigationEpisodes/unity4-cesium-acceptance_20261116T230243408Z/`.
+
+The scene test uses real Cesium terrain, GIBS imagery, network and Metal, with a deterministic
+state-source fixture feeding the host-following runner. It does not validate a live Basilisk
+experiment or the pending host render RPC.

@@ -85,6 +85,46 @@ namespace Argus.Simulation.Tests
             Assert.That(Field(manifest, "dropped_states"), Is.EqualTo("0"));
         }
 
+        // CORE-10: a clamped command is one commands.jsonl line with the command as sent, what the
+        // engine ran and why, and the next state's producing_command is what the engine ran.
+        [Test]
+        public void AClampedCommandIsRecordedAsSentAndAsApplied()
+        {
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                AnalyticSimulationEngine analytic = Analytic();
+                SimulationGateway gateway = RecordedGateway(recorder, new ApplyingEngine(analytic), analytic.Orbit);
+                gateway.Reset(0, new SimulationConfiguration(
+                    "test-run",
+                    DateTimeOffset.UnixEpoch,
+                    0.5,
+                    devices: new[]
+                    {
+                        IdealBodyTorqueKind.Instance.Configure(
+                            new SensorDefinition("torque.body", "test-actuator", "torque_body", 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false),
+                            new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))
+                    }));
+                gateway.Step(new DeviceCommandSet(0, 0.0, new[]
+                {
+                    new DeviceCommand("torque.body", new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(-0.002, 0.0005, 0.0)).Build())
+                }));
+                recorder.Close();
+            }
+
+            string run = Path.Combine(_root, "test-run_0");
+            string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
+            Assert.That(commands.Length, Is.EqualTo(1));
+            Assert.That(Field(commands[0], "outcome"), Is.EqualTo("\"Clamped\""));
+            Assert.That(commands[0], Does.Contain(
+                "\"reason\":\"Device 'torque.body' command values[\\\"torque_body_n_m\\\"] (-0.002, 0.0005, 0) is past " +
+                "max_torque_body_n_m (0.001, 0.001, 0.001); clamped.\""));
+            Assert.That(commands[0], Does.Contain("\"requested\":{\"sequence\":0"));
+            Assert.That(commands[0], Does.Contain("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[-0.002,0.0005,0]}}"));
+            Assert.That(commands[0], Does.EndWith("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[-0.001,0.0005,0]}}}}"));
+            string[] states = File.ReadAllLines(Path.Combine(run, "states.jsonl"));
+            Assert.That(states[1], Does.Contain("\"torque_body_n_m\":[-0.001,0.0005,0]"));
+        }
+
         [Test]
         public void StalledWriterNeverDelaysTheStepLoop()
         {
@@ -238,6 +278,43 @@ namespace Argus.Simulation.Tests
             Assert.That(Field(frames[1], "payload"), Is.EqualTo("null"));
         }
 
+        // The manifest's cameras list every camera device that publishes, in device order, by sensor
+        // ID and profile ID (ICameraKind, CORE-6). The values stay in its devices entry's parameters,
+        // so each has one spelling in the manifest (docs/device-model.md §3).
+        [Test]
+        public void CamerasListEveryCameraDeviceByItsProfileId()
+        {
+            CameraProfile calibrated = new CameraProfile(
+                "imx708-cal-1",
+                new CameraIntrinsics(4608, 2592, 3540.5, 3541.5, 2300.25, 1290.75),
+                "checkerboard",
+                isCalibrated: true,
+                CameraDistortion.Zero("checkerboard"),
+                CameraProfile.NoNoise,
+                0.002,
+                new CameraExtrinsicsProvenance("cad", "geometric-centre", isOrientationVerified: true));
+            DeviceConfiguration first = CameraKind.Instance.Configure(CameraDefinition("cam.a"), TestCameras.Imx708Profile());
+            DeviceConfiguration imu = Scenario(0.1).Devices[0];
+            DeviceConfiguration second = CameraKind.Instance.Configure(CameraDefinition("cam.b"), calibrated);
+            SimulationConfiguration run = new SimulationConfiguration(
+                "test-run", DateTimeOffset.UnixEpoch, 0.1, devices: new[] { first, imu, second });
+            Assert.That(run.IsValid, Is.True);
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                recorder.BeginRun(run, new[] { first.Definition, imu.Definition, second.Definition });
+                recorder.Close();
+            }
+
+            string manifest = File.ReadAllText(Path.Combine(_root, "test-run_0", "manifest.json"));
+            Assert.That(
+                Balanced(manifest, "\"cameras\":", '[', ']'),
+                Is.EqualTo("[{\"sensor_id\":\"cam.a\",\"profile_id\":\"imx708-66deg-spec-v0\"},{\"sensor_id\":\"cam.b\",\"profile_id\":\"imx708-cal-1\"}]"));
+            string devices = Balanced(manifest, "\"devices\":", '[', ']');
+            Assert.That(devices, Does.Contain("\"profile_id\":\"imx708-cal-1\""));
+            Assert.That(devices, Does.Contain("\"intrinsics.focal_length_y_px\":3541.5"));
+            Assert.That(devices, Does.Contain("\"extrinsics.origin\":\"geometric-centre\""));
+        }
+
         [Test]
         public void AnUnwritableRootFailsWhenTheRecorderIsCreated()
         {
@@ -272,7 +349,8 @@ namespace Argus.Simulation.Tests
                 sensor => new IdealBodyRateSensorModel(
                     sensor.Definition.SensorId,
                     sensor.Definition.FrameId,
-                    sensor.Definition.SamplePeriodSeconds));
+                    sensor.Definition.SamplePeriodSeconds,
+                    sensor.Definition.Source));
             gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, analyticOrbit: orbit);
             gateway.StateProduced += recorder.RecordState;
             gateway.SensorOutputProduced += recorder.RecordSensorOutput;
@@ -283,14 +361,34 @@ namespace Argus.Simulation.Tests
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds)
         {
-            Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
-            Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             DeviceConfiguration rate = ImuKind.Instance.Configure(
-                new SensorDefinition("imu.body_rate", "test-rate", "body", fixedStepSeconds, "test", SensorMount.Identity),
-                new ImuProfile(
-                    new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
-                    new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4)));
+                new SensorDefinition("imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity),
+                TestImu.P0LikeProfile());
             return new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: new[] { rate });
+        }
+
+        private static SensorDefinition CameraDefinition(string sensorId) =>
+            new SensorDefinition(sensorId, "test-camera", sensorId.Replace('.', '_'), 1.0, "argus", SensorMount.Identity, isControllerVisible: false);
+
+        // The balanced JSON object or array that starts right after the first marker.
+        private static string Balanced(string json, string marker, char open, char close)
+        {
+            int start = json.IndexOf(marker, StringComparison.Ordinal);
+            Assert.That(start, Is.GreaterThanOrEqualTo(0), $"no {marker} in {json}");
+            start += marker.Length;
+            Assert.That(json[start], Is.EqualTo(open), $"{marker} is not followed by '{open}'");
+            int depth = 0;
+            for (int i = start; i < json.Length; i++)
+            {
+                depth += json[i] == open ? 1 : json[i] == close ? -1 : 0;
+                if (depth == 0)
+                {
+                    return json.Substring(start, i - start + 1);
+                }
+            }
+
+            Assert.Fail($"unbalanced '{open}' after {marker}");
+            return null;
         }
 
         // The raw JSON value of the first "name" key in a line.

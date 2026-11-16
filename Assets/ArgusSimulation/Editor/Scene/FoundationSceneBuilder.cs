@@ -92,13 +92,11 @@ namespace Argus.Simulation.Editor
             NasaGibsRasterController rasterController =
                 earth.AddComponent<NasaGibsRasterController>();
 
+            // The headless host's run is the only simulation: Unity follows its state stream (G2).
             GameObject simulation = new GameObject("Simulation");
-            AnalyticStateSource stateSource = simulation.AddComponent<AnalyticStateSource>();
+            StateStreamClient stateSource = simulation.AddComponent<StateStreamClient>();
             SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
             runner.Configure(stateSource);
-            SimulationSensorRuntime sensorRuntime =
-                simulation.AddComponent<SimulationSensorRuntime>();
-            sensorRuntime.Configure(runner);
             simulation.AddComponent<NavigationEpisodeExporter>();
 
             GameObject spacecraft = new GameObject("CubeSat Truth Pose");
@@ -149,7 +147,6 @@ namespace Argus.Simulation.Editor
             CubeSatCameraRig cameraRig = spacecraft.AddComponent<CubeSatCameraRig>();
             UnityImageRenderer imageRenderer = simulation.AddComponent<UnityImageRenderer>();
             imageRenderer.Configure(cameraRig, geospatialRoot.GetComponent<CesiumGeoreference>(), light, rasterController);
-            runner.ConfigureImageRenderer(imageRenderer);
 
             EnsureDirectory(SceneDirectory);
             EditorSceneManager.SaveScene(scene, ScenePath);

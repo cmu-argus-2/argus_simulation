@@ -36,12 +36,15 @@ message DeviceMount {
 message DeviceConfiguration {
   // Unique within a run (ordinal), across sensors and actuators.
   string device_id = 1;
-  // The registered kind name: "imu", "magnetometer", "light_sensor". Unknown: INVALID_ARGUMENT.
+  // The registered kind name: "imu", "magnetometer", "light_sensor", or an actuator kind:
+  // "ideal_body_torque", "momentum_wheel", "magnetic_torquer", "thruster". Unknown: INVALID_ARGUMENT.
   string kind = 2;
   // Sensors: Core SamplePeriodSeconds x 1e9, exact; a positive multiple of fixed_step_ns.
+  // Actuators: 0, since they take a command every step.
   uint64 sample_period_ns = 3;
+  // An actuator's device_to_body is the identity: its axis is a body-frame parameter.
   DeviceMount mount = 4;
-  // Core SensorDefinition.IsControllerVisible: false for ground-truth sensors, whose frames the
+  // Sensors only, unset for actuators. Core SensorDefinition.IsControllerVisible: false for ground-truth sensors, whose frames the
   // gateway never forwards to a controller (D7). Unset means visible. The service does not read it.
   optional bool controller_visible = 5;
   // Exactly the kind's declared keys; Argus.Basilisk/README.md §9 lists them per kind.

@@ -43,7 +43,8 @@ namespace Argus.Simulation.Unity
 
         private UnityImageRenderer _renderer;
         private CancellationTokenSource _captureCancellation;
-        private bool _resumeSimulation;
+        private CesiumSpacecraftPoseDriver _pose;
+        private bool _releasePose;
         private int _captureIndex;
         private int _captureTotal;
 
@@ -62,7 +63,7 @@ namespace Argus.Simulation.Unity
         [Serializable]
         private sealed class NavigationRecord
         {
-            public int metadata_version = 2;
+            public int metadata_version = 3;
             public string timestamp_utc;
             public long sequence;
             public double simulation_time_seconds;
@@ -72,11 +73,13 @@ namespace Argus.Simulation.Unity
             public int image_width_px;
             public int image_height_px;
 
-            // Standard pinhole calibration in pixel units.
+            // Legacy edge-origin pinhole calibration. Exact zero-based pixel-centre values follow.
             public double fx_px;
             public double fy_px;
             public double cx_px;
             public double cy_px;
+            public double rendered_cx_px;
+            public double rendered_cy_px;
 
             // Unity-coordinate camera-to-body quaternion [x, y, z, w].
             // A later bridge will convert/document the exact Argus convention.
@@ -91,16 +94,17 @@ namespace Argus.Simulation.Unity
             public bool has_sun_position;
             public double[] sun_position_ecef_m;
 
-            // Rendered spacecraft position; velocity remains the source engine's ECEF velocity.
+            // Legacy fields retain host truth, including its body axes.
             public double[] position_ecef_m;
             public double[] velocity_ecef_m_per_s;
-
-            // Rendered body -> ECEF, [x, y, z, w].
             public double[] rotation_body_to_ecef_xyzw;
-
-            // Source angular velocity expressed in the rendered body axes. A manual nudge is
-            // an instantaneous pose edit, not a physically simulated torque or gyro sample.
             public double[] angular_velocity_body_truth_rad_per_s;
+
+            // Actual displayed body pose, including manual edits. Rates are re-expressed host
+            // rates, not a physical simulation of an instantaneous manual nudge.
+            public double[] rendered_position_ecef_m;
+            public double[] rendered_rotation_body_to_ecef_xyzw;
+            public double[] rendered_angular_velocity_body_rad_per_s;
 
             // Preserve the underlying engine state separately from the rendered pose.
             public double[] source_position_ecef_m;
@@ -136,7 +140,7 @@ namespace Argus.Simulation.Unity
         public bool RequestCapture() => BeginCapture(false);
 
         // A manual acceptance capture, not a replacement for the Core camera configuration.
-        // Uses the DATA-6 v0 full-resolution calibration for the four body views only.
+        // Uses Core camera profiles from the host run configuration for the four body views.
         public bool RequestFullResolutionCapture() => BeginCapture(true);
 
         public void CancelCapture() => _captureCancellation?.Cancel();
@@ -154,7 +158,7 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            if (!runner.HasState && !runner.StepOnce())
+            if (!runner.HasState)
             {
                 SetCaptureStatus("NO STATE");
                 return false;
@@ -171,7 +175,9 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState, fullResolution));
+            _pose = cameraRig.GetComponent<CesiumSpacecraftPoseDriver>();
+            SimulationState source = _pose != null && _pose.IsHeld ? _pose.HeldState : runner.LastState;
+            StartCoroutine(CaptureWhenCesiumIsReady(source, fullResolution));
             return true;
         }
 
@@ -182,15 +188,15 @@ namespace Argus.Simulation.Unity
             // already saved images or append metadata pointing at a replacement image.
             int captureNumber = _captureNumber++;
             LastCaptureError = string.Empty;
-            _resumeSimulation = runner.IsRunning;
-            runner.IsRunning = false;
+            _releasePose = _pose != null && !_pose.IsHeld;
+            _pose?.HoldCurrent(state);
+            cameraRig.GetComponent<NadirTilePriority>()?.RestoreViewsForCapture();
             _captureCancellation = new CancellationTokenSource();
             if (_renderer == null)
             {
                 _renderer = GetComponent<UnityImageRenderer>();
                 if (_renderer == null) _renderer = gameObject.AddComponent<UnityImageRenderer>();
             }
-            runner.ConfigureImageRenderer(_renderer);
             _renderer.CaptureStatusChanged += HandleRendererStatus;
             string status = "EXPORT ERROR";
             try
@@ -202,6 +208,7 @@ namespace Argus.Simulation.Unity
                 if (first < 0 || last > cameraRig.Cameras.Count)
                 {
                     status = "NO CAMERA";
+                    LastCaptureError = "Selected camera index is outside the camera rig.";
                     yield break;
                 }
                 var requests = new RenderRequest[last - first];
@@ -234,9 +241,9 @@ namespace Argus.Simulation.Unity
                     System.Threading.Tasks.Task<ImageFrame> task = null;
                     try
                     {
-                        task = _renderer.RenderAsync(requests[index - first], _captureCancellation.Token);
+                        task = _renderer.RenderPngAsync(requests[index - first], _captureCancellation.Token);
                     }
-                    catch (Exception exception) { Debug.LogException(exception, this); }
+                    catch (Exception exception) { LastCaptureError = exception.Message; Debug.LogException(exception, this); }
                     if (task == null) yield break;
                     while (!task.IsCompleted) yield return null;
                     try
@@ -252,8 +259,8 @@ namespace Argus.Simulation.Unity
                         status = "LOAD TIMEOUT";
                         yield break;
                     }
-                    catch (OperationCanceledException) { status = "CANCELLED"; yield break; }
-                    catch (Exception exception) { Debug.LogException(exception, this); yield break; }
+                    catch (OperationCanceledException exception) { LastCaptureError = exception.Message; status = "CANCELLED"; yield break; }
+                    catch (Exception exception) { LastCaptureError = exception.Message; Debug.LogException(exception, this); yield break; }
                 }
                 status = "SAVED";
                 Debug.Log($"Camera capture saved {_captureTotal} images to: {_episodeDirectory}", this);
@@ -261,9 +268,9 @@ namespace Argus.Simulation.Unity
             finally
             {
                 _renderer.CaptureStatusChanged -= HandleRendererStatus;
-                _captureCancellation.Dispose();
+                _captureCancellation?.Dispose();
                 _captureCancellation = null;
-                CompleteCapture(_resumeSimulation, status);
+                CompleteCapture(status);
             }
         }
 
@@ -297,10 +304,11 @@ namespace Argus.Simulation.Unity
             Vector3d forward = ToEcefDirection(reference, camera.transform.forward);
             double fy = 0.5 * target.height / Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
             CameraIntrinsics intrinsics = fullResolution
-                ? new CameraIntrinsics(4608, 2592, 3548, 3548, 2304, 1296)
+                ? cameraRig.BodyCameraProfile(index).Intrinsics
                 : new CameraIntrinsics(target.width, target.height, fy, fy, (target.width - 1) / 2.0, (target.height - 1) / 2.0);
             return new RenderRequest(cameraRig.Names[index], captureNumber, state.Spacecraft.Sequence,
-                state.Spacecraft.SimulationTimeSeconds, state.Spacecraft.TimestampUtc, 0,
+                state.Spacecraft.SimulationTimeSeconds, state.Spacecraft.TimestampUtc,
+                index < 4 ? cameraRig.BodyCameraProfile(index).ExposureDurationSeconds : 0,
                 new Vector3d(position.x, position.y, position.z), Quaterniond.FromBasis(right, down, forward),
                 intrinsics,
                 state.Environment?.SunPositionItrf93Meters);
@@ -321,16 +329,13 @@ namespace Argus.Simulation.Unity
             StopAllCoroutines();
             _captureCancellation?.Dispose();
             _captureCancellation = null;
-            CompleteCapture(_resumeSimulation, "CANCELLED");
+            CompleteCapture("CANCELLED");
         }
 
-        private void CompleteCapture(bool resumeSimulation, string status)
+        private void CompleteCapture(string status)
         {
-            if (runner != null)
-            {
-                runner.IsRunning = resumeSimulation;
-            }
-
+            if (_releasePose) _pose?.Release();
+            _releasePose = false;
             IsCaptureInProgress = false;
             SetCaptureStatus(status);
         }
@@ -401,8 +406,10 @@ namespace Argus.Simulation.Unity
 
                 fx_px = intrinsics.FocalLengthXPixels,
                 fy_px = intrinsics.FocalLengthYPixels,
-                cx_px = intrinsics.PrincipalPointXPixels,
-                cy_px = intrinsics.PrincipalPointYPixels,
+                cx_px = intrinsics.PrincipalPointXPixels + 0.5,
+                rendered_cx_px = intrinsics.PrincipalPointXPixels,
+                cy_px = intrinsics.PrincipalPointYPixels + 0.5,
+                rendered_cy_px = intrinsics.PrincipalPointYPixels,
 
                 rotation_camera_to_body_unity_xyzw = new[]
                 {
@@ -421,14 +428,16 @@ namespace Argus.Simulation.Unity
                 sun_position_ecef_m = frame.Request.HasSunPosition
                     ? ToArray(frame.Request.SunPositionEcefMeters.Value) : null,
 
-                position_ecef_m = ToArray(state.PositionEcefMeters),
+                position_ecef_m = ToArray(sourceState.PositionEcefMeters),
+                rendered_position_ecef_m = ToArray(state.PositionEcefMeters),
                 velocity_ecef_m_per_s =
                     ToArray(state.VelocityEcefMetersPerSecond),
 
-                rotation_body_to_ecef_xyzw = ToArray(state.BodyToEcef),
+                rotation_body_to_ecef_xyzw = ToArray(sourceState.BodyToEcef),
+                rendered_rotation_body_to_ecef_xyzw = ToArray(state.BodyToEcef),
 
-                angular_velocity_body_truth_rad_per_s =
-                    ToArray(state.AngularVelocityBodyRadiansPerSecond),
+                angular_velocity_body_truth_rad_per_s = ToArray(sourceState.AngularVelocityBodyRadiansPerSecond),
+                rendered_angular_velocity_body_rad_per_s = ToArray(state.AngularVelocityBodyRadiansPerSecond),
                 source_position_ecef_m = ToArray(sourceState.PositionEcefMeters),
                 source_rotation_body_to_ecef_xyzw = ToArray(sourceState.BodyToEcef),
                 source_angular_velocity_body_truth_rad_per_s = ToArray(sourceState.AngularVelocityBodyRadiansPerSecond)

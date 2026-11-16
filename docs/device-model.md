@@ -3,9 +3,11 @@
 **Status:** design (CON-5, #110). The sensors are built (CORE-19, #111): §1 to §5 and §7 are
 in `Core/Contracts`, the kinds in `Core/Sensors`, `argus.sim.v1/devices.proto` and
 `argus_basilisk/devices/`. So are the per-device commands of §6 (CORE-20, #112), except the
-per-step device state, which comes with the first actuator. Still to build: the profile files
-(HOST-9, #113; until then the devices live in the run file's `devices`). Actuator kinds follow in
-CON-2 (#34) and BSK-8 (#21).
+per-step device state, which comes with the first stateful actuator, the momentum wheel. The
+actuator kinds of §2 are registered on both sides (CON-2, #34), and the service builds the
+`ideal_body_torque` and `magnetic_torquer` effectors (BSK-8, #21). Still to build: the
+`momentum_wheel` and `thruster` effectors, which P0 doesn't carry (DATA-2, #68; BSK-17, #152), and the profile
+files (HOST-9, #113; until then the devices live in the run file's `devices`).
 
 A spacecraft is a body plus a list of configured devices ([target-architecture.md](target-architecture.md)
 D11). Every sensor and actuator is a device: an instance of a generic kind, registered by name. A
@@ -22,14 +24,17 @@ Common fields, the same for every kind:
 | `kind` | `kind` | A registered kind name in snake_case: `imu`, `magnetometer`, `light_sensor`, `camera` (CORE-18), and later `ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`. |
 | `modelName` | Core only | The part, as a parameter set for its kind (`placeholder-mems-imu`, `arducam-imx708`). Recorded; not sent to the service. |
 | `frameId` | Core only | The sensor frame's name in frames and datasets. |
-| `mount` | `mount` | `positionBodyMeters` (lever arm from the centre of mass) and `deviceToBody` (v_body = q v_device q*). It replaces `SensorMount`'s `sensorToBody`. |
+| `mount` | `mount` | `positionBodyMeters` (lever arm from the centre of mass) and `deviceToBody` (v_body = q v_device q*). It replaces `SensorMount`'s `sensorToBody`. An actuator's axis is a body-frame parameter, so its `deviceToBody` must be the identity; a thruster acts at its `positionBodyMeters`. |
 | `samplePeriodSeconds` | `sample_period_ns` | Sensors only: a positive whole number of fixed steps. Actuators have none: they take a command every step. |
 | `controllerVisible` | `controller_visible` | Sensors only; unset means visible. False for ground-truth sensors (D7). |
 | `parameters` | `parameters` | The kind's fixed values (§3). |
 | `initialState` | `initial_state` | The kind's state at t = 0, for example a wheel's speed. Empty for kinds with no state, which includes the three P0 sensors. |
 
 A device's role (sensor or actuator) and which side models it (Basilisk or Argus, D10 and CORE-18)
-belong to its kind. They are not configured per device.
+belong to its kind. They are not configured per device. An actuator's run-file entry has no
+`samplePeriodSeconds` or `controllerVisible`; on the wire its `sample_period_ns` is 0 and
+`controller_visible` is unset, and the manifest records it with `sample_period_s` 0 and
+`controller_visible` false.
 
 ## 2. Kinds
 
@@ -50,6 +55,26 @@ Validation is the kind's own. An unknown key, a missing required key, a wrong ty
 value or one out of range is rejected with the device ID and the key. Core validates when it
 builds the configuration, so the host fails fast with exit code 1. The service validates again
 and returns INVALID_ARGUMENT, because it never trusts its client.
+
+**Actuator kinds** (CON-2, #34) are generic physics models, all Basilisk-modelled. Each axis is a
+unit vector in body axes (within 1e-6), each limit is finite and > 0, and every kind has
+`limit_policy`: `clamp` or `reject`, which the gateway applies past the limits (CORE-10, #46). A
+command carries exactly the kind's command keys, and its idle values are zero:
+
+| Kind | Parameters | Initial state | Command | Basilisk |
+|---|---|---|---|---|
+| `ideal_body_torque` | `max_torque_body_n_m` (vector3, a bound on each body axis) | none | `torque_body_n_m` (vector3) | `extForceTorque` |
+| `momentum_wheel` | `spin_axis_body`, `spin_inertia_kg_m2`, `max_torque_n_m`, `max_speed_rad_per_s` | `speed_rad_per_s` | `motor_torque_n_m` | `reactionWheelStateEffector` (not built) |
+| `magnetic_torquer` | `dipole_axis_body`, `max_dipole_a_m2` | none | `dipole_a_m2` (signed) | `MtbEffector` |
+| `thruster` | `thrust_direction_body`, `max_thrust_n` | none | `thrust_n` (>= 0), held over the step | `thrusterDynamicEffector`, on-time `thrust_n / max_thrust_n` of the step (not built) |
+
+The service builds the `ideal_body_torque` and `magnetic_torquer` effectors and refuses a run
+that configures a `momentum_wheel` or `thruster` (UNIMPLEMENTED), so every command it receives
+acts (`Argus.Basilisk/README.md` §9 "Actuators"). Over an engine that only records commands (the
+analytic fixture), the gateway refuses (logs `Rejected`) any command that is not the kind's idle
+values, so the run continues and the log tells the truth. A spacecraft whose actuators aren't
+known yet uses one `ideal_body_torque` device; the P0 run file lists `torque.body`, with DATA-2
+(#68)'s `reject` at 1e-4 N·m per axis, until DATA-2's six coils land in it.
 
 **The IMU is one kind,** `imu`, with `gyroscope.*` and `accelerometer.*` parameters and one frame
 that carries both channels. This matches Basilisk's `imuSensor` and today's `ImuMeasurement`, so
@@ -90,7 +115,8 @@ A new kind needs no contract change: the schema does not check fields, the kind 
 ## 4. Profile and run file
 
 A spacecraft profile holds the body and its devices. Here is the P0 profile, abbreviated: the
-accelerometer, the magnetometer and the other five light sensors follow the same pattern.
+accelerometer, the magnetometer, the other five light sensors and the four body cameras (CORE-6)
+follow the same pattern.
 
 ```json
 {
@@ -163,8 +189,8 @@ itself:
   devices) and sends the resolved devices to the service, which never reads files.
 - The dataset manifest records `profileId`, the path as written, and the resolved body and
   devices, so a dataset stands alone.
-- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 8 P0 sensors) and a run file
-  that names it (HOST-9).
+- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 12 P0 devices: the 8 sensors
+  Basilisk models and the 4 body cameras) and a run file that names it (HOST-9).
 
 ## 5. Wire
 
@@ -206,7 +232,7 @@ message RunConfiguration {
   are reserved.
 - Per-step actuator state arrives as `repeated BasiliskDeviceState device_states` on
   `StepResponse` (`device_id`, `map<string, DeviceValue> state`). It is added with the first
-  actuator (BSK-8).
+  stateful actuator, the momentum wheel (BSK-17, #152); neither kind BSK-8 (#21) built has state.
 
 ## 6. Commands and device state
 
@@ -226,10 +252,12 @@ message DeviceCommandSet {
   The empty set means no output (today's zero command), and Reset's Step(0) sends it.
 - **Each device appears at most once.** It must be a configured actuator, and its values must pass
   its kind's checks. The gateway logs anything else as Rejected and does not send it on (CORE-20).
-  Limits clamp or reject per device (CORE-10).
+  Then each value is held to its device's limits by its kind, and the device's `limit_policy`
+  decides (CORE-10, #46): `clamp` sends the value at its nearest limit and logs the command
+  `Clamped`, with the requested and applied command and the reason; `reject` refuses the whole
+  command (`Rejected`), so the step doesn't run.
 - **In Core**, `DeviceCommandSet` (which replaced `ActuatorCommandSet`) holds the sequence, the
-  apply time and the `DeviceCommand`s, each a device ID and its values. Until actuator kinds
-  exist, no device is a configured actuator, so only the empty set is applied.
+  apply time and the `DeviceCommand`s, each a device ID and its values.
 - **`commands.jsonl`**: `requested` and `applied` keep `sequence` and
   `apply_at_simulation_time_s`. The three vectors are replaced by `devices`, which maps each device
   ID to its values. `requested` is what the controller sent. `applied` lists every configured
@@ -248,17 +276,29 @@ message DeviceCommandSet {
 - **Core:** each kind is one class implementing `IDeviceKind` (`Core/Contracts/IDeviceKind.cs`).
   The class holds the kind's name, role, modeller, declarations and validation. A sensor kind
   builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`) also reads its output map
-  into its measurement type. An actuator kind gives its idle values and its limit checks.
+  into its measurement type, and a camera kind (`ICameraKind`) gives its `CameraProfile`, for the
+  manifest's `cameras` and the shared profile-ID rule (CORE-6). An actuator kind (`IActuatorKind`,
+  on `ActuatorKind<TProfile>`) gives its command keys, its idle values and its command check; the
+  gateway runs an actuator a command leaves out at its idle values. It also owns its limit check,
+  `Limit(parameters, values, out excess)` with `LimitPolicyOf(parameters)` (CORE-10), so a new
+  kind brings its own and the gateway doesn't change: `ideal_body_torque` per body axis, ±max for
+  `magnetic_torquer` and a `momentum_wheel`'s motor torque, and [0, max] thrust. A wheel's
+  `max_speed_rad_per_s` bounds its state, not a command, so the backend that integrates the speed
+  owns it.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
-  `CameraKind` only list their keys and map them. A kind declares its initial-state keys the same
-  way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
+  `CameraProfileKind` only list their keys and map them. `CameraKind` and
+  `NadirGroundTruthCameraKind` share `CameraProfileKind`'s keys and differ only in name and model.
+  A kind declares its initial-state keys the same way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
   (`parameters["gyroscope.*"]`). `DeviceKinds` lists every registration in one
   file. It replaced the `SensorKind` switches in `SensorFactory`, `SensorConfiguration`, the
   run-file parser, the recorder, `BasiliskProtoMapper` and `BasiliskStateMapper`.
 - **Service:** each Basilisk-modelled kind is one module, `argus_basilisk/devices/<kind>.py`, with
   `KIND`, `PARAMETERS` and `OUTPUTS` (key to type), an optional `STATE` (none by default),
-  `check` (its range rules) and `build` (its Basilisk modules and `output()`). `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
+  `check` (its range rules) and `build` (its Basilisk modules and `output()`). An actuator kind
+  has `ROLE = ACTUATOR`, `COMMANDS` and `IDLE` in place of `OUTPUTS`, and, once built,
+  `build(devices, inputs)`, its Basilisk effectors for all of the run's devices of the kind
+  (BSK-8, #21). `argus_basilisk/devices/__init__.py` registers them in `KINDS`.
   `validation.py` and the scenario walk `KINDS` instead of switching on kinds. Kind modules import
   numpy and Basilisk only inside `build`, so validation runs without Basilisk.
 - **Adding a kind** means writing its Core class, its service module if Basilisk models it, one
@@ -267,16 +307,16 @@ message DeviceCommandSet {
 Both sides declare a kind's keys. A single machine-readable schema both read is out of scope for
 now.
 
-## 8. Before HOST-5
+## 8. Versioning
 
-`Argus.Contracts/README.md` allows incompatible v1 changes until HOST-5 (#29) marks the Basilisk
-path verified, and dataset v1 follows the same rule. Changes that break v1 must merge first;
-additions can follow.
+`Argus.Contracts/README.md` allowed incompatible v1 changes until HOST-5 (#29) verified the
+Basilisk path, and dataset v1 followed the same rule. The changes that break v1 merged first;
+v1 is now additive only, and the rest are additions.
 
 | Change | Breaks v1 | Lands in |
 |---|---|---|
-| `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), before HOST-5 |
-| `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), before HOST-5 |
+| `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), merged before HOST-5 |
+| `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), merged before HOST-5 |
 | Profile and run file split | no (a host format) | HOST-9 (#113), any time |
-| Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | BSK-8 (#21), with the first actuator |
-| New kinds | no (registry only) | CON-2 (#34) and later |
+| Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | with the first stateful actuator, the momentum wheel (BSK-17, #152) |
+| New kinds | no (registry only) | the actuator kinds in CON-2 (#34); later kinds any time |

@@ -40,6 +40,20 @@ def parse_endpoint(parser: argparse.ArgumentParser, value: str) -> str:
     return value
 
 
+def build_server(servicer: BasiliskSimulationServicer | None = None) -> grpc.Server:
+    """The service's gRPC server, neither bound nor started.
+
+    A caller binds it; v1 is an insecure channel, so bind loopback only, as main() does through parse_endpoint.
+    """
+    # Basilisk never runs two calls at once: the servicer's lock refuses a call that reaches it while another
+    # runs (RESOURCE_EXHAUSTED). gRPC's maximum_concurrent_rpcs is not used: gRPC counts a call until its worker
+    # has freed the response, after sending it, so a strictly sequential client was refused under load (BSK-16).
+    # The second worker lets an overlapping call reach that lock instead of waiting behind the first.
+    server = grpc.server(ThreadPoolExecutor(max_workers=2))
+    service_grpc.add_BasiliskSimulationServiceServicer_to_server(servicer or BasiliskSimulationServicer(), server)
+    return server
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="argus_basilisk", description=__doc__)
     parser.add_argument(
@@ -49,9 +63,7 @@ def main() -> None:
     endpoint = parse_endpoint(
         parser, arguments.endpoint or os.environ.get(ENDPOINT_VARIABLE) or DEFAULT_ENDPOINT)
 
-    # One run and one client per process: a concurrent call gets RESOURCE_EXHAUSTED.
-    server = grpc.server(ThreadPoolExecutor(max_workers=1), maximum_concurrent_rpcs=1)
-    service_grpc.add_BasiliskSimulationServiceServicer_to_server(BasiliskSimulationServicer(), server)
+    server = build_server()
     try:
         port = server.add_insecure_port(endpoint)
     except RuntimeError as error:

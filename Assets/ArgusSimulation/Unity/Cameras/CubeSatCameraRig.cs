@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using Argus.Simulation.Core;
 using CesiumForUnity;
 using Unity.Mathematics;
 using UnityEngine;
@@ -20,10 +22,37 @@ namespace Argus.Simulation.Unity
             "NADIR GT  NORTH-UP"
         };
 
-        [Header("Physical side cameras")]
-        [SerializeField, Range(1f, 120f)]
-        private float sideCameraVerticalFieldOfViewDegrees =
-            (float)(2.0 * System.Math.Atan(2592.0 / (2.0 * 3548.0)) * 180.0 / System.Math.PI);
+        [Header("Host run configuration")]
+        [SerializeField] private string runConfigurationFile = "headless/Host/runs/p0-default.json";
+        private static readonly string[] BodyCameraIds = { "cam.px", "cam.mx", "cam.py", "cam.my" };
+        private Dictionary<string, DeviceConfiguration> _profiles;
+
+        public CameraProfile BodyCameraProfile(int index) => CameraKind.Instance.Profile(BodyCameraConfiguration(index));
+
+        public DeviceConfiguration BodyCameraConfiguration(int index)
+        {
+            if (index < 0 || index >= BodyCameraIds.Length) throw new ArgumentOutOfRangeException(nameof(index));
+            if (_profiles == null) _profiles = CameraRunConfiguration.Load(CameraRunConfiguration.ResolvePath(runConfigurationFile));
+            if (!_profiles.TryGetValue(BodyCameraIds[index], out DeviceConfiguration device))
+                throw new InvalidOperationException("The host run configuration has no body camera " + BodyCameraIds[index]);
+            return device;
+        }
+
+        // Allows a host-configuration bridge or a test to supply Core's parsed configurations.
+        public void ConfigureBodyCameras(IReadOnlyList<DeviceConfiguration> devices)
+        {
+            var profiles = new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
+            foreach (DeviceConfiguration device in devices)
+                if (device.Kind == CameraKind.KindName)
+                {
+                    if (!device.IsValid) throw new ArgumentException("Invalid camera configuration: " + device.Definition.SensorId);
+                    profiles.Add(device.Definition.SensorId, device);
+                }
+            foreach (string id in BodyCameraIds)
+                if (!profiles.ContainsKey(id)) throw new ArgumentException("Missing body camera " + id);
+            _profiles = profiles;
+            for (int i = 0; i < Math.Min(4, _cameras.Count); i++) ApplyProfile(_cameras[i], i);
+        }
 
         [Header("Ground-truth camera")]
         [SerializeField, Range(1f, 120f)]
@@ -136,7 +165,7 @@ namespace Argus.Simulation.Unity
                 outwardNormal * cameraMountOffsetMeters,
                 localRotation);
 
-            ConfigureSideCamera(camera);
+            ApplyProfile(camera, _cameras.Count);
             RegisterCamera(camera);
         }
 
@@ -164,14 +193,11 @@ namespace Argus.Simulation.Unity
             UpdateGroundTruthPose();
         }
 
-        private void ConfigureSideCamera(Camera camera)
+        private void ApplyProfile(Camera camera, int index)
         {
-            ConfigureCamera(
-                camera,
-                VisibleWorldLayers(),
-                nearClipMeters,
-                farClipMeters,
-                sideCameraVerticalFieldOfViewDegrees);
+            CameraIntrinsics intrinsics = BodyCameraProfile(index).Intrinsics;
+            float fov = (float)(2 * Math.Atan(intrinsics.HeightPixels / (2 * intrinsics.FocalLengthYPixels)) * 180 / Math.PI);
+            ConfigureCamera(camera, VisibleWorldLayers(), nearClipMeters, farClipMeters, fov);
         }
 
         private void ConfigureNadirCamera(Camera camera)

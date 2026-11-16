@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using Argus.Simulation.Core;
 using Argus.Simulation.Unity;
 using CesiumForUnity;
 using NUnit.Framework;
@@ -16,7 +17,7 @@ namespace Argus.Simulation.Tests
     // Opt-in: requires real terrain credentials, network and a GPU. Never part of offline CI.
     public sealed class UnityImageRendererCesiumSmokeTests
     {
-        [UnityTest, Timeout(1_500_000)]
+        [UnityTest, Timeout(3_600_000)]
         public IEnumerator FoundationSavesPreviewAndFourFullResolutionBodyImages()
         {
             if (Environment.GetEnvironmentVariable("ARGUS_RUN_CESIUM_SMOKE") != "1")
@@ -27,7 +28,12 @@ namespace Argus.Simulation.Tests
             var report = new SmokeReport { startedUtc = DateTime.UtcNow.ToString("O") };
             Application.LogCallback log = (message, stack, type) =>
             {
-                if (type == LogType.Error || type == LogType.Exception) report.errorLogCount++;
+                if (type == LogType.Error || type == LogType.Exception)
+                {
+                    report.errorLogCount++;
+                    if (message.Contains("Screen position out of view frustum") || stack.Contains("UnityImageRenderer"))
+                        report.renderErrorLogCount++;
+                }
             };
             Application.logMessageReceived += log;
             float startedAt = Time.realtimeSinceStartup;
@@ -40,19 +46,16 @@ namespace Argus.Simulation.Tests
                 Cesium3DTileset[] tilesets = Object.FindObjectsByType<Cesium3DTileset>(FindObjectsInactive.Exclude);
                 Assert.That(Array.Exists(tilesets, tileset => tileset.isActiveAndEnabled), Is.True,
                     "Real-scene acceptance requires enabled terrain. Check the project .env / Cesium credentials.");
-                // Uncached native-resolution imagery can exceed the production default budget.
-                // The offline suite separately verifies that the configured deadline is enforced.
-                var renderer = Object.FindAnyObjectByType<UnityImageRenderer>();
-                typeof(UnityImageRenderer).GetField("maximumLoadSeconds", BindingFlags.Instance | BindingFlags.NonPublic)
-                    .SetValue(renderer, 600f);
                 var runner = Object.FindAnyObjectByType<SimulationRunner>();
-                var priority = Object.FindAnyObjectByType<NadirTilePriority>();
-                float warmUpDeadline = Time.realtimeSinceStartup + 40f;
-                while (priority != null && priority.IsWarmingUp && Time.realtimeSinceStartup < warmUpDeadline)
-                    yield return null;
-                runner.IsRunning = false;
-                if (!runner.HasState) Assert.That(runner.StepOnce(), Is.True);
-                Object.FindAnyObjectByType<CesiumSpacecraftPoseDriver>().NudgeAttitude(new Vector3(30f, 20f, 0f));
+                // Real terrain/GPU with a deterministic host stand-in; no Basilisk run is implied.
+                if (runner.StateSource is StateStreamClient stream) stream.enabled = false;
+                var source = runner.gameObject.AddComponent<TestStateSource>();
+                runner.Configure(source);
+                SimulationState state = source.Publish(0);
+                var pose = Object.FindAnyObjectByType<CesiumSpacecraftPoseDriver>();
+                pose.Hold(state);
+                pose.transform.localRotation *= Quaternion.Euler(30f, 20f, 0f);
+                pose.GetComponent<CesiumGlobeAnchor>().Sync();
                 yield return null;
                 yield return null;
 
@@ -66,7 +69,7 @@ namespace Argus.Simulation.Tests
                 if (!fullOnly)
                 {
                     Assert.That(exporter.RequestCapture(), Is.True);
-                    yield return WaitForCapture(exporter, 1250f);
+                    yield return WaitForCapture(exporter, 1800f, report);
                     report.directory = exporter.EpisodeDirectory;
                     report.previewStatus = exporter.LastCaptureStatus;
                     report.error = exporter.LastCaptureError;
@@ -76,7 +79,7 @@ namespace Argus.Simulation.Tests
                 }
 
                 Assert.That(exporter.RequestFullResolutionCapture(), Is.True);
-                yield return WaitForCapture(exporter, 1000f);
+                yield return WaitForCapture(exporter, 1700f, report);
                 report.directory = exporter.EpisodeDirectory;
                 report.fullResolutionStatus = exporter.LastCaptureStatus;
                 report.error = exporter.LastCaptureError;
@@ -98,6 +101,25 @@ namespace Argus.Simulation.Tests
                 Assert.That(fullSize, Is.EqualTo(4));
                 string forwardPattern = fullOnly ? "capture_0000*FORWARD*.png" : "capture_0001*FORWARD*.png";
                 AssertImageHasDetail(Directory.GetFiles(report.directory, forwardPattern)[0]);
+                string[] records = File.ReadAllLines(Path.Combine(report.directory, "navigation_metadata.jsonl"));
+                Assert.That(records.Length, Is.EqualTo(images.Length));
+                var paths = new HashSet<string>(StringComparer.Ordinal);
+                foreach (string json in records)
+                {
+                    SavedRecord record = JsonUtility.FromJson<SavedRecord>(json);
+                    Assert.That(record.metadata_version, Is.EqualTo(3));
+                    Assert.That(record.sequence, Is.EqualTo(state.Spacecraft.Sequence));
+                    Assert.That(record.simulation_time_seconds, Is.EqualTo(state.Spacecraft.SimulationTimeSeconds));
+                    Assert.That(paths.Add(record.image_file), Is.True);
+                    Assert.That(File.Exists(Path.Combine(report.directory, record.image_file)), Is.True);
+                    Assert.That(record.camera_position_ecef_m.Length, Is.EqualTo(3));
+                    Assert.That(record.camera_to_ecef_xyzw.Length, Is.EqualTo(4));
+                    Assert.That(record.cx_px, Is.EqualTo(record.rendered_cx_px + 0.5));
+                    Assert.That(record.cy_px, Is.EqualTo(record.rendered_cy_px + 0.5));
+                }
+                Assert.That(report.probeFrames, Is.GreaterThan(0));
+                Assert.That(report.maximumExclusiveFrames, Is.LessThanOrEqualTo(1));
+                Assert.That(report.renderErrorLogCount, Is.Zero, "Real captures must not log renderer/frustum errors.");
                 report.passed = true;
             }
             finally
@@ -126,12 +148,15 @@ namespace Argus.Simulation.Tests
             finally { Object.Destroy(image); }
         }
 
-        private static IEnumerator WaitForCapture(NavigationEpisodeExporter exporter, float seconds)
+        private static IEnumerator WaitForCapture(NavigationEpisodeExporter exporter, float seconds, SmokeReport report)
         {
             float deadline = Time.realtimeSinceStartup + seconds;
             float nextLog = Time.realtimeSinceStartup + 10f;
+            var renderer = Object.FindAnyObjectByType<UnityImageRenderer>();
             while (exporter.IsCaptureInProgress && Time.realtimeSinceStartup < deadline)
             {
+                report.probeFrames = renderer.ReadinessProbeCount;
+                report.maximumExclusiveFrames = renderer.MaximumReadinessProbeFrames;
                 if (Time.realtimeSinceStartup >= nextLog)
                 {
                     Debug.Log("Camera smoke progress: " + exporter.LastCaptureStatus);
@@ -146,6 +171,19 @@ namespace Argus.Simulation.Tests
             }
         }
 
+#pragma warning disable CS0649 // JsonUtility reads these exported fields.
+        [Serializable]
+        private sealed class SavedRecord
+        {
+            public int metadata_version;
+            public long sequence;
+            public double simulation_time_seconds;
+            public string image_file;
+            public double[] camera_position_ecef_m, camera_to_ecef_xyzw;
+            public double cx_px, cy_px, rendered_cx_px, rendered_cy_px;
+        }
+#pragma warning restore CS0649
+
         [Serializable]
         private sealed class SmokeReport
         {
@@ -155,6 +193,9 @@ namespace Argus.Simulation.Tests
             public string fullResolutionStatus;
             public string error;
             public int errorLogCount;
+            public int renderErrorLogCount;
+            public int probeFrames;
+            public int maximumExclusiveFrames;
             public float elapsedSeconds;
             public bool passed;
         }

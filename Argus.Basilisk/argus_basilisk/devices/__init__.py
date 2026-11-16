@@ -9,29 +9,43 @@ module defines:
   key is required;
 - STATE (optional): each initial-state key and its type, as PARAMETERS; none when it is absent,
   as for every sensor kind so far;
-- OUTPUTS: each key and type of its BasiliskDeviceSample.output;
+- OUTPUTS (sensors): each key and type of its BasiliskDeviceSample.output;
+- COMMANDS and IDLE (actuators): each command key and its type, and the values the actuator runs
+  in a step whose command leaves it out (no output); check_command(values, invalid) (optional),
+  a command value the kind can never take, and check_limits(values, parameters, invalid), a
+  command past the device's own limits, both reported as check() reports;
 - check(values, invalid): its range checks. values maps each parameter key that has its declared
-  type and is finite to its Python value (a float, or a tuple of components); a problem is
+  type and is finite to its Python value (a float, a str, or a tuple of components); a problem is
   reported as invalid(key, reason, value);
-- build(device, random_seed, inputs): its Argus sensor from a validated DeviceConfiguration and
-  the _common.Inputs messages. The sensor has device_id, sample_period_ns, modules, readers,
-  ready and output(), which returns the output map.
+- build(device, random_seed, inputs) (sensors): its Argus sensor from a validated
+  DeviceConfiguration and the _common.Inputs messages. The sensor has device_id,
+  sample_period_ns, modules, readers, ready and output(), which returns the output map;
+- build(devices, inputs) (actuators): one _common.ActuatorGroup for all of the run's devices of
+  the kind, in configuration order (BSK-8, #21). An actuator kind without build is registered but
+  not built: ConfigureRun returns UNIMPLEMENTED for it;
+- MAX_DEVICES (optional): the most devices of the kind one run may configure;
+- NEEDS_MAGNETIC_FIELD (optional, False by default): whether its devices read the
+  MagneticFieldWMM output, so the run builds it and WMM2025 validity bounds the run.
 
 validation.py and the scenario walk KINDS instead of switching on kinds, so adding a kind is one
 module plus one entry here. Kind modules import numpy and Basilisk only inside their builders,
 so validation runs without the basilisk extra.
 """
 
-from . import imu, light_sensor, magnetometer
-from ._common import Inputs
+from . import ideal_body_torque, imu, light_sensor, magnetic_torquer, magnetometer, momentum_wheel, thruster
+from ._common import ACTUATOR, SENSOR, Inputs
 
-__all__ = ["ACTUATOR", "KINDS", "SENSOR", "actuator_ids", "build_sensors", "of_kind", "state_keys"]
+__all__ = [
+    "ACTUATOR", "KINDS", "SENSOR", "actuators", "build_actuators", "build_sensors", "is_actuator", "is_built",
+    "needs_magnetic_field", "of_kind", "state_keys"]
 
-# A kind module's ROLE; a module without one is a sensor kind.
-SENSOR = "sensor"
-ACTUATOR = "actuator"
-
-KINDS = {module.KIND: module for module in (imu, magnetometer, light_sensor)}
+KINDS = {
+    module.KIND: module
+    for module in (
+        imu, magnetometer, light_sensor,
+        ideal_body_torque, momentum_wheel, magnetic_torquer, thruster,
+    )
+}
 
 
 def state_keys(kind) -> dict:
@@ -39,12 +53,29 @@ def state_keys(kind) -> dict:
     return getattr(kind, "STATE", {})
 
 
-def actuator_ids(configuration) -> frozenset:
-    """The device IDs of the run's actuators, the only devices a Step command may name. Every
-    registered kind is a sensor until the first actuator kind (CON-2 #34), so this is empty."""
-    return frozenset(
-        device.device_id for device in configuration.devices
-        if getattr(KINDS.get(device.kind), "ROLE", SENSOR) == ACTUATOR)
+def is_actuator(kind) -> bool:
+    """Whether a kind module is an actuator kind."""
+    return getattr(kind, "ROLE", SENSOR) == ACTUATOR
+
+
+def is_built(kind) -> bool:
+    """Whether the service builds a kind module's devices; every sensor kind is built."""
+    return hasattr(kind, "build")
+
+
+def needs_magnetic_field(configuration) -> bool:
+    """Whether the run builds MagneticFieldWMM: a device of a kind with NEEDS_MAGNETIC_FIELD (a
+    magnetometer reads it, a magnetic torquer pushes against it). Its WMM2025 validity then bounds
+    the run (README §3)."""
+    return any(getattr(KINDS.get(device.kind), "NEEDS_MAGNETIC_FIELD", False) for device in configuration.devices)
+
+
+def actuators(configuration) -> dict:
+    """The run's actuators by device ID, each to its kind module: the only devices a Step command
+    may name."""
+    return {
+        device.device_id: KINDS[device.kind] for device in configuration.devices
+        if is_actuator(KINDS.get(device.kind))}
 
 
 def of_kind(devices, kind: str) -> list:
@@ -55,7 +86,8 @@ def of_kind(devices, kind: str) -> list:
 def build_sensors(
         configuration, spacecraft_state_msg, magnetic_field_msg=None, *,
         sun_msg=None, eclipse_msg=None, albedo_msgs=None) -> list:
-    """The Argus sensors of a validated configuration, in configuration order.
+    """The Argus sensors of a validated configuration, in configuration order; actuators are
+    build_actuators'.
 
     magnetic_field_msg is the MagneticFieldWMM output for the spacecraft, required with a
     magnetometer. Light sensors need the SPICE Sun, the eclipse output and their albedo output,
@@ -73,5 +105,26 @@ def build_sensors(
         kind = KINDS.get(device.kind)
         if kind is None:
             raise ValueError(f"device kind {device.kind!r} is not registered (device_id {device.device_id!r})")
+        if is_actuator(kind):
+            continue
         built.append(kind.build(device, configuration.random_seed, inputs))
     return built
+
+
+def build_actuators(configuration, spacecraft_state_msg, magnetic_field_msg=None) -> list:
+    """One ActuatorGroup per actuator kind the validated configuration uses, in the order each
+    kind first appears. magnetic_field_msg is the MagneticFieldWMM output, required with a
+    magnetic torquer."""
+    inputs = Inputs(spacecraft_state_msg=spacecraft_state_msg, magnetic_field_msg=magnetic_field_msg)
+    by_kind = {}
+    for device in configuration.devices:
+        kind = KINDS.get(device.kind)
+        if is_actuator(kind):
+            by_kind.setdefault(device.kind, []).append(device)
+    groups = []
+    for name, members in by_kind.items():
+        kind = KINDS[name]
+        if not is_built(kind):
+            raise ValueError(f"actuator kind {name!r} is not built (device_id {members[0].device_id!r})")
+        groups.append(kind.build(members, inputs))
+    return groups

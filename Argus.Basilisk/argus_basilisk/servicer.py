@@ -8,14 +8,16 @@ import threading
 import grpc
 
 from .contracts import service_grpc, service_pb
-from .devices import actuator_ids, magnetometer, of_kind
+from .devices import actuators, needs_magnetic_field
 from .kernels import KernelSet, KernelSetError, load_kernel_set
 from .scenario import BASILISK_VERSION, KernelLoadError, Scenario, StaleMessageError
 from .validation import (
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
+    actuator_parameters,
     check_utc_in_range,
+    command_values,
     configure_run_problems,
     timestamp_to_ns,
     validate_configure_run,
@@ -81,8 +83,8 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
         return self._call(context, self._step, request)
 
     def _call(self, context, handler, request):
-        # The server already allows one RPC at a time; this keeps a concurrent call from ever
-        # reaching Basilisk if that setting changes.
+        # The only guard against two calls at once (BSK-16): every RPC comes through here, and the lock
+        # is released before the response is sent, so a sequential client never meets it.
         if not self._lock.acquire(blocking=False):
             context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "another call is in progress; calls are sequential")
         try:
@@ -107,7 +109,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
             raise _Abort(error.code, error.details) from None
 
         # 3. Build and initialize; run no step.
-        scenario = self._build(request.configuration, kernel_set)
+        scenario = self._build(request, kernel_set)
 
         # 4. Store the request, end READY, and echo every field.
         self._run = _Run(request=request, kernel_set=kernel_set, scenario=scenario)
@@ -136,9 +138,9 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 raise _Abort(code, "; ".join(p.details for p in problems if p.code == code)) from None
             raise _Abort(kernel_error.code, kernel_error.details) from None
 
-    def _build(self, configuration, kernel_set: KernelSet) -> Scenario:
+    def _build(self, request, kernel_set: KernelSet) -> Scenario:
         try:
-            return Scenario(configuration, kernel_set)
+            return Scenario(request.configuration, kernel_set, request.real_time_factor)
         except KernelLoadError as error:
             raise _Abort("FAILED_PRECONDITION", str(error)) from None
         except Exception as error:  # A Basilisk failure (README §11).
@@ -155,7 +157,7 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
         except KernelSetError as error:
             raise _Abort(error.code, error.details) from None
         run.scenario = None
-        run.scenario = self._build(run.request.configuration, kernel_set)
+        run.scenario = self._build(run.request, kernel_set)
         run.kernel_set = kernel_set
         run.state = READY
         run.next_sequence = 0
@@ -180,24 +182,25 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 "INVALID_ARGUMENT",
                 f"sim_time_ns: expected {t_n} (sequence x fixed_step_ns), got {request.sim_time_ns}")
 
-        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, and naming only the
-        # run's actuators, of which there are none until actuator kinds exist (CON-2).
+        # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, naming only the run's
+        # actuators with their kinds' keys, within each device's limits.
+        run_actuators = actuators(configuration)
         try:
-            validate_step_request(request, configuration.fixed_step_ns, actuator_ids(configuration))
+            validate_step_request(
+                request, configuration.fixed_step_ns, run_actuators, actuator_parameters(configuration))
             # 4. epoch + t_n inside coverage, before executing: CSPICE aborts the process outside it.
-            has_magnetometer = bool(of_kind(configuration.devices, magnetometer.KIND))
             check_utc_in_range(
                 timestamp_to_ns(configuration.epoch_utc) + t_n,
                 "configuration.epoch_utc + sim_time_ns",
                 coverage_utc=run.kernel_set.coverage_utc,
-                wmm_validity=WMM2025_VALIDITY if has_magnetometer else None,
+                wmm_validity=WMM2025_VALIDITY if needs_magnetic_field(configuration) else None,
             )
         except ValidationError as error:
             raise _Abort(error.code, error.details) from None
 
         # 5 to 7. Run to t_n and read every returned message; a failure ends the run.
         try:
-            response = run.scenario.step(sequence)
+            response = run.scenario.step(sequence, command_values(request.commands, run_actuators))
         except StaleMessageError as error:
             run.state = FAILED
             raise _Abort("INTERNAL", str(error)) from None

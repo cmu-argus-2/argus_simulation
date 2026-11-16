@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 
 namespace Argus.Simulation.Core
 {
@@ -18,6 +19,8 @@ namespace Argus.Simulation.Core
                 out date);
         }
 
+        // Argus.Imagery/download_gibs_pack.py build_url repeats both WMS requests; keep them in
+        // step so pack tiles match streamed ones.
         public static string BuildBaseTemplate()
         {
             return "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi" +
@@ -43,6 +46,33 @@ namespace Argus.Simulation.Core
                 "&TIME=" + date + "&SRS=EPSG:4326" +
                 "&BBOX={westDegrees},{southDegrees},{eastDegrees},{northDegrees}" +
                 "&WIDTH={width}&HEIGHT={height}";
+        }
+
+        // Local tiles written by Argus.Imagery/download_gibs_pack.py. Only the directory is
+        // URI-escaped so Cesium still sees its {z}/{x}/{reverseY} placeholders.
+        public static string BuildPackTemplate(string packDirectory, string extension)
+        {
+            if (string.IsNullOrWhiteSpace(packDirectory))
+            {
+                throw new ArgumentException("An imagery pack directory is required.", nameof(packDirectory));
+            }
+
+            if (extension != "png" && extension != "jpg")
+            {
+                throw new ArgumentException("Imagery pack tiles must be png or jpg.", nameof(extension));
+            }
+
+            if (packDirectory.IndexOfAny(new[] { '#', '%', '?' }) >= 0)
+            {
+                throw new ArgumentException(
+                    "An imagery pack directory may not contain '#', '%' or '?'; move or rename the pack.",
+                    nameof(packDirectory));
+            }
+
+            string directory = Path.GetFullPath(packDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return new Uri(directory + Path.DirectorySeparatorChar).AbsoluteUri +
+                "{z}/{x}/{reverseY}." + extension;
         }
 
         private static void ValidateIdentifier(string value, string parameterName)

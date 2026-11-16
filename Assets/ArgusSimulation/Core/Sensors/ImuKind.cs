@@ -111,5 +111,10 @@ namespace Argus.Simulation.Core
 
         protected override ImuMeasurement Read(DeviceValues output) =>
             new ImuMeasurement(output.Vector3(AngularVelocity), output.Vector3(SpecificForce));
+
+        protected override DeviceValues Write(ImuMeasurement measurement) => new DeviceValues.Builder()
+            .Add(AngularVelocity, measurement.AngularVelocitySensorRadiansPerSecond)
+            .Add(SpecificForce, measurement.SpecificForceSensorMetersPerSecondSquared)
+            .Build();
     }
 }

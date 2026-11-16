@@ -126,21 +126,27 @@ namespace Argus.Simulation.Core
                 ReferenceFrame.Itrf93);
         }
 
-        // Every backend-modelled sensor must report exactly on the steps its sample period divides, at
-        // the step time, with exactly its kind's output keys. Devices Argus computes never reach the
-        // backend (D10), so a sample naming one is a sample for an unknown sensor.
+        // Maps one step's samples for the sensors the backend samples: the configuration's
+        // BackendSensors, worked out once per run (CORE-22), so nothing is filtered here; a list
+        // that holds any other device is rejected before any sample is read. Each must report
+        // exactly on the steps its sample period divides, at the step time, with exactly its kind's
+        // output keys. Devices Argus computes never reach the backend (D10), so a sample naming one
+        // is a sample for an unknown sensor.
         public static SensorMeasurementSet MapMeasurements(
             BasiliskStepState step,
-            IReadOnlyList<DeviceConfiguration> sensors)
+            IReadOnlyList<DeviceConfiguration> backendSensors)
         {
             Dictionary<string, DeviceConfiguration> sensorsById =
                 new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
-            foreach (DeviceConfiguration sensor in sensors)
+            foreach (DeviceConfiguration sensor in backendSensors)
             {
-                if (IsBackendSensor(sensor))
+                if (!sensor.IsBackendSensor)
                 {
-                    sensorsById.Add(sensor.Definition.SensorId, sensor);
+                    throw new ArgumentException(
+                        $"Sensor '{sensor.Definition.SensorId}' is not one the backend samples.", nameof(backendSensors));
                 }
+
+                sensorsById.Add(sensor.Definition.SensorId, sensor);
             }
 
             Dictionary<string, object> measurements = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -172,10 +178,11 @@ namespace Argus.Simulation.Core
                     continue;
                 }
 
+                IBackendSensorKind kind = (IBackendSensorKind)sensor.KindDefinition;
                 object measurement;
                 try
                 {
-                    measurement = ((IBackendSensorKind)sensor.KindDefinition).ReadOutput(sample.Output);
+                    measurement = kind.ReadOutput(sample.Output);
                 }
                 catch (ArgumentException exception)
                 {
@@ -187,13 +194,8 @@ namespace Argus.Simulation.Core
                 measurements.Add(sample.SensorId, measurement);
             }
 
-            foreach (DeviceConfiguration sensor in sensors)
+            foreach (DeviceConfiguration sensor in backendSensors)
             {
-                if (!IsBackendSensor(sensor))
-                {
-                    continue;
-                }
-
                 long periodNanoseconds = BasiliskTime.ToNanoseconds(sensor.Definition.SamplePeriodSeconds);
                 bool isDue = step.SimulationTimeNanoseconds % periodNanoseconds == 0;
                 if (isDue != sampledSensorIds.Contains(sensor.Definition.SensorId))
@@ -207,11 +209,6 @@ namespace Argus.Simulation.Core
 
             return new SensorMeasurementSet(measurements, unavailableSensorIds);
         }
-
-        // A sensor the backend models and samples. A backend-modelled actuator (CON-2) reports no
-        // samples, so it is neither looked up nor expected on any step.
-        private static bool IsBackendSensor(DeviceConfiguration device) =>
-            device.IsBackendModelled && device.KindDefinition is IBackendSensorKind;
 
         private static bool IsOrthonormal(Vector3d r0, Vector3d r1, Vector3d r2)
         {

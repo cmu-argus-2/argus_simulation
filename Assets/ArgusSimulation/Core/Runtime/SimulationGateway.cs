@@ -10,8 +10,9 @@ namespace Argus.Simulation.Core
     // [t_k, t_k+1) and returns observation k+1. Truth and every sensor frame, including ground
     // truth, reach the recorder and Unity through StateProduced and SensorOutputProduced, and every
     // command Step receives reaches it through CommandLogged.
-    // TODO(D7, G1): actuator-limit validation (CORE-10) and authority and heartbeat (CORE-9), which
-    // log their decisions through CommandLogged. Serving it to HIL and external controllers is
+    // Each actuator command is held to its device's limits by its kind, then clamped or rejected per
+    // the device's limit_policy (CORE-10). TODO(D7, G1): authority and heartbeat (CORE-9), which log
+    // their decisions through CommandLogged. Serving it to HIL and external controllers is
     // headless/Host GatewayServer.
     public sealed class SimulationGateway
     {
@@ -51,6 +52,11 @@ namespace Argus.Simulation.Core
         // rejected, raised before the engine runs it or Step throws.
         public event Action<CommandRecord> CommandLogged;
 
+        // A sensor that could not release what it held when its run ended, such as a renderer whose
+        // cancellation callback throws (CORE-21). The run ends as it would have; this only reports the
+        // failure, for logs. A subscriber that throws is ignored.
+        public event Action<Exception> SensorEndFailed;
+
         // The backend exception that ended the run, for logs; never shown to a controller.
         public Exception Failure { get; private set; }
 
@@ -76,12 +82,24 @@ namespace Argus.Simulation.Core
                 throw new ArgumentException("A valid scenario is required.", nameof(scenario));
             }
 
+            // Sensors first, so a factory that disagrees with its device is refused like an invalid
+            // scenario: before the engine is configured (for Basilisk, a call to the service) and with
+            // the run in progress left running (CORE-22).
+            SensorManager sensors = BuildSensors(run);
             _isRunning = false;
             _hasStartedRun = false;
             Failure = null;
+            // The run in progress, if any, ends here: its sensors are replaced without being sampled
+            // again, so they release their renders first (CORE-21). End is idempotent, so sensors a
+            // stop, failure or Finish already ended are unaffected. Only after BuildSensors, so a
+            // refused Reset leaves the run in progress and its renders untouched (CORE-22). Before
+            // the new sensors' Reset, so a sensor the factory returns again has nothing left to
+            // release there, and a failure to release is reported (SensorEndFailed), not thrown.
+            EndSensors();
+            sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             _engine.Initialize(run);
             _scenario = run;
-            _sensors = BuildSensors(run);
+            _sensors = sensors;
             _controllerVisibleSensorIds = ControllerVisibleSensorIds(run);
 
             if (!_engine.TryReset(out SimulationState state) || !IsExpectedState(state, 0, 0.0, null))
@@ -124,16 +142,24 @@ namespace Argus.Simulation.Core
                 throw new InvalidOperationException(notRunning);
             }
 
-            string rejection = Rejection(command);
+            string rejection = Rejection(command, out DeviceCommandSet limited, out string clamped);
             if (rejection != null)
             {
                 Log(Rejected(command, rejection));
                 throw new ArgumentException(rejection, nameof(command));
             }
 
-            DeviceCommandSet applied = command;
+            // The record keeps the command as sent and what the engine runs: within the limits, or
+            // clamped to them with the reason (CORE-10).
+            DeviceCommandSet applied = WithIdleActuators(limited);
             Log(new CommandRecord(
-                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Applied, command, applied));
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                clamped == null ? CommandOutcome.Applied : CommandOutcome.Clamped,
+                command,
+                applied,
+                clamped));
 
             long sequence = _nextSequence + 1;
             double simulationTimeSeconds = sequence * _scenario.FixedStepSeconds;
@@ -190,6 +216,23 @@ namespace Argus.Simulation.Core
             return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
         }
 
+        // The run reached its last step: no sensor is sampled again, so each releases what it holds,
+        // such as a camera's renders (CORE-21), and Step refuses further commands. Nothing went wrong,
+        // so there is no terminal observation and RunTerminated is not raised; the recording ends as
+        // complete. Does nothing when no run is running. Every driver that stops stepping at a run's
+        // last step calls it (headless/Host does); otherwise the sensors keep their renders until
+        // the next Reset.
+        public void Finish()
+        {
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            _isRunning = false;
+            EndSensors();
+        }
+
         // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
         // backend's own; the reason names the step that failed.
         private Observation Terminate(Exception failure)
@@ -210,8 +253,33 @@ namespace Argus.Simulation.Core
                 Array.Empty<ISensorFrame>(),
                 status,
                 reason);
+            // No sensor is sampled again for this run, so each releases what it holds, such as a
+            // camera's renders (CORE-21).
+            EndSensors();
             RunTerminated?.Invoke(observation);
             return observation;
+        }
+
+        // Ends the current sensors' run. A sensor that throws (a renderer's token callback) is
+        // reported through SensorEndFailed instead of thrown: every other sensor has still been ended
+        // (SensorManager.End), and it must not change how the run ended, such as a BackendFailed
+        // observation becoming an exception from Step.
+        private void EndSensors()
+        {
+            try
+            {
+                _sensors?.End();
+            }
+            catch (Exception failure)
+            {
+                try
+                {
+                    SensorEndFailed?.Invoke(failure);
+                }
+                catch
+                {
+                }
+            }
         }
 
         // Ends a running run before an exception propagates, so RunTerminated still tells subscribers
@@ -234,8 +302,12 @@ namespace Argus.Simulation.Core
         }
 
         // Why Step refuses a command for step k, or null when it is valid and for k at t_k.
-        private string Rejection(DeviceCommandSet command)
+        // limited is the command held to its devices' limits, and clamped says which values a clamp
+        // policy changed (null when none did).
+        private string Rejection(DeviceCommandSet command, out DeviceCommandSet limited, out string clamped)
         {
+            limited = command;
+            clamped = null;
             if (!command.IsValid)
             {
                 string problem = command.FindProblem();
@@ -263,28 +335,103 @@ namespace Argus.Simulation.Core
                     _nextSimulationTimeSeconds);
             }
 
-            // Only the run's actuators take commands, and none is configured until the first
-            // actuator kind exists (CON-2, #34), so every command naming a device is rejected and
-            // never reaches the engine. TODO(G1): check each command's values against its kind and
-            // limits (CORE-10, #46).
+            // Only the run's actuators take commands, each with exactly its kind's command values,
+            // then held to the device's limits by its kind (CORE-10): a reject policy refuses the whole
+            // command, and a clamp policy passes each value at its nearest limit.
+            List<DeviceCommand> devices = new List<DeviceCommand>(command.Commands.Count);
+            List<string> clamps = new List<string>();
             foreach (DeviceCommand device in command.Commands)
             {
-                if (!IsConfiguredActuator(device.DeviceId))
+                DeviceConfiguration? configured = ConfiguredActuator(device.DeviceId);
+                if (!configured.HasValue)
                 {
                     return $"Device '{device.DeviceId}' is not an actuator this run configures.";
+                }
+
+                IActuatorKind actuator = (IActuatorKind)configured.Value.KindDefinition;
+                string problem = actuator.FindCommandProblem(device.Values);
+                if (problem != null)
+                {
+                    return $"Device '{device.DeviceId}' command {problem}.";
+                }
+
+                DeviceValues parameters = configured.Value.Parameters;
+                DeviceValues values = actuator.Limit(parameters, device.Values, out string excess);
+                if (excess != null)
+                {
+                    switch (actuator.LimitPolicyOf(parameters))
+                    {
+                        case ActuatorLimitPolicy.Clamp:
+                            clamps.Add($"Device '{device.DeviceId}' command {excess}; clamped.");
+                            break;
+                        case ActuatorLimitPolicy.Reject:
+                            return $"Device '{device.DeviceId}' command {excess}, and its limit_policy is reject.";
+                        default:
+                            // A valid configuration has a known policy, so this is a bug, not a refusal.
+                            throw new InvalidOperationException(
+                                $"Device '{device.DeviceId}' has limit_policy {actuator.LimitPolicyOf(parameters)}, which the gateway does not apply.");
+                    }
+                }
+
+                // An engine that only records commands (the analytic fixture) would log a command as
+                // Applied that never acted, so refuse it and the run continues. BasiliskEngine applies
+                // every actuator its service accepted at ConfigureRun (BSK-8, #21).
+                if (!_engine.AppliesActuatorCommands && !actuator.IsIdle(values))
+                {
+                    return $"Device '{device.DeviceId}': {_engine.BackendName} does not apply actuator commands.";
+                }
+
+                devices.Add(excess == null ? device : new DeviceCommand(device.DeviceId, values));
+            }
+
+            if (clamps.Count > 0)
+            {
+                limited = new DeviceCommandSet(command.Sequence, command.ApplyAtSimulationTimeSeconds, devices);
+                clamped = string.Join(" ", clamps);
+            }
+
+            return null;
+        }
+
+        // The run's actuator with this device ID, or null.
+        private DeviceConfiguration? ConfiguredActuator(string deviceId)
+        {
+            foreach (DeviceConfiguration device in _scenario.Devices)
+            {
+                if (device.Definition.SensorId == deviceId)
+                {
+                    return device.KindDefinition is IActuatorKind ? device : (DeviceConfiguration?)null;
                 }
             }
 
             return null;
         }
 
-        private bool IsConfiguredActuator(string deviceId)
+        // The command the engine runs: the controller's, then every configured actuator it leaves
+        // out at its kind's idle values, so one record replays the step (docs/device-model.md §6).
+        private DeviceCommandSet WithIdleActuators(DeviceCommandSet command)
         {
+            List<DeviceCommand> commands = new List<DeviceCommand>(command.Commands);
             foreach (DeviceConfiguration device in _scenario.Devices)
             {
-                if (device.Definition.SensorId == deviceId)
+                if (device.KindDefinition is IActuatorKind actuator && !IsCommanded(command, device.Definition.SensorId))
                 {
-                    return device.KindDefinition?.Role == DeviceRole.Actuator;
+                    commands.Add(new DeviceCommand(device.Definition.SensorId, actuator.IdleValues));
+                }
+            }
+
+            return commands.Count == command.Commands.Count
+                ? command
+                : new DeviceCommandSet(command.Sequence, command.ApplyAtSimulationTimeSeconds, commands);
+        }
+
+        private static bool IsCommanded(DeviceCommandSet command, string deviceId)
+        {
+            foreach (DeviceCommand device in command.Commands)
+            {
+                if (device.DeviceId == deviceId)
+                {
+                    return true;
                 }
             }
 
@@ -385,6 +532,8 @@ namespace Argus.Simulation.Core
                      command.Value.ApplyAtSimulationTimeSeconds));
         }
 
+        // Builds and checks the run's sensors without resetting them: Reset resets them once the run in
+        // progress has ended.
         private SensorManager BuildSensors(SimulationConfiguration run)
         {
             SensorManager sensors = new SensorManager();
@@ -393,12 +542,72 @@ namespace Argus.Simulation.Core
             {
                 if (IsSensor(device))
                 {
-                    sensors.Register(_sensorFactory(device));
+                    ISensor sensor = _sensorFactory(device);
+                    if (sensor == null)
+                    {
+                        throw new ArgumentException($"The sensor factory built no sensor for device '{device.Definition.SensorId}'.");
+                    }
+
+                    string differs = DifferingPart(sensor.Definition, device.Definition);
+                    if (differs != null)
+                    {
+                        throw new ArgumentException(
+                            $"The sensor built for device '{device.Definition.SensorId}' must keep its device's " +
+                            $"{differs}; it has another.");
+                    }
+
+                    sensors.Register(sensor);
                 }
             }
 
-            sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             return sensors;
+        }
+
+        // The manifest lists each device as configured, while its frames carry the built sensor's
+        // ID, frame and source, on that sensor's period, and a camera places its frames by that
+        // sensor's mount; so those must agree (CORE-22). The model name and controller visibility
+        // are recorded and enforced from the configuration alone, so a stand-in model may differ.
+        private static string DifferingPart(SensorDefinition built, SensorDefinition configured)
+        {
+            if (!string.Equals(built.SensorId, configured.SensorId, StringComparison.Ordinal))
+            {
+                return "ID";
+            }
+
+            if (!string.Equals(built.FrameId, configured.FrameId, StringComparison.Ordinal))
+            {
+                return "frame ID";
+            }
+
+            if (built.SamplePeriodSeconds != configured.SamplePeriodSeconds)
+            {
+                return "sample period";
+            }
+
+            if (!string.Equals(built.Source, configured.Source, StringComparison.Ordinal))
+            {
+                return "source";
+            }
+
+            // An invalid built mount (a zero, infinite or far off-unit quaternion) is refused first:
+            // the rotation comparison scales with it and would accept it.
+            if (!built.Mount.IsValid ||
+                !built.Mount.PositionBodyMeters.Equals(configured.Mount.PositionBodyMeters) ||
+                !IsSameRotation(built.Mount.SensorToBody, configured.Mount.SensorToBody))
+            {
+                return "mount";
+            }
+
+            return null;
+        }
+
+        // q and -q are one rotation, and a valid mount may be up to 1e-6 off unit length
+        // (Quaterniond.IsUnit), so two quaternions are the same rotation when their normalised dot
+        // product is +1 or -1. The margin allows about 3 µrad (CORE-22).
+        private static bool IsSameRotation(Quaterniond a, Quaterniond b)
+        {
+            double dot = a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W;
+            return Math.Abs(dot) >= (1.0 - 1e-12) * a.Magnitude * b.Magnitude;
         }
 
         private static SensorDefinition[] SensorDefinitions(SensorManager sensors)

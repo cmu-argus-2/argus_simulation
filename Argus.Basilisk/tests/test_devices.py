@@ -1,5 +1,5 @@
 """The imu, magnetometer and light_sensor kinds: their declarations, modules, outputs and seeded
-noise (README §9, §10) without SPICE; needs bsk==2.11.1 but no kernels."""
+noise (README §9, §10) without SPICE; needs the basilisk extra but no kernels."""
 
 import math
 
@@ -15,7 +15,7 @@ from Basilisk.utilities import SimulationBaseClass  # noqa: E402
 
 from Basilisk.simulation import coarseSunSensor  # noqa: E402
 
-from argus_basilisk.devices import KINDS, build_sensors, of_kind  # noqa: E402
+from argus_basilisk.devices import KINDS, build_sensors, is_actuator, of_kind  # noqa: E402
 from argus_basilisk.devices.imu import Imu  # noqa: E402
 from argus_basilisk.devices.light_sensor import SOLAR_IRRADIANCE_W_PER_M2, LightSensor, instrument  # noqa: E402
 from argus_basilisk.devices.magnetometer import Magnetometer  # noqa: E402
@@ -46,7 +46,14 @@ def test_each_kind_declares_typed_parameters_and_outputs():
     types = {"number", "vector3", "quaternion", "matrix3", "flag", "text"}
     for name, kind in KINDS.items():
         assert kind.KIND == name
-        assert set(kind.PARAMETERS.values()) <= types and set(kind.OUTPUTS.values()) <= types
+        declared = [kind.PARAMETERS, getattr(kind, "STATE", {})]
+        # A sensor kind declares its outputs; an actuator kind its commands and idle values.
+        if is_actuator(kind):
+            declared.append(kind.COMMANDS)
+            assert set(kind.IDLE) == set(kind.COMMANDS)
+        else:
+            declared.append(kind.OUTPUTS)
+        assert all(set(keys.values()) <= types for keys in declared)
     assert len(KINDS["imu"].PARAMETERS) == 14
     assert all(key.split(".")[0] in ("gyroscope", "accelerometer") for key in KINDS["imu"].PARAMETERS)
 
@@ -337,8 +344,8 @@ def test_magnetometer_sets_every_error_term_explicitly():
 
     assert module.ModelTag == "magnetometer[mag.main]"
     assert np.allclose(module.dcm_SB, rbk.EP2C(np.array([QUARTER_TURN_Z[3], *QUARTER_TURN_Z[:3]])), atol=1e-15)
-    # Defaults are a random walk (A = I) and noise -1; both are overridden. The module never
-    # adds noise or clips: bsk 2.11.1 ignores its RNGSeed, so output() does both.
+    # A and the noise are set explicitly, never left at their defaults. The module never adds
+    # noise or clips: output() does both (README §10).
     assert np.allclose(module.getAMatrix(), np.zeros((3, 3)))
     assert np.allclose(np.ravel(module.senNoiseStd), 0.0)
     assert np.allclose(np.ravel(module.walkBounds), 0.0)
@@ -472,8 +479,7 @@ def test_light_sensor_maps_the_parameters_into_the_module():
     assert module.ModelTag == "css[light.px]"
     assert light.rng_seed == rng_seed(configuration.random_seed, "light.px", CSS)
     assert module.scaleFactor == scale
-    # The module never adds noise or clips: bsk 2.11.1's noise would be a random walk, so
-    # output() does both.
+    # The module never adds noise or clips: output() does both (README §10).
     assert module.senNoiseStd == 0.0
     assert module.senBias == 3.0 / scale
     assert module.fov == sensor.parameters["field_of_view_half_angle_rad"].number
@@ -544,7 +550,7 @@ def run_light_sensors(sensors, steps, sun_direction=(0.6, 0.8, 0.0), shadow_fact
 
 
 def test_light_sensor_noise_is_white_with_the_configured_sigma():
-    """10,000 samples of a fixed geometry: the noise bsk 2.11.1 would make a random walk is white."""
+    """10,000 samples of a fixed geometry: the service's noise is white."""
     sensor = light_sensors(p0_default_request().configuration)[0]
     set_parameter(sensor, "noise_std_w_per_m2", 0.0)
     clean = run_light_sensors([sensor], steps=10_000)["light.px"]

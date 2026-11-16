@@ -88,20 +88,72 @@ namespace Argus.Simulation.Tests
         }
 
         [UnityTest]
+        public IEnumerator DirectPngExportPreservesTheTopDownRawImageOrientation()
+        {
+            RenderRequest request = Request();
+            AddMarker(request, new Vector3d(-0.8, -0.6, 10), Color.red);
+            AddMarker(request, new Vector3d(0.8, 0.6, 10), Color.green);
+            Task<ImageFrame> rawTask = _renderer.RenderAsync(request, CancellationToken.None);
+            yield return Wait(rawTask);
+            var pngTask = (Task<ImageFrame>)typeof(UnityImageRenderer)
+                .GetMethod("RenderPngAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(_renderer, new object[] { request, CancellationToken.None });
+            yield return Wait(pngTask);
+            ImageFrame png = pngTask.GetAwaiter().GetResult();
+            Assert.That(png.Encoding, Is.EqualTo(ImageEncoding.Png));
+            var image = new Texture2D(2, 2, TextureFormat.RGB24, false);
+            try
+            {
+                Assert.That(image.LoadImage(png.Data), Is.True);
+                Color32[] pixels = image.GetPixels32();
+                byte[] raw = rawTask.GetAwaiter().GetResult().Data;
+                for (int y = 0; y < 48; y++)
+                    for (int x = 0; x < 64; x++)
+                    {
+                        int offset = (y * 64 + x) * 3;
+                        Color32 actual = pixels[(47 - y) * 64 + x];
+                        Assert.That(actual.r, Is.EqualTo(raw[offset]));
+                        Assert.That(actual.g, Is.EqualTo(raw[offset + 1]));
+                        Assert.That(actual.b, Is.EqualTo(raw[offset + 2]));
+                    }
+            }
+            finally { Object.Destroy(image); }
+        }
+
+        [UnityTest]
         public IEnumerator AppliesRequestSunOnlyDuringRenderAndRestoresTheDisplayLight()
         {
+            var rasterObject = new GameObject("Capture raster test");
+            rasterObject.SetActive(false);
+            _owned.Add(rasterObject);
+            var raster = rasterObject.AddComponent<NasaGibsRasterController>();
+            _renderer.Configure(_rig, _reference, _light, raster);
+            FieldInfo overrideField = typeof(NasaGibsRasterController).GetField("_captureSunDirection", BindingFlags.NonPublic | BindingFlags.Instance);
+            SetField("stableFramesRequired", 5);
+            bool overrideDuringRender = false;
             RenderRequest request = Request(withSun: true);
             Quaternion original = _light.transform.rotation;
             Vector3? duringRender = null;
             Camera.CameraCallback callback = camera =>
             {
-                if (camera == _rig.RequestCamera) duringRender = _light.transform.forward;
+                if (camera == _rig.RequestCamera)
+                {
+                    duringRender = _light.transform.forward;
+                    overrideDuringRender = overrideField.GetValue(raster) != null;
+                }
             };
             Camera.onPreRender += callback;
             try
             {
                 Task<ImageFrame> task = _renderer.RenderAsync(request, CancellationToken.None);
+                yield return null;
+                yield return null;
+                Assert.That(task.IsCompleted, Is.False);
+                Assert.That(overrideField.GetValue(raster), Is.Null, "Live night-side shading must not change during tile waiting");
+                Assert.That(Quaternion.Angle(_light.transform.rotation, original), Is.LessThan(0.01));
                 yield return Wait(task);
+                Assert.That(overrideDuringRender, Is.True);
+                Assert.That(overrideField.GetValue(raster), Is.Null);
                 Assert.That(task.GetAwaiter().GetResult().Request.HasSunPosition, Is.True);
                 Assert.That(duringRender.HasValue, Is.True);
                 double3 local = _reference.TransformEarthCenteredEarthFixedDirectionToUnity(new double3(1, 2, 3));
@@ -123,9 +175,9 @@ namespace Argus.Simulation.Tests
                 yield return null;
                 Assert.That(active.IsCompleted, Is.False);
                 CesiumCameraManager manager = _world.GetComponent<CesiumCameraManager>();
-                Assert.That(manager.useMainCamera, Is.False);
-                Assert.That(manager.additionalCameras.Count, Is.EqualTo(1));
-                Assert.That(manager.additionalCameras[0], Is.SameAs(_rig.RequestCamera));
+                Assert.That(manager.useMainCamera, Is.True);
+                Assert.That(manager.additionalCameras, Has.Member(_rig.RequestCamera));
+                foreach (Camera view in _rig.Cameras) Assert.That(manager.additionalCameras, Has.Member(view));
                 cancellation.Cancel();
                 yield return Wait(active);
                 Assert.That(active.IsCanceled, Is.True);
@@ -160,70 +212,72 @@ namespace Argus.Simulation.Tests
         }
 
         [UnityTest]
-        public IEnumerator StepLoopYieldsUntilRenderTasksFinishThenCanPublishOnTheNextStep()
+        public IEnumerator QueuedCancellationCompletesBeforeTheActiveCapture()
         {
-            var source = _simulation.AddComponent<AnalyticStateSource>();
-            var runner = _simulation.AddComponent<SimulationRunner>();
-            runner.Configure(source);
-            runner.ConfigureImageRenderer(_renderer);
-            runner.IsRunning = false;
-            var camera = new SmallCamera(_renderer);
-            var manager = new SensorManager();
-            manager.Register(camera);
-            SensorOutputSet output = null;
-            bool initialized = false;
-            runner.StateProduced += state =>
+            SetField("stableFramesRequired", int.MaxValue);
+            Task<ImageFrame> active = _renderer.RenderAsync(Request(), CancellationToken.None);
+            yield return null;
+            using (var cancellation = new CancellationTokenSource())
             {
-                if (!initialized)
-                {
-                    manager.Reset(new SensorResetContext(state.RunId, state.Spacecraft.TimestampUtc, 0));
-                    initialized = true;
-                }
-                output = manager.Sample(new SensorSampleContext(state.RunId, state));
-            };
-            Assert.That(runner.StepOnce(), Is.True);
-            Assert.That(camera.PendingExposureCount, Is.EqualTo(1));
-            Assert.That(runner.IsWaitingForRenderer, Is.True);
-            Assert.That(runner.StepOnce(), Is.False);
-            Assert.That(runner.LastState.Spacecraft.Sequence, Is.EqualTo(0));
-            for (int frame = 0; frame < 180 && _renderer.IsRendering; frame++) yield return null;
-            Assert.That(runner.IsWaitingForRenderer, Is.False);
-            Assert.That(camera.PendingExposureCount, Is.EqualTo(1), "Publishing still needs another sample call");
-            Assert.That(runner.StepOnce(), Is.True);
-            Assert.That(runner.LastState.Spacecraft.Sequence, Is.EqualTo(1));
-            Assert.That(output.TryGetFrame("cam.test", out SensorFrame<ImageFrame> image), Is.True);
-            Assert.That(image.Status, Is.EqualTo(SensorFrameStatus.Valid));
-            Assert.That(image.StateSequence, Is.EqualTo(0));
-            Assert.That(camera.PendingExposureCount, Is.Zero);
+                Task<ImageFrame> queued = _renderer.RenderAsync(Request(), cancellation.Token);
+                cancellation.Cancel();
+                Assert.That(queued.IsCanceled, Is.True);
+                Assert.That(active.IsCompleted, Is.False);
+                Assert.That(_renderer.IsRendering, Is.True);
+            }
+            _renderer.enabled = false;
+            Assert.That(_renderer.IsRendering, Is.False);
         }
 
-        private sealed class SmallCamera : CameraModel
+        [UnityTest]
+        public IEnumerator CleanupFailureFaultsTheTaskAndStillReleasesTheTargetAndViews()
         {
-            public SmallCamera(IImageRenderer renderer)
-                : base(new SensorDefinition("cam.test", "test-camera", "camera", 1, "simulation", SensorMount.Identity, false),
-                    new CameraIntrinsics(16, 12, 10, 10, 7.5, 5.5), 0.001, double.PositiveInfinity, renderer) { }
+            _reference.SetOriginLongitudeLatitudeHeight(-105.25737, 39.736401, 2250);
+            Quaternion original = _light.transform.rotation;
+            bool restored = false;
+            Action changed = () =>
+            {
+                if (Math.Abs(_reference.longitude + 105.25737) < 1e-8)
+                {
+                    restored = true;
+                    throw new IOException("Injected origin restore failure");
+                }
+            };
+            _reference.changed += changed;
+            try
+            {
+                Task<ImageFrame> task = _renderer.RenderAsync(Request(withSun: true), CancellationToken.None);
+                yield return Wait(task);
+                Assert.That(restored, Is.True);
+                Assert.That(task.IsFaulted, Is.True, "A cleanup failure must never deliver a successful frame");
+                StringAssert.Contains("Injected origin restore failure", task.Exception.ToString());
+                Assert.That(_rig.RequestCamera.targetTexture, Is.Null);
+                Assert.That(_world.GetComponent<CesiumCameraManager>().additionalCameras, Has.No.Member(_rig.RequestCamera));
+                Assert.That(Quaternion.Angle(original, _light.transform.rotation), Is.LessThan(0.01));
+            }
+            finally { _reference.changed -= changed; }
         }
 
         [UnityTest]
         public IEnumerator LegacyExporterUsesRendererAndSavesAPngAndCaptureMetadata()
         {
-            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var source = _simulation.AddComponent<TestStateSource>();
             var runner = _simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
-            runner.IsRunning = true;
+            source.Publish(0);
             var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
             typeof(NavigationEpisodeExporter).GetField("captureAllCameras", BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(exporter, false);
             typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(exporter, "unity4-test-" + Guid.NewGuid().ToString("N"));
             Assert.That(exporter.RequestCapture(), Is.True);
-            Assert.That(runner.IsRunning, Is.False);
+            Assert.That(runner.HasState, Is.True);
             try
             {
                 for (int frame = 0; frame < 180 && exporter.IsCaptureInProgress; frame++) yield return null;
                 Assert.That(exporter.IsCaptureInProgress, Is.False);
                 Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"));
-                Assert.That(runner.IsRunning, Is.True);
+                Assert.That(runner.HasState, Is.True);
                 string[] images = Directory.GetFiles(exporter.EpisodeDirectory, "*.png");
                 Assert.That(images.Length, Is.EqualTo(1));
                 byte[] png = File.ReadAllBytes(images[0]);
@@ -241,10 +295,10 @@ namespace Argus.Simulation.Tests
         [UnityTest]
         public IEnumerator RetryingAPartialCaptureDoesNotOverwriteSavedImagesOrDuplicatePaths()
         {
-            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var source = _simulation.AddComponent<TestStateSource>();
             var runner = _simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
-            runner.IsRunning = false;
+            source.Publish(0);
             var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
             typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(exporter, "unity4-retry-test-" + Guid.NewGuid().ToString("N"));
@@ -297,10 +351,10 @@ namespace Argus.Simulation.Tests
         [UnityTest]
         public IEnumerator FullResolutionCaptureSavesFourNativeSizeBodyImages()
         {
-            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var source = _simulation.AddComponent<TestStateSource>();
             var runner = _simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
-            runner.IsRunning = false;
+            source.Publish(0);
             var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
             typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(exporter, "unity4-full-test-" + Guid.NewGuid().ToString("N"));
@@ -326,6 +380,75 @@ namespace Argus.Simulation.Tests
             {
                 if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
             }
+        }
+
+        [UnityTest]
+        public IEnumerator NonDefaultCoreProfilesDrivePreviewAndNativeCaptureWithoutDuplicatedCalibration()
+        {
+            var devices = new List<DeviceConfiguration>();
+            string[] ids = { "cam.px", "cam.mx", "cam.py", "cam.my" };
+            for (int i = 0; i < ids.Length; i++)
+            {
+                var k = new CameraIntrinsics(96 + i * 8, 64, 80 + i, 90 + i, 41 + i, 29 + i);
+                var profile = new CameraProfile("calibration-" + i, k, "test-calibration", true,
+                    CameraDistortion.Zero("test"), CameraProfile.NoNoise, 0.003,
+                    new CameraExtrinsicsProvenance("test", "com", true));
+                devices.Add(CameraKind.Instance.Configure(
+                    new SensorDefinition(ids[i], "calibrated-camera", ids[i], 1, "argus", SensorMount.Identity, false), profile));
+            }
+            devices.Reverse(); // Slot identity must not depend on configuration order.
+            _rig.ConfigureBodyCameras(devices);
+            Assert.That(_rig.Cameras[0].fieldOfView,
+                Is.EqualTo(2 * Math.Atan(64.0 / 180) * 180 / Math.PI).Within(1e-4));
+            var source = _simulation.AddComponent<TestStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            source.Publish(0);
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            try
+            {
+                Assert.That(exporter.RequestFullResolutionCapture(), Is.True);
+                for (int frame = 0; frame < 180 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                string[] rows = File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl"));
+                Assert.That(rows.Length, Is.EqualTo(4));
+                for (int i = 0; i < rows.Length; i++)
+                {
+                    SavedCapture row = JsonUtility.FromJson<SavedCapture>(rows[i]);
+                    Assert.That(row.image_width_px, Is.EqualTo(96 + i * 8));
+                    Assert.That(row.image_height_px, Is.EqualTo(64));
+                    Assert.That(row.fy_px, Is.EqualTo(90 + i));
+                    Assert.That(row.rendered_cx_px, Is.EqualTo(41 + i));
+                    Assert.That(row.rendered_cy_px, Is.EqualTo(29 + i));
+                    Assert.That(row.exposure_duration_s, Is.EqualTo(0.003));
+                }
+            }
+            finally { if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true); }
+        }
+
+        [UnityTest]
+        public IEnumerator ExportWriteFailureReportsItsErrorAndReleasesThePresentationHold()
+        {
+            var source = _simulation.AddComponent<TestStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            source.Publish(0);
+            var pose = _rig.gameObject.AddComponent<CesiumSpacecraftPoseDriver>();
+            pose.Configure(runner, _rig.GetComponent<CesiumGlobeAnchor>());
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            string file = Path.GetTempFileName();
+            typeof(NavigationEpisodeExporter).GetField("_episodeDirectory", BindingFlags.NonPublic | BindingFlags.Instance)
+                .SetValue(exporter, file); // A regular file cannot be used as the PNG output directory.
+            LogAssert.Expect(LogType.Exception, new System.Text.RegularExpressions.Regex("(DirectoryNotFoundException|IOException)"));
+            try
+            {
+                Assert.That(exporter.RequestCapture(), Is.True);
+                for (int frame = 0; frame < 180 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("EXPORT ERROR"));
+                Assert.That(exporter.LastCaptureError, Is.Not.Empty);
+                Assert.That(pose.IsHeld, Is.False);
+            }
+            finally { File.Delete(file); }
         }
 
         private static int ReadPngInteger(byte[] png, int start) =>
@@ -388,50 +511,43 @@ namespace Argus.Simulation.Tests
         }
 
         [UnityTest]
-        public IEnumerator DashboardPauseKeepsPreviewAndFullResolutionAtTheSameState()
+        public IEnumerator HostKeepsStreamingWhileAnExistingHoldPreservesBothCaptures()
         {
-            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var source = _simulation.AddComponent<TestStateSource>();
             var runner = _simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
+            var pose = _rig.gameObject.AddComponent<CesiumSpacecraftPoseDriver>();
+            pose.Configure(runner, _rig.GetComponent<CesiumGlobeAnchor>());
+            SimulationState held = source.Publish(0);
+            pose.Hold(held);
             var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
             typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
-                .SetValue(exporter, "unity4-paused-test-" + Guid.NewGuid().ToString("N"));
-            var dashboardObject = new GameObject("Pause acceptance dashboard");
-            _owned.Add(dashboardObject);
-            var dashboard = dashboardObject.AddComponent<SimulatorDashboard>();
-            // Dashboard creates this outside its own hierarchy.
-            var pauseText = (UnityEngine.UI.Text)typeof(SimulatorDashboard)
-                .GetField("_pauseButtonText", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(dashboard);
-            _owned.Add(pauseText.canvas.gameObject);
-            _owned.Add(GameObject.Find("Orbit Visualization"));
-            runner.IsRunning = true;
-            pauseText.GetComponentInParent<UnityEngine.UI.Button>().onClick.Invoke();
-            Assert.That(runner.IsRunning, Is.False);
-            Assert.That(runner.StepOnce(), Is.True);
-            SpacecraftState paused = runner.LastState.Spacecraft;
+                .SetValue(exporter, "unity4-held-test-" + Guid.NewGuid().ToString("N"));
             try
             {
                 Assert.That(exporter.RequestCapture(), Is.True);
+                source.Publish(100);
                 for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
                 Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
-                Assert.That(runner.IsRunning, Is.False);
+                Assert.That(pose.IsHeld, Is.True, "A capture must preserve an existing presentation hold");
+                Assert.That(runner.LastState.Spacecraft.Sequence, Is.EqualTo(100));
                 Assert.That(exporter.RequestFullResolutionCapture(), Is.True);
+                source.Publish(200);
                 for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
                 Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
-                Assert.That(runner.IsRunning, Is.False);
-                Assert.That(runner.LastState.Spacecraft.Sequence, Is.EqualTo(paused.Sequence));
+                Assert.That(runner.LastState.Spacecraft.Sequence, Is.EqualTo(200));
                 string[] rows = File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl"));
                 Assert.That(rows.Length, Is.EqualTo(9));
                 foreach (string json in rows)
                 {
                     SavedCapture row = JsonUtility.FromJson<SavedCapture>(json);
-                    Assert.That(row.sequence, Is.EqualTo(paused.Sequence));
-                    Assert.That(row.simulation_time_seconds, Is.EqualTo(paused.SimulationTimeSeconds));
-                    Assert.That(row.timestamp_utc, Is.EqualTo(paused.TimestampUtc.ToString("O")));
+                    Assert.That(row.sequence, Is.EqualTo(held.Spacecraft.Sequence));
+                    Assert.That(row.simulation_time_seconds, Is.EqualTo(held.Spacecraft.SimulationTimeSeconds));
                 }
             }
             finally
             {
+                pose.Release();
                 if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true);
             }
         }
@@ -476,18 +592,21 @@ namespace Argus.Simulation.Tests
 
         private IEnumerator CheckManualCaptureMetadata(bool fullResolution)
         {
-            var source = _simulation.AddComponent<AnalyticStateSource>();
+            var source = _simulation.AddComponent<TestStateSource>();
             var runner = _simulation.AddComponent<SimulationRunner>();
             runner.Configure(source);
-            runner.IsRunning = false;
+            source.Publish(0);
             var anchor = _rig.GetComponent<CesiumGlobeAnchor>();
             var poseDriver = _rig.gameObject.AddComponent<CesiumSpacecraftPoseDriver>();
             poseDriver.Configure(runner, anchor);
-            // Exercise the same source/pose operations as Dashboard phase, altitude and P/Y/R.
-            source.PhaseDegrees = 15;
-            source.AltitudeMeters = 550000;
-            Assert.That(runner.StepOnce(), Is.True);
-            poseDriver.NudgeAttitude(new Vector3(20, 30, 40));
+            source.Publish(OrbitState(15, 550000, 10));
+            poseDriver.Hold(runner.LastState);
+            _rig.transform.localRotation *= Quaternion.Euler(20, 30, 40);
+            anchor.Sync();
+            // A manual altitude edit changes the rendered position without changing host truth.
+            double3 manualPosition = anchor.positionGlobeFixed;
+            anchor.positionGlobeFixed = manualPosition + math.normalize(manualPosition) * 25000;
+            Assert.That(math.distance(anchor.positionGlobeFixed, manualPosition), Is.EqualTo(25000).Within(1e-6));
             _rig.Cameras[0].fieldOfView = 47;
             _rig.Cameras[0].transform.localPosition += new Vector3(0.02f, 0.03f, 0.04f);
             _rig.Cameras[0].transform.localRotation *= Quaternion.Euler(3, 5, 7);
@@ -535,9 +654,9 @@ namespace Argus.Simulation.Tests
             {
                 Assert.That(fullResolution ? exporter.RequestFullResolutionCapture() : exporter.RequestCapture(), Is.True);
                 // Edits during tile waiting must not alter any view in this already-started capture.
-                source.PhaseDegrees = 45;
-                source.AltitudeMeters = 600000;
-                poseDriver.NudgeAttitude(new Vector3(-10, 15, -20));
+                source.Publish(OrbitState(45, 600000, 20));
+                _rig.transform.localRotation *= Quaternion.Euler(-10, 15, -20);
+                anchor.Sync();
                 _rig.Cameras[0].fieldOfView = 65;
                 for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
                 Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
@@ -547,20 +666,22 @@ namespace Argus.Simulation.Tests
                 for (int i = 0; i < count; i++)
                 {
                     SavedCapture row = JsonUtility.FromJson<SavedCapture>(rows[i]);
-                    Assert.That(row.metadata_version, Is.EqualTo(2));
+                    Assert.That(row.metadata_version, Is.EqualTo(3));
                     Assert.That(row.sequence, Is.EqualTo(sourceState.Sequence));
                     Assert.That(row.simulation_time_seconds, Is.EqualTo(sourceState.SimulationTimeSeconds));
                     Assert.That(row.timestamp_utc, Is.EqualTo(sourceState.TimestampUtc.ToString("O")));
-                    AssertVector(row.position_ecef_m, new Vector3d(expectedPosition.x, expectedPosition.y, expectedPosition.z), 0.001);
+                    AssertVector(row.position_ecef_m, sourceState.PositionEcefMeters, 1e-8);
+                    AssertVector(row.rendered_position_ecef_m, new Vector3d(expectedPosition.x, expectedPosition.y, expectedPosition.z), 0.001);
                     AssertVector(row.source_position_ecef_m, sourceState.PositionEcefMeters, 0.001);
-                    Quaterniond body = ReadQuaternion(row.rotation_body_to_ecef_xyzw);
+                    Quaterniond body = ReadQuaternion(row.rendered_rotation_body_to_ecef_xyzw);
+                    Assert.That(ReadQuaternion(row.rotation_body_to_ecef_xyzw).X, Is.EqualTo(sourceState.BodyToEcef.X).Within(1e-10));
                     AssertVector(new[] { body.X, body.Y, body.Z }, new Vector3d(expectedBody.X, expectedBody.Y, expectedBody.Z), 1e-6);
                     Assert.That(body.W, Is.EqualTo(expectedBody.W).Within(1e-6));
                     Quaterniond engineBody = ReadQuaternion(row.source_rotation_body_to_ecef_xyzw);
                     Assert.That(engineBody.X, Is.EqualTo(sourceState.BodyToEcef.X).Within(1e-10));
                     Vector3d rateInEcef = sourceState.BodyToEcef.Rotate(sourceState.AngularVelocityBodyRadiansPerSecond);
-                    Vector3d savedRate = new Vector3d(row.angular_velocity_body_truth_rad_per_s[0],
-                        row.angular_velocity_body_truth_rad_per_s[1], row.angular_velocity_body_truth_rad_per_s[2]);
+                    Vector3d savedRate = new Vector3d(row.rendered_angular_velocity_body_rad_per_s[0],
+                        row.rendered_angular_velocity_body_rad_per_s[1], row.rendered_angular_velocity_body_rad_per_s[2]);
                     AssertVector(row.source_angular_velocity_body_truth_rad_per_s, sourceState.AngularVelocityBodyRadiansPerSecond, 1e-10);
                     Vector3d savedRateInEcef = body.Rotate(savedRate);
                     Assert.That((savedRateInEcef - rateInEcef).Magnitude, Is.LessThan(1e-8));
@@ -580,7 +701,9 @@ namespace Argus.Simulation.Tests
                         row.camera_position_ecef_m[0], row.camera_position_ecef_m[1], row.camera_position_ecef_m[2]));
                     Vector3 worldPosition = _reference.transform.TransformPoint(new Vector3((float)local.x, (float)local.y, (float)local.z));
                     Assert.That(Vector3.Distance(worldPosition, renderedPositions[i]), Is.LessThan(0.01));
-                    Assert.That(row.exposure_duration_s, Is.Zero);
+                    Assert.That(row.exposure_duration_s, Is.EqualTo(i < 4 ? _rig.BodyCameraProfile(i).ExposureDurationSeconds : 0));
+                    Assert.That(row.cx_px, Is.EqualTo(row.rendered_cx_px + 0.5));
+                    Assert.That(row.cy_px, Is.EqualTo(row.rendered_cy_px + 0.5));
                     Assert.That(row.has_sun_position, Is.False);
                     Assert.That(row.renderer, Is.Not.Empty);
                     Assert.That(row.image_width_px, Is.EqualTo(fullResolution ? 4608 : 768));
@@ -590,8 +713,8 @@ namespace Argus.Simulation.Tests
                 }
 
                 // The next capture must take fresh state after new orbit edits and a pose reset.
-                poseDriver.ResetManualAttitude();
-                Assert.That(runner.StepOnce(), Is.True);
+                poseDriver.Release();
+                poseDriver.Hold(runner.LastState);
                 SpacecraftState nextState = runner.LastState.Spacecraft;
                 Assert.That((nextState.PositionEcefMeters - sourceState.PositionEcefMeters).Magnitude, Is.GreaterThan(1000));
                 Assert.That(fullResolution ? exporter.RequestFullResolutionCapture() : exporter.RequestCapture(), Is.True);
@@ -627,7 +750,10 @@ namespace Argus.Simulation.Tests
             public string timestamp_utc;
             public int image_width_px;
             public int image_height_px;
-            public double fy_px;
+            public double fy_px, cx_px, cy_px, rendered_cx_px, rendered_cy_px;
+            public double[] rendered_position_ecef_m;
+            public double[] rendered_rotation_body_to_ecef_xyzw;
+            public double[] rendered_angular_velocity_body_rad_per_s;
             public double[] position_ecef_m;
             public double[] rotation_body_to_ecef_xyzw;
             public double[] angular_velocity_body_truth_rad_per_s;
@@ -640,6 +766,14 @@ namespace Argus.Simulation.Tests
             public double exposure_duration_s;
             public string renderer;
             public bool has_sun_position;
+        }
+
+        private static SimulationState OrbitState(double phase, double altitude, long sequence)
+        {
+            var engine = new AnalyticSimulationEngine(altitude, 51.6, 0, phase);
+            engine.Initialize(new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, 0.1));
+            Assert.That(engine.TrySample(sequence, sequence * 0.1, out SimulationState state), Is.True);
+            return state;
         }
 
         private static Quaterniond ReadQuaternion(double[] values) =>

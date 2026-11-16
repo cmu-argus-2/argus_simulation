@@ -2,7 +2,7 @@ namespace Argus.Simulation.Core
 {
     // Gyroscope half of an ImuProfile. Output is scale x (true + noise + bias), quantised, then
     // clipped. Comments name the Basilisk imuSensor attribute each field sets; the service rejects
-    // combinations Basilisk 2.11.1 cannot represent (see Argus.Basilisk/README.md).
+    // combinations Basilisk's imuSensor cannot represent (see Argus.Basilisk/README.md).
     public readonly struct GyroscopeProfile
     {
         public GyroscopeProfile(
@@ -41,7 +41,8 @@ namespace Argus.Simulation.Core
         // senRotMax, symmetric on every axis.
         public double RangeRadiansPerSecond { get; }
 
-        // Second argument of setLSBs; 0 means no quantisation.
+        // Second argument of setLSBs; 0 means no quantisation. Basilisk truncates toward zero, so a
+        // rate within one LSB of 0 reads 0 (Argus.Basilisk/README.md §9).
         public double ResolutionRadiansPerSecond { get; }
 
         public bool IsValid =>
