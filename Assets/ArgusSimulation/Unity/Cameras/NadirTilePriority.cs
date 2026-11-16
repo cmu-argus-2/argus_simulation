@@ -14,7 +14,7 @@ namespace Argus.Simulation.Unity
     // views it loads for:
     // - A hidden look-ahead camera streams tiles where the nadir camera will be a few wall-clock
     //   seconds from now, at the rate the host's run advances (SimulationRunner.SimulationRate).
-    // - After a jump (the first state of a run or subscription) only the nadir and look-ahead views
+    // - After a jump (the first state of a new run) only the nadir and look-ahead views
     //   are registered until they have loaded, then every other view is restored. The host owns the
     //   run, so this never holds it: the nadir view only loads first.
     [DisallowMultipleComponent]
@@ -89,7 +89,7 @@ namespace Argus.Simulation.Unity
         }
 
         // Loads the nadir view before every other view, from the next state on. Called on start and
-        // on every jump in position (a new run or subscription).
+        // on every jump in position (a new run).
         public void RequestWarmUp()
         {
             if (!isActiveAndEnabled || _runner == null || _cameraManager == null ||
@@ -113,6 +113,12 @@ namespace Argus.Simulation.Unity
             while (!_runner.HasState)
             {
                 WarmUpProgress = 0f;
+                yield return null;
+            }
+
+            // A capture holds the pose and needs every view it saves loaded; defer after it ends.
+            while (_pose != null && _pose.IsHeld)
+            {
                 yield return null;
             }
 

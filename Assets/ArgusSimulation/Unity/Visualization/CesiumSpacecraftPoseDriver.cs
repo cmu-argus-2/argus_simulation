@@ -8,10 +8,10 @@ namespace Argus.Simulation.Unity
     // Places the CubeSat at the host's truth pose. The stream is decimated (CON-1), so the pose is
     // interpolated between the last two received states, one arrival interval behind the latest:
     // at each arrival it starts from the previous state and reaches the new one after the interval
-    // they arrived apart. Published states are never changed. After a gap longer than
-    // MaximumInterpolationGapSeconds (a reconnect) it jumps to the new state rather than gliding
-    // across the gap. Hold shows one state exactly, for a capture whose images must match its
-    // metadata.
+    // they arrived apart. Published states are never changed. After a gap more than JumpFactor times
+    // the previous one (a reconnect, a stalled host) it jumps to the new state rather than gliding
+    // across the gap; the threshold follows the stream's own cadence, so a steady stream glides at
+    // any rate. Hold shows one state exactly, for a capture whose images must match its metadata.
     [RequireComponent(typeof(CesiumGlobeAnchor))]
     public sealed class CesiumSpacecraftPoseDriver : MonoBehaviour
     {
@@ -19,13 +19,15 @@ namespace Argus.Simulation.Unity
         [SerializeField] private CesiumGlobeAnchor globeAnchor;
         [SerializeField] private bool applyAttitude = true;
 
-        private const double MaximumInterpolationGapSeconds = 1.0;
+        private const double JumpFactor = 3.0;
 
         private SpacecraftState _from;
         private SpacecraftState _to;
         private double _fromArrivalSeconds;
         private double _toArrivalSeconds;
         private int _received;
+        private double _previousIntervalSeconds;
+        private bool _jumps;
         private bool _isHeld;
 
         public bool IsHeld => _isHeld;
@@ -95,7 +97,7 @@ namespace Argus.Simulation.Unity
             }
 
             double interval = _toArrivalSeconds - _fromArrivalSeconds;
-            if (interval > MaximumInterpolationGapSeconds)
+            if (_jumps)
             {
                 Apply(_to.PositionEcefMeters, _to.BodyToEcef);
                 return;
@@ -116,11 +118,19 @@ namespace Argus.Simulation.Unity
             _to = state.Spacecraft;
             _toArrivalSeconds = Time.realtimeSinceStartupAsDouble;
             _received = Mathf.Min(_received + 1, 2);
+            if (_received == 2)
+            {
+                double interval = _toArrivalSeconds - _fromArrivalSeconds;
+                _jumps = _previousIntervalSeconds > 0.0 && interval > JumpFactor * _previousIntervalSeconds;
+                _previousIntervalSeconds = interval;
+            }
         }
 
         private void ClearHistory()
         {
             _received = 0;
+            _previousIntervalSeconds = 0.0;
+            _jumps = false;
         }
 
         private void Apply(Vector3d position, Quaterniond bodyToEcef)

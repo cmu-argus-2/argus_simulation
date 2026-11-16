@@ -144,6 +144,14 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
+            // A warm-up takes the non-nadir views away from Cesium, so they would be saved unloaded.
+            NadirTilePriority nadir = cameraRig.GetComponent<NadirTilePriority>();
+            if (nadir != null && nadir.IsWarmingUp)
+            {
+                SetCaptureStatus("WAIT: NADIR");
+                return false;
+            }
+
             StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
             return true;
         }

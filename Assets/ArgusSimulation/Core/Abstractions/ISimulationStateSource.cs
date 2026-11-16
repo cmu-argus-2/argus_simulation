@@ -9,8 +9,9 @@ namespace Argus.Simulation.Core
     {
         event Action<SimulationState> StateProduced;
 
-        // Raised before the first state of a new run or subscription, whose sequence may restart:
-        // consumers clear interpolation and history built from earlier states.
+        // Raised before the first state of a new run (a new run_generation on the stream), whose
+        // sequence may restart: consumers clear interpolation and history built from earlier states.
+        // A reconnect to the same run continues it.
         event Action HistoryReset;
     }
 }

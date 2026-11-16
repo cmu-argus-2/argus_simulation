@@ -24,7 +24,7 @@ namespace Argus.Simulation.Unity
 
         public event Action<SimulationState> StateProduced;
 
-        // Raised before the first state of a new run or subscription: clear interpolation and history.
+        // Raised before the first state of a new run (run_generation): clear interpolation and history.
         public event Action HistoryReset;
 
         public bool HasState { get; private set; }

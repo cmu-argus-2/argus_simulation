@@ -8,7 +8,8 @@ namespace Argus.Simulation.Unity
     // Draws the track the spacecraft has flown, from the states received from the host: the run
     // cannot be sampled ahead in Unity (G2). It keeps one Earth-fixed position per
     // sampleSpacingSeconds of simulated time, the last sampleCount of them (about 100 minutes, an
-    // orbit, by default), and clears them on a new run. A predicted track sent by the host is
+    // orbit, by default), plus the latest received position as a moving end point, so the line
+    // reaches the CubeSat. It clears them on a new run. A predicted track sent by the host is
     // UNITY-8 (#62).
     [DisallowMultipleComponent]
     public sealed class OrbitTrailRenderer : MonoBehaviour
@@ -24,6 +25,8 @@ namespace Argus.Simulation.Unity
         private int _count;
         private int _next;
         private double _lastSampleSeconds;
+        private Vector3d _latestEcef;
+        private bool _hasLatest;
         private bool _isDirty;
 
         public int PointCount => _count;
@@ -77,21 +80,33 @@ namespace Argus.Simulation.Unity
             }
 
             EnsureLineRenderer();
-            _lineRenderer.positionCount = _count;
+            _lineRenderer.positionCount = _count + (_hasLatest ? 1 : 0);
             int oldest = _count < _positionsEcef.Length ? 0 : _next;
             for (int index = 0; index < _count; index++)
             {
-                Vector3d ecef = _positionsEcef[(oldest + index) % _positionsEcef.Length];
-                double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
-                    new double3(ecef.X, ecef.Y, ecef.Z));
-                _lineRenderer.SetPosition(index, new Vector3((float)unity.x, (float)unity.y, (float)unity.z));
+                SetPoint(index, _positionsEcef[(oldest + index) % _positionsEcef.Length]);
+            }
+
+            if (_hasLatest)
+            {
+                SetPoint(_count, _latestEcef);
             }
 
             _isDirty = false;
         }
 
+        private void SetPoint(int index, Vector3d ecef)
+        {
+            double3 unity = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(
+                new double3(ecef.X, ecef.Y, ecef.Z));
+            _lineRenderer.SetPosition(index, new Vector3((float)unity.x, (float)unity.y, (float)unity.z));
+        }
+
         private void HandleState(SimulationState state)
         {
+            _latestEcef = state.Spacecraft.PositionEcefMeters;
+            _hasLatest = true;
+            _isDirty = true;
             double time = state.Spacecraft.SimulationTimeSeconds;
             if (_count > 0 && time - _lastSampleSeconds < sampleSpacingSeconds)
             {
@@ -109,6 +124,7 @@ namespace Argus.Simulation.Unity
         {
             _count = 0;
             _next = 0;
+            _hasLatest = false;
             _isDirty = true;
         }
 

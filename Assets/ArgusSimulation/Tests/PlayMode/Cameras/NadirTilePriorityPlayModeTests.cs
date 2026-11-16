@@ -35,7 +35,7 @@ namespace Argus.Simulation.Tests
             LogAssert.NoUnexpectedReceived();
         }
 
-        // The host owns the run, so a new run or subscription jumps the pose: the nadir view loads
+        // The host owns the run, so a new run jumps the pose: the nadir view loads
         // first again, without holding anything.
         [UnityTest]
         public IEnumerator ANewRunWarmsUpTheNadirViewAgain()

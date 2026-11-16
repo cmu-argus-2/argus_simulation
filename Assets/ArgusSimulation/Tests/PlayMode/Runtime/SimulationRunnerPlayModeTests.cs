@@ -58,8 +58,99 @@ namespace Argus.Simulation.Tests
             LogAssert.NoUnexpectedReceived();
         }
 
+        // The jump threshold follows the stream's cadence: a steady 1 s cadence glides every interval,
+        // and a gap five times the cadence jumps.
+        [UnityTest]
+        public IEnumerator ThePoseGlidesAtAnyCadenceAndJumpsOnlyAcrossAGap()
+        {
+            PoseScene scene = new PoseScene();
+            scene.Source.Publish(0);
+            yield return new WaitForSecondsRealtime(1.0f);
+            SimulationState second = scene.Source.Publish(10);
+            yield return new WaitForSecondsRealtime(1.0f);
+            SimulationState third = scene.Source.Publish(20);
+            yield return null;
+            // Just after the third state, a gliding pose has barely left the second.
+            double step = Distance(second.Spacecraft.PositionEcefMeters, third.Spacecraft.PositionEcefMeters);
+            Assert.That(scene.DistanceTo(second), Is.LessThan(step * 0.25));
+
+            scene.Source.ResetHistory();
+            scene.Source.Publish(0);
+            yield return new WaitForSecondsRealtime(0.2f);
+            scene.Source.Publish(10);
+            yield return new WaitForSecondsRealtime(1.0f);
+            SimulationState afterGap = scene.Source.Publish(20);
+            yield return null;
+            Assert.That(scene.DistanceTo(afterGap), Is.LessThan(1.0));
+
+            yield return scene.Destroy();
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        // A capture holds the pose at its state while states keep arriving, then the pose follows again.
+        [UnityTest]
+        public IEnumerator AHeldPoseStaysAtItsStateUntilReleased()
+        {
+            PoseScene scene = new PoseScene();
+            SimulationState held = scene.Source.Publish(0);
+            yield return null;
+            scene.Pose.Hold(held);
+            yield return new WaitForSecondsRealtime(0.2f);
+            scene.Source.Publish(10);
+            yield return new WaitForSecondsRealtime(0.2f);
+            scene.Source.Publish(20);
+            yield return new WaitForSecondsRealtime(0.3f);
+            Assert.That(scene.Pose.IsHeld, Is.True);
+            Assert.That(scene.DistanceTo(held), Is.LessThan(1.0));
+
+            scene.Pose.Release();
+            yield return new WaitForSecondsRealtime(0.3f);
+            Assert.That(scene.DistanceTo(held), Is.GreaterThan(1_000.0));
+
+            yield return scene.Destroy();
+            LogAssert.NoUnexpectedReceived();
+        }
+
         private static double Distance(Vector3d a, Vector3d b) => (a - b).Magnitude;
 
         private static double Distance(double3 a, Vector3d b) => Distance(new Vector3d(a.x, a.y, a.z), b);
+
+        // A georeference, a runner following a test source, and the CubeSat's anchor and pose driver.
+        private sealed class PoseScene
+        {
+            private readonly GameObject _world;
+            private readonly GameObject _simulation;
+            private readonly GameObject _spacecraft;
+            private readonly CesiumGlobeAnchor _anchor;
+
+            public PoseScene()
+            {
+                _world = new GameObject("Geospatial World");
+                _world.AddComponent<CesiumGeoreference>();
+                _simulation = new GameObject("Simulation");
+                Source = _simulation.AddComponent<TestStateSource>();
+                SimulationRunner runner = _simulation.AddComponent<SimulationRunner>();
+                runner.Configure(Source);
+                _spacecraft = new GameObject("CubeSat Truth Pose");
+                _spacecraft.transform.SetParent(_world.transform, false);
+                _anchor = _spacecraft.AddComponent<CesiumGlobeAnchor>();
+                Pose = _spacecraft.AddComponent<CesiumSpacecraftPoseDriver>();
+                Pose.Configure(runner, _anchor);
+            }
+
+            public TestStateSource Source { get; }
+            public CesiumSpacecraftPoseDriver Pose { get; }
+
+            public double DistanceTo(SimulationState state) =>
+                Distance(_anchor.positionGlobeFixed, state.Spacecraft.PositionEcefMeters);
+
+            public IEnumerator Destroy()
+            {
+                Object.Destroy(_spacecraft);
+                Object.Destroy(_simulation);
+                Object.Destroy(_world);
+                yield return null;
+            }
+        }
     }
 }
