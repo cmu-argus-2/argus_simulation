@@ -1,15 +1,33 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Generation/build check for Unity-compatible managed contracts; no Core or Basilisk. -->
+  <!-- Builds the Unity state-stream plugin (CON-1, UNITY-5): the generated argus.sim.v1 messages and
+       the argus.stream.v1 client, with no Core or Basilisk, plus the managed runtime they and
+       Grpc.Net.Client need under YetAnotherHttpHandler. The build copies them into the gitignored
+       Assets/ArgusSimulation/Plugins/Stream/; generated code is never committed. -->
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <IsPackable>false</IsPackable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <UnityPluginDir>$(MSBuildThisFileDirectory)../../Assets/ArgusSimulation/Plugins/Stream/</UnityPluginDir>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.36.2" />
     <PackageReference Include="Grpc.Core.Api" Version="2.84.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.84.0" />
     <PackageReference Include="Grpc.Tools" Version="2.84.0" PrivateAssets="All" />
+    <!-- YetAnotherHttpHandler's managed dependencies (its README, "Installation"). -->
+    <PackageReference Include="System.IO.Pipelines" Version="8.0.0" />
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
     <Protobuf Include="../proto/argus/sim/v1/*.proto" ProtoRoot="../proto" GrpcServices="None" />
     <Protobuf Include="../proto/argus/stream/v1/state_stream.proto" ProtoRoot="../proto" GrpcServices="Client" />
   </ItemGroup>
+  <Target Name="CopyUnityPlugin" AfterTargets="Build">
+    <!-- Unity's .NET Standard 2.1 profile already has these types; the netstandard2.0 shims that
+         NuGet brings along would collide with them. -->
+    <ItemGroup>
+      <UnityPluginAssembly Include="$(OutDir)*.dll"
+                           Exclude="$(OutDir)System.Buffers.dll;$(OutDir)System.Memory.dll;$(OutDir)System.Numerics.Vectors.dll;$(OutDir)System.Threading.Tasks.Extensions.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(UnityPluginAssembly)" DestinationFolder="$(UnityPluginDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

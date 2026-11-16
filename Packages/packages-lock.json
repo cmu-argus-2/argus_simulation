@@ -12,6 +12,13 @@
       },
       "url": "https://unity.pkg.cesium.com"
     },
+    "com.cysharp.yetanotherhttphandler": {
+      "version": "https://github.com/Cysharp/YetAnotherHttpHandler.git?path=src/YetAnotherHttpHandler#1.11.7",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "c386c1cc48d2e56711c15286cf2769353fdccf07"
+    },
     "com.unity.burst": {
       "version": "2.0.0",
       "depth": 3,
