@@ -262,6 +262,8 @@ namespace Argus.Simulation.Tests
             SimulationGateway gateway = new SimulationGateway(engine, device => SensorFactory.Create(device, renderer));
             List<Observation> terminated = new List<Observation>();
             gateway.RunTerminated += terminated.Add;
+            List<Exception> endFailures = new List<Exception>();
+            gateway.SensorEndFailed += endFailures.Add;
             gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
             gateway.Step();
             Assert.That(renderer.Tokens.Count, Is.EqualTo(2));
@@ -272,6 +274,37 @@ namespace Argus.Simulation.Tests
             Assert.That(terminated.Count, Is.EqualTo(1));
             Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
             Assert.That(renderer.Tokens[1].IsCancellationRequested, Is.True, "the render after the one whose callback threw");
+            Assert.That(endFailures.Count, Is.EqualTo(1), "the callback's failure is reported, not lost");
+            Assert.That(endFailures[0].ToString(), Does.Contain("The renderer's cancellation callback failed."));
+        }
+
+        // A camera the factory returns again for the next run is ended before it is reset, so a
+        // cancellation callback that throws is reported and the Reset still starts the new run.
+        [Test]
+        public void AReusedCameraWhoseCancellationThrowsStillResets()
+        {
+            HeldRenderer renderer = new HeldRenderer { ThrowOnCancelAt = 0 };
+            Dictionary<string, ISensor> built = new Dictionary<string, ISensor>();
+            SimulationGateway gateway = new SimulationGateway(
+                Engine(),
+                device => built.TryGetValue(device.Definition.SensorId, out ISensor sensor)
+                    ? sensor
+                    : built[device.Definition.SensorId] = SensorFactory.Create(device, renderer));
+            List<Exception> endFailures = new List<Exception>();
+            gateway.SensorEndFailed += endFailures.Add;
+            List<SensorOutputSet> outputs = new List<SensorOutputSet>();
+            gateway.SensorOutputProduced += outputs.Add;
+            gateway.Reset(0, Scenario(0.1, Camera("cam.test", isControllerVisible: false)));
+
+            Assert.DoesNotThrow(() => gateway.Reset(1, Scenario(0.1, Camera("cam.test", isControllerVisible: false))));
+
+            Assert.That(gateway.IsRunning, Is.True);
+            Assert.That(endFailures.Count, Is.EqualTo(1));
+            Assert.That(renderer.Tokens[0].IsCancellationRequested, Is.True);
+            renderer.Complete(1);
+            gateway.Step();
+            Assert.That(outputs[outputs.Count - 1].TryGetFrame("cam.test", out SensorFrame<ImageFrame> frame), Is.True);
+            Assert.That((frame.Sequence, frame.Status), Is.EqualTo((0L, SensorFrameStatus.Valid)));
         }
 
         // A finished run raises no RunTerminated, since nothing went wrong, and takes no more commands.

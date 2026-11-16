@@ -88,7 +88,9 @@ namespace Argus.Simulation.Core
         }
 
         // Cancels pending exposures without publishing them. A reset has no output path, and the
-        // frames belong to the run directory the reset just ended (G3).
+        // frames belong to the run directory the reset just ended (G3). If a cancellation throws, the
+        // camera is still reset and Reset then throws it. The gateway ends a camera before resetting
+        // it, so there it has nothing pending and the failure is reported as SensorEndFailed.
         protected override void OnReset(SensorResetContext context) => AbandonPending();
 
         // The run ended (a stop, a backend failure, Finish, or a Reset that replaces this camera):
