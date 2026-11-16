@@ -29,6 +29,8 @@ namespace Argus.Simulation.Core
         private ImuKind()
             : base(
                 KindName,
+                // A measured rate and specific force carry no truth, so a controller sees them as they are.
+                ControllerProjection.Identity<ImuMeasurement>(),
                 new[]
                 {
                     new DeviceKey(AngularVelocity, DeviceValueType.Vector3),

@@ -166,13 +166,13 @@ namespace Argus.Simulation.Tests
         private static DeviceConfiguration Imu(string sensorId, double samplePeriodSeconds)
         {
             return ImuKind.Instance.Configure(
-                new SensorDefinition(sensorId, "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity),
+                new SensorDefinition(sensorId, "test-imu", "imu_main", samplePeriodSeconds, "basilisk", SensorMount.Identity, isControllerVisible: true),
                 TestImu.Profile());
         }
 
         private static DeviceConfiguration Camera(string sensorId, double samplePeriodSeconds) =>
             CameraKind.Instance.Configure(
-                new SensorDefinition(sensorId, "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity),
+                new SensorDefinition(sensorId, "test-camera", "cam_px", samplePeriodSeconds, "argus", SensorMount.Identity, isControllerVisible: true),
                 TestCameras.Profile(new CameraIntrinsics(4, 2, 3.0, 3.0, 2.0, 1.0), 0.0005));
 
         private static BasiliskStepState Step(long nanoseconds, Mrp sigmaBN, Vector3d omegaBNBody, params BasiliskSensorSample[] samples)

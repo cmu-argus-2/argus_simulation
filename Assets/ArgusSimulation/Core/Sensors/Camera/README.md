@@ -1,6 +1,6 @@
 # Core/Sensors/Camera — camera sensor models
 
-**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** `CameraModel` base implemented (CORE-3); `BodyCameraModel` built from the run configuration (CORE-18), with the four P0 body cameras and their DATA-6 profile (CORE-6); `NadirGroundTruthCameraModel` built from the run configuration (CORE-8)
+**Diagram block:** Sensor models · **Assembly:** `Argus.Simulation.Core` · **Status:** `CameraModel` base implemented (CORE-3); `BodyCameraModel` built from the run configuration (CORE-18), with the four P0 body cameras and their DATA-6 profile (CORE-6); `NadirGroundTruthCameraModel` built from the run configuration (CORE-8); `CameraControllerProjection` gives a controller a camera frame without its pose (CORE-23)
 
 Cameras are Core sensor models; Unity only renders (decision D5 in
 [target-architecture.md](../../../../../docs/target-architecture.md)).
@@ -19,14 +19,13 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   device configuration, whose parameters read into a `CameraProfile` (CORE-18, CORE-6).
   Cameras are computed by Argus, so they are never sent to Basilisk. The renderer comes from
   the host or Unity; `headless/Host` has none yet, so its camera frames are `Unavailable`. A
-  camera frame carries the true camera pose, so a run may not make a camera
-  controller-visible (`IDeviceKind.MayBeControllerVisible`, D7). The four body cameras stay
-  non-visible; a controller-safe camera observation without pose is CORE-23 (#125,
-  `TODO(D7)`). `runs/p0-default.json` configures them as `cam.px`, `cam.py`, `cam.mx` and
-  `cam.my` (flight's cam1–cam4, ids 0–3) with the DATA-6 profile and mounts, sampled every
-  15 s, flight's capture interval. Their exposure is 0.5 ms, the driver's minimum: a v0
-  estimate for sunlit Earth, where flight uses auto exposure between 0.5 and 65.5 ms (#42
-  comment, 27 Oct).
+  camera frame carries the true camera pose and Sun, so a controller sees a visible camera
+  only through `CameraControllerProjection` (below, D7). The four body cameras stay
+  non-visible in P0; a run file opts a camera in. `runs/p0-default.json` configures them as
+  `cam.px`, `cam.py`, `cam.mx` and `cam.my` (flight's cam1–cam4, ids 0–3) with the DATA-6
+  profile and mounts, sampled every 15 s, flight's capture interval. Their exposure is 0.5 ms,
+  the driver's minimum: a v0 estimate for sunlit Earth, where flight uses auto exposure
+  between 0.5 and 65.5 ms (#42 comment, 27 Oct).
 - `NadirGroundTruthCameraModel` (CORE-8): the north-up nadir ground-truth camera.
   `NadirGroundTruthCameraKind` builds it from a `nadir_ground_truth_camera` device
   configuration with the same DATA-6 parameters as a `camera`, and its own profile ID (for
@@ -38,8 +37,29 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   centred on that point. Exactly on the polar axis east is taken as Earth-fixed +y. Cesium's
   East-North-Up frame, which the Unity rig's ground-truth camera uses today, takes the
   ellipsoid gradient at the spacecraft instead; at 500 km the two differ by about 0.01
-  degrees. It is ground truth, so it is never controller-visible (D7): its frames reach the
-  recorder, never a gateway observation. `runs/p0-default.json` does not include it.
+  degrees. It is ground truth, so it is never controller-visible (D7): its kind has no
+  controller projection, and its frames reach the recorder, never a gateway observation.
+  `runs/p0-default.json` does not include it.
+- `CameraControllerProjection` (CORE-23): `CameraKind`'s controller projection
+  (`IDeviceKind.ControllerProjection`). The gateway applies it to each frame of a visible
+  camera, so a controller gets a `SensorFrame<CameraObservation>` (`Core/Imaging/CameraObservation.cs`)
+  with the envelope of the recorded `SensorFrame<ImageFrame>`: its run ID, sensor ID, frame ID,
+  sequence, state sequence, simulation time, UTC and source. The status is not part of the
+  envelope; the projection sets it. `CameraObservation` holds what flight's own frame record
+  holds (FSW-Payload `include/vision/frame.hpp`): the camera ID, the frame's sequence, the
+  exposure start (simulation time and UTC), the exposure duration, the width and height, and
+  raw `Rgb8` pixels as a `ReadOnlyMemory<byte>`. The pixels are a copy, one array per frame:
+  `ReadOnlyMemory` can still be written through `MemoryMarshal.TryGetArray`, and the recorder
+  queues the frame by reference (#99), so a shared array would let a controller change
+  what the recorder writes. It has no pose, Sun, intrinsics or renderer: a controller takes the
+  intrinsics and mounts from the spacecraft profile, as flight takes them from its
+  `config.toml`. A `Valid` frame keeps its pixels only if it is a valid `Rgb8` image whose
+  request has a Sun position. A frame without pixels is `Unavailable`, with size 0, except that
+  an `Invalid` frame stays `Invalid`; the recorder keeps the original either way.
+  `CameraObservation.IsValid` checks the camera ID, sequence, timing and pixel size. A frame's
+  arrival step, status and pixels are only as deterministic as the renderer (a render that
+  fails is `Unavailable`; a renderer that streams its scene can return different pixels); its
+  capture time and capture state are fixed (G3).
 
 A kind whose sensor is a camera implements `ICameraKind` (`Core/Contracts/ICameraKind.cs`):
 the recorder lists it in the manifest's `cameras`, and cameras that share a profile ID must

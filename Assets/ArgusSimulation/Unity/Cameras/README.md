@@ -104,6 +104,12 @@ full-resolution four-camera workload; synthetic tests alone do not establish tha
 
 ## Manual scene acceptance
 
+Start the Basilisk service and headless host as described in [headless setup](../../../../headless/README.md),
+using the same camera run configuration selected in the rig. Open `Foundation.unity`, enter Play
+Mode and wait for a streamed state. With no host state, capture reports `NO STATE` instead of
+starting a local simulation. Unity has no dashboard simulation-pause control after UNITY-6;
+capture automatically holds presentation while host states continue arriving.
+
 In Play Mode, the dashboard CAPTURE button saves all five preview-sized views. It keeps its
 CAPTURE label while busy; the adjacent status shows the camera number, loading percentage and
 elapsed seconds. Completion and timeouts are also logged in the Console. Outputs are PNGs plus
@@ -183,23 +189,23 @@ the 2026-11-16 validation below covers the subsequent final renderer.
 
 ## Host-following regression validation — 2026-11-16
 
-Integrated main at `a980eae` (UNITY-5 / UNITY-6 / HOST-3 / CORE-21). On Unity
-6000.6.0f1 / macOS Metal, 199 EditMode and 26 offline PlayMode tests passed; the opt-in
-Cesium test is run separately. The headless Core suite passed 199 tests and Host passed
-73. New regressions verify continued state delivery during capture holds, preservation of an
+Integrated main at `f462e7b` (UNITY-5 / UNITY-6 / HOST-3 / CORE-21 / CORE-23). On Unity
+6000.6.0f1 / macOS Metal, 261 EditMode and 26 offline PlayMode tests passed; the opt-in
+Cesium test is run separately. The headless Core suite passed 261 tests and Host passed
+74. New regressions verify continued state delivery during capture holds, preservation of an
 existing hold, exact per-camera Core profiles, legacy metadata coordinate origins and truth,
 manual edits frozen across all views, immediate queued cancellation, propagation of an injected
 origin-restore failure, bounded live-view readiness probes, render-only Sun overrides, export I/O error
 reporting, and pixel-for-pixel agreement between raw RGB and the direct PNG capture path.
 
-The final real-Cesium Foundation test passed separately in 661.5 seconds with production defaults
+The final real-Cesium Foundation test passed separately in 784.4 seconds with production defaults
 (1200-second per-view total budget, 60-second inactivity limit, alternating readiness/live-view
 frames). It saved five 768×432 previews and four 4608×2592 native body images, with nine metadata-v3
 records and unique paths. All PNGs decoded and matched their recorded dimensions; every record
 retained the same frozen state sequence and exposure start time. The report contained zero error
-logs and measured a maximum of one exclusive selection frame across 5048 readiness probes.
+logs and measured a maximum of one exclusive selection frame across 6201 readiness probes.
 Earth-facing nadir and native Forward images contained real terrain/imagery detail. Artifacts
-remain under `NavigationEpisodes/unity4-cesium-acceptance_20261116T230243408Z/`.
+remain under `NavigationEpisodes/unity4-cesium-acceptance_20261116T232817115Z/`.
 
 The scene test uses real Cesium terrain, GIBS imagery, network and Metal, with a deterministic
 state-source fixture feeding the host-following runner. It does not validate a live Basilisk

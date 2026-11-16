@@ -17,6 +17,8 @@ namespace Argus.Simulation.Core
         private MagnetometerKind()
             : base(
                 KindName,
+                // A measured field carries no truth, so a controller sees it as it is.
+                ControllerProjection.Identity<MagnetometerMeasurement>(),
                 new[] { new DeviceKey(MagneticField, DeviceValueType.Vector3) },
                 new DeviceKey(NoiseStd, DeviceValueType.Number),
                 new DeviceKey(ConstantBias, DeviceValueType.Vector3),

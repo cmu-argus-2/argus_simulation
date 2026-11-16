@@ -254,7 +254,7 @@ namespace Argus.Simulation.Tests
             {
                 recorder.BeginRun(
                     new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, 0.1),
-                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity) });
+                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity, isControllerVisible: true) });
                 recorder.RecordSensorOutput(new SensorOutputSet("test-run", 13, 1.3, new ISensorFrame[]
                 {
                     Frame(late, SensorFrameStatus.Valid, new ImageFrame(late, ImageEncoding.Rgb8, new byte[4 * 2 * 3], "test-renderer"))
@@ -359,10 +359,14 @@ namespace Argus.Simulation.Tests
             return gateway;
         }
 
+        // Not controller-visible: the recorder gets every frame either way, and the ideal body-rate
+        // stand-in publishes an AngularRateMeasurement, which the imu kind's projection does not take
+        // (CORE-23).
         private static SimulationConfiguration Scenario(double fixedStepSeconds)
         {
             DeviceConfiguration rate = ImuKind.Instance.Configure(
-                new SensorDefinition("imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity),
+                new SensorDefinition(
+                    "imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity, isControllerVisible: false),
                 TestImu.P0LikeProfile());
             return new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: new[] { rate });
         }

@@ -290,7 +290,7 @@ namespace Argus.Simulation.Tests
 
             public EndCountingSensor(string sensorId, bool throws)
             {
-                Definition = new SensorDefinition(sensorId, "test-sensor", sensorId, 1.0, "simulation", SensorMount.Identity);
+                Definition = new SensorDefinition(sensorId, "test-sensor", sensorId, 1.0, "simulation", SensorMount.Identity, isControllerVisible: false);
                 _throws = throws;
             }
 
@@ -373,7 +373,7 @@ namespace Argus.Simulation.Tests
 
             public TestCamera(double periodSeconds, double maximumLatencySeconds, IImageRenderer renderer, SensorMount? mount = null)
                 : base(
-                    new SensorDefinition(CameraId, "test-camera", "cam_test", periodSeconds, "simulation", mount ?? SensorMount.Identity),
+                    new SensorDefinition(CameraId, "test-camera", "cam_test", periodSeconds, "simulation", mount ?? SensorMount.Identity, isControllerVisible: true),
                     TestIntrinsics,
                     0.01,
                     maximumLatencySeconds,

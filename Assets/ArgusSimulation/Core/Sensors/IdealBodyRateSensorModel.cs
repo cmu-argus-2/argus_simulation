@@ -17,7 +17,8 @@ namespace Argus.Simulation.Core
                 frameId,
                 samplePeriodSeconds,
                 source,
-                SensorMount.Identity))
+                SensorMount.Identity,
+                isControllerVisible: false))
         {
         }
 

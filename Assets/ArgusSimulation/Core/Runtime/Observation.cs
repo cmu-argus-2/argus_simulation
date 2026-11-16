@@ -19,7 +19,9 @@ namespace Argus.Simulation.Core
 
     // What a controller sees after Reset (observation 0) or Step(command k) (observation k+1): the
     // controller-visible sensor frames sampled at one step, never truth (D7, target-architecture §4).
-    // Truth reaches the recorder and Unity through SimulationGateway.StateProduced.
+    // Truth leaves the gateway through SimulationGateway.StateProduced and SensorOutputProduced (a
+    // camera frame's pose and Sun, ground-truth sensors) to the recorder, never through an
+    // observation. The state stream takes only the state and the non-camera frames.
     public sealed class Observation
     {
         private readonly ISensorFrame[] _frames;
@@ -84,7 +86,9 @@ namespace Argus.Simulation.Core
         // The dynamics backend that produced the step.
         public string Source { get; }
 
-        // Controller-visible frames sampled at this step; a sensor that was not sampled has none.
+        // Controller-visible frames sampled at this step, each through its kind's controller
+        // projection: a camera's is a CameraObservation (CORE-23), and a late one keeps its capture
+        // state and time (G3). A sensor that was not sampled has none.
         public IReadOnlyList<ISensorFrame> Frames => _frames;
 
         public ObservationStatus Status { get; }

@@ -12,19 +12,21 @@ namespace Argus.Simulation.Core
         private readonly DeclaredKeys _parameterKeys;
         private readonly DeclaredKeys _initialStateKeys;
 
+        // controllerProjection: what a controller sees of the kind's frames, or null for never
+        // (IDeviceKind.ControllerProjection, D7). It has no default, so every kind decides.
         // initialStateKeys: the kind's state at t = 0 (docs/device-model.md §6); none by default.
         protected DeviceKind(
             string name,
             DeviceRole role,
             bool isBackendModelled,
-            bool mayBeControllerVisible,
+            ControllerProjection controllerProjection,
             DeviceKey[] parameterKeys,
             DeviceKey[] initialStateKeys = null)
         {
             Name = name;
             Role = role;
             IsBackendModelled = isBackendModelled;
-            MayBeControllerVisible = mayBeControllerVisible;
+            ControllerProjection = controllerProjection;
             _parameterKeys = new DeclaredKeys(parameterKeys);
             _initialStateKeys = new DeclaredKeys(initialStateKeys ?? Array.Empty<DeviceKey>());
         }
@@ -32,7 +34,7 @@ namespace Argus.Simulation.Core
         public string Name { get; }
         public DeviceRole Role { get; }
         public bool IsBackendModelled { get; }
-        public bool MayBeControllerVisible { get; }
+        public ControllerProjection ControllerProjection { get; }
         public IReadOnlyList<DeviceKey> ParameterKeys => _parameterKeys.Keys;
         public IReadOnlyList<DeviceKey> InitialStateKeys => _initialStateKeys.Keys;
 
@@ -148,15 +150,21 @@ namespace Argus.Simulation.Core
     }
 
     // A sensor kind the backend models (D10): its frames publish what the backend measured, read
-    // from the backend's output map.
+    // from the backend's output map. Each kind passes its controller projection, with no default,
+    // so a new kind decides what a controller sees: ControllerProjection.Identity<TMeasurement>()
+    // for a measurement that carries no truth, or null for a ground-truth kind.
     public abstract class BackendSensorKind<TProfile, TMeasurement> : DeviceKind<TProfile>, IBackendSensorKind
         where TProfile : struct
         where TMeasurement : struct
     {
         private readonly DeclaredKeys _outputKeys;
 
-        protected BackendSensorKind(string name, DeviceKey[] outputKeys, params DeviceKey[] parameterKeys)
-            : base(name, DeviceRole.Sensor, isBackendModelled: true, mayBeControllerVisible: true, parameterKeys)
+        protected BackendSensorKind(
+            string name,
+            ControllerProjection controllerProjection,
+            DeviceKey[] outputKeys,
+            params DeviceKey[] parameterKeys)
+            : base(name, DeviceRole.Sensor, isBackendModelled: true, controllerProjection, parameterKeys)
         {
             _outputKeys = new DeclaredKeys(outputKeys);
         }
