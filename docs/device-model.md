@@ -73,8 +73,8 @@ that configures a `momentum_wheel` or `thruster` (UNIMPLEMENTED), so every comma
 acts (`Argus.Basilisk/README.md` §9 "Actuators"). Over an engine that only records commands (the
 analytic fixture), the gateway refuses (logs `Rejected`) any command that is not the kind's idle
 values, so the run continues and the log tells the truth. A spacecraft whose actuators aren't
-known yet uses one `ideal_body_torque` device; the P0 run file lists `torque.body` with
-placeholder limits until DATA-2 (#68)'s six coils land in it.
+known yet uses one `ideal_body_torque` device; the P0 run file lists `torque.body`, with DATA-2
+(#68)'s `reject` at 1e-4 N·m per axis, until DATA-2's six coils land in it.
 
 **The IMU is one kind,** `imu`, with `gyroscope.*` and `accelerometer.*` parameters and one frame
 that carries both channels. This matches Basilisk's `imuSensor` and today's `ImuMeasurement`, so
@@ -252,10 +252,12 @@ message DeviceCommandSet {
   The empty set means no output (today's zero command), and Reset's Step(0) sends it.
 - **Each device appears at most once.** It must be a configured actuator, and its values must pass
   its kind's checks. The gateway logs anything else as Rejected and does not send it on (CORE-20).
-  Limits clamp or reject per device (CORE-10).
+  Then each value is held to its device's limits by its kind, and the device's `limit_policy`
+  decides (CORE-10, #46): `clamp` sends the value at its nearest limit and logs the command
+  `Clamped`, with the requested and applied command and the reason; `reject` refuses the whole
+  command (`Rejected`), so the step doesn't run.
 - **In Core**, `DeviceCommandSet` (which replaced `ActuatorCommandSet`) holds the sequence, the
-  apply time and the `DeviceCommand`s, each a device ID and its values. Until actuator kinds
-  exist, no device is a configured actuator, so only the empty set is applied.
+  apply time and the `DeviceCommand`s, each a device ID and its values.
 - **`commands.jsonl`**: `requested` and `applied` keep `sequence` and
   `apply_at_simulation_time_s`. The three vectors are replaced by `devices`, which maps each device
   ID to its values. `requested` is what the controller sent. `applied` lists every configured
@@ -277,7 +279,12 @@ message DeviceCommandSet {
   into its measurement type, and a camera kind (`ICameraKind`) gives its `CameraProfile`, for the
   manifest's `cameras` and the shared profile-ID rule (CORE-6). An actuator kind (`IActuatorKind`,
   on `ActuatorKind<TProfile>`) gives its command keys, its idle values and its command check; the
-  gateway runs an actuator a command leaves out at its idle values. Its limit checks are CORE-10.
+  gateway runs an actuator a command leaves out at its idle values. It also owns its limit check,
+  `Limit(parameters, values, out excess)` with `LimitPolicyOf(parameters)` (CORE-10), so a new
+  kind brings its own and the gateway doesn't change: `ideal_body_torque` per body axis, ±max for
+  `magnetic_torquer` and a `momentum_wheel`'s motor torque, and [0, max] thrust. A wheel's
+  `max_speed_rad_per_s` bounds its state, not a command, so the backend that integrates the speed
+  owns it.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
   `CameraProfileKind` only list their keys and map them. `CameraKind` and

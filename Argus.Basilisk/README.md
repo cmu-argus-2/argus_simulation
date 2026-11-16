@@ -696,8 +696,9 @@ Details name the field path and the bad value.
 - 100 steps, Reset, 100 steps: bit-identical, with and without commands.
 - A constant ideal body torque changes the body rate over its step as Euler's equation does
   (to 1e-10 rad/s), command n-1 acts over [t_n-1, t_n) only, and magnetic torquers push `m × B`
-  against the WMM field. A gateway over `BasiliskEngine` applies a torque over its step
-  (`AGatewayOverTheServiceAppliesATorqueOverItsStep` in `headless/Host.Tests`).
+  against the WMM field. A gateway over `BasiliskEngine` clamps a torque past its limit (CORE-10)
+  and applies it over its step (`AGatewayOverTheServiceAppliesATorqueOverItsStep` in
+  `headless/Host.Tests`).
 - A client that waits for each response is never refused, even when gRPC frees a response
   slowly; a call that reaches the servicer while another runs, on any RPC, gets
   RESOURCE_EXHAUSTED.

@@ -146,7 +146,9 @@ def light_sensor(device_id, position, sensor_x, sensor_y, sensor_z):
 
 
 def p0_default_request():
-    """headless/Host/runs/p0-default.json as BasiliskProtoMapper sends it."""
+    """headless/Host/runs/p0-default.json as BasiliskProtoMapper sends it, except its torque.body:
+    the fixture keeps a 1 mN·m clamp torque as test values (ideal_body_torque), where P0 rejects past
+    1e-4 N·m, so the service tests can move the body measurably."""
     configuration = run_configuration_pb2.RunConfiguration(
         run_id="p0-default",
         fixed_step_ns=100_000_000,

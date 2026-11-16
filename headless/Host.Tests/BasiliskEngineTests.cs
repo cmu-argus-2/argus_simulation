@@ -68,7 +68,9 @@ namespace Argus.Simulation.Host.Tests
         // but its own body and actuator, so P0's attitude data and devices can change without touching
         // it: the body starts at rest with a diagonal inertia, so a torque about z changes only the z
         // rate, by torque x dt / Izz, over the step its command is for, and the rate holds once the
-        // torque is idle again. A spinning body with unequal inertias would change its own rates.
+        // torque is idle again. A spinning body with unequal inertias would change its own rates. The
+        // command asks for twice the device's 1 mN·m limit, so the gateway clamps it (CORE-10) and the
+        // service, which refuses anything past the limit, runs it at the limit.
         [Test, Explicit("Needs the Argus.Basilisk service running")]
         public void AGatewayOverTheServiceAppliesATorqueOverItsStep()
         {
@@ -103,16 +105,18 @@ namespace Argus.Simulation.Host.Tests
             gateway.Reset(0, scenario);
             double dt = scenario.FixedStepSeconds;
             const double TorqueZ = 1e-3;
+            const double RequestedTorqueZ = 2e-3;
             gateway.Step(DeviceCommandSet.None(0, 0.0));
             gateway.Step(new DeviceCommandSet(1, dt, new[]
             {
                 new DeviceCommand("torque.body", new DeviceValues.Builder()
-                    .Add(IdealBodyTorqueKind.TorqueKey, new Vector3d(0.0, 0.0, TorqueZ))
+                    .Add(IdealBodyTorqueKind.TorqueKey, new Vector3d(0.0, 0.0, RequestedTorqueZ))
                     .Build())
             }));
             gateway.Step(DeviceCommandSet.None(2, 2.0 * dt));
 
-            Assert.That(log.Select(record => record.Outcome), Is.All.EqualTo(CommandOutcome.Applied));
+            Assert.That(log.Select(record => record.Outcome), Is.EqualTo(new[] { CommandOutcome.Applied, CommandOutcome.Clamped, CommandOutcome.Applied }));
+            Assert.That(log[1].Applied.Value.Commands[0].Values.Vector3(IdealBodyTorqueKind.TorqueKey), Is.EqualTo(new Vector3d(0.0, 0.0, TorqueZ)));
             Assert.That(states.Count, Is.EqualTo(4));
             Vector3d[] rates = states.Select(state => state.Spacecraft.AngularVelocityBodyRadiansPerSecond).ToArray();
             double izz = scenario.Spacecraft.Value.InertiaBodyKilogramSquareMeters.Row2.Z;

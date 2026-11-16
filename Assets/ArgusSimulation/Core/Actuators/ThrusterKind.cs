@@ -40,8 +40,12 @@ namespace Argus.Simulation.Core
 
         protected override bool IsValid(ThrusterProfile profile) => profile.IsValid;
 
+        // thrust_n <= max_thrust_n; FindCommandValueProblem has already refused a negative thrust.
+        protected override DeviceValues LimitToProfile(ThrusterProfile profile, DeviceValues values, out string excess) =>
+            LimitMagnitude(values, ThrustKey, profile.MaxThrustNewtons, MaxThrust, out excess);
+
         // A thruster only pushes, so a negative thrust is never valid; above max_thrust_n is a limit
-        // (CORE-10, #46).
+        // (LimitToProfile).
         protected override string FindCommandValueProblem(DeviceValues values) =>
             values.Number(ThrustKey) < 0.0 ? $"values[\"{ThrustKey}\"]: must be >= 0" : null;
 

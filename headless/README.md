@@ -138,8 +138,9 @@ file; the host gives each run its own.
   must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
   observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
-  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device with
-  placeholder 1 mN·m limits per axis, until DATA-2 (#68) confirms the actuators. The list may hold any subset of the devices,
+  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device that rejects
+  anything past 1e-4 N·m per axis, as DATA-2 (#68) gives for the ideal torque, until DATA-2's six
+  coils land in the file. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
 - **Validation:** every field is required and unknown fields are rejected, including
