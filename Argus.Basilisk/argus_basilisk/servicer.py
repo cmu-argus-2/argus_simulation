@@ -8,14 +8,16 @@ import threading
 import grpc
 
 from .contracts import service_grpc, service_pb
-from .devices import actuators, magnetometer, of_kind
+from .devices import actuators, needs_magnetic_field
 from .kernels import KernelSet, KernelSetError, load_kernel_set
 from .scenario import BASILISK_VERSION, KernelLoadError, Scenario, StaleMessageError
 from .validation import (
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
+    actuator_parameters,
     check_utc_in_range,
+    command_values,
     configure_run_problems,
     timestamp_to_ns,
     validate_configure_run,
@@ -181,23 +183,24 @@ class BasiliskSimulationServicer(service_grpc.BasiliskSimulationServiceServicer)
                 f"sim_time_ns: expected {t_n} (sequence x fixed_step_ns), got {request.sim_time_ns}")
 
         # 3. Command n-1, for [t_n-1, t_n): present, finite, for step n-1, naming only the run's
-        # actuators with their kinds' keys, and idle until BSK-8 builds the effectors.
+        # actuators with their kinds' keys, within each device's limits.
+        run_actuators = actuators(configuration)
         try:
-            validate_step_request(request, configuration.fixed_step_ns, actuators(configuration))
+            validate_step_request(
+                request, configuration.fixed_step_ns, run_actuators, actuator_parameters(configuration))
             # 4. epoch + t_n inside coverage, before executing: CSPICE aborts the process outside it.
-            has_magnetometer = bool(of_kind(configuration.devices, magnetometer.KIND))
             check_utc_in_range(
                 timestamp_to_ns(configuration.epoch_utc) + t_n,
                 "configuration.epoch_utc + sim_time_ns",
                 coverage_utc=run.kernel_set.coverage_utc,
-                wmm_validity=WMM2025_VALIDITY if has_magnetometer else None,
+                wmm_validity=WMM2025_VALIDITY if needs_magnetic_field(configuration) else None,
             )
         except ValidationError as error:
             raise _Abort(error.code, error.details) from None
 
         # 5 to 7. Run to t_n and read every returned message; a failure ends the run.
         try:
-            response = run.scenario.step(sequence)
+            response = run.scenario.step(sequence, command_values(request.commands, run_actuators))
         except StaleMessageError as error:
             run.state = FAILED
             raise _Abort("INTERNAL", str(error)) from None

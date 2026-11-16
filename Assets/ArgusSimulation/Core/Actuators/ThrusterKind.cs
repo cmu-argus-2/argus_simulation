@@ -1,8 +1,8 @@
 namespace Argus.Simulation.Core
 {
     // The "thruster" kind (D11, CON-2): a commanded thrust held over the step, from 0 to
-    // max_thrust_n, idle at zero. BSK-8 (#21) applies it as an on-time of thrust_n / max_thrust_n
-    // of the step.
+    // max_thrust_n, idle at zero. The service would apply it as an on-time of thrust_n / max_thrust_n
+    // of the step; it doesn't build thrusters yet (UNIMPLEMENTED; Argus.Basilisk/README.md §9).
     public sealed class ThrusterKind : ActuatorKind<ThrusterProfile>
     {
         public const string KindName = "thruster";

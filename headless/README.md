@@ -34,7 +34,9 @@ Basilisk link together. It installs the service from `Argus.Basilisk/uv.lock` (b
 included), generates its Protobuf code, and fetches and verifies the P0 kernel set
 (cached; `Argus.Basilisk/README.md` §8 "Kernels in CI"). It runs the service tests,
 where only the `argus-2026-09-25` tests may skip, then starts the service and runs the
-host against it for 60 s of the P0 run file. Both sides build from `Argus.Contracts/proto`,
+host against it for 60 s of the P0 run file. Last, it applies a torque through the gateway and
+`BasiliskEngine` and checks the body rate over that step
+(`AGatewayOverTheServiceAppliesATorqueOverItsStep`, BSK-8 #21). Both sides build from `Argus.Contracts/proto`,
 so a contract change that one side does not follow fails the job: the host build, a
 service test, or the host run (`StepResponse.spacecraft_shadow_factor is unset.`, exit 1).
 
