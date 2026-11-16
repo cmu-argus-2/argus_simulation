@@ -43,7 +43,7 @@ namespace Argus.Simulation.Tests
         }
 
         // Every sensor definition states whether a controller may see it: a camera built in code is not
-        // shown to a controller by a default nobody chose (#151 review, item 2).
+        // shown to a controller by a default nobody chose (D7).
         [Test]
         public void EverySensorDefinitionStatesWhetherAControllerMaySeeIt()
         {

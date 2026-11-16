@@ -19,6 +19,7 @@ namespace Argus.Simulation.Tests
 
         public string BackendName => _inner.BackendName;
         public bool IsInitialized => _inner.IsInitialized;
+        public bool AppliesActuatorCommands => _inner.AppliesActuatorCommands;
         public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
         public bool TryReset(out SimulationState state) => _inner.TryReset(out state);
 

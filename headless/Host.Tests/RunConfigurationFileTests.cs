@@ -724,7 +724,7 @@ namespace Argus.Simulation.Host.Tests
                     new SensorDefinition(
                         "torque.body", "placeholder-ideal-body-torque", "torque_body", 0.0, "basilisk", SensorMount.Identity,
                         isControllerVisible: false),
-                    new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))
+                    new IdealBodyTorqueProfile(new Vector3d(1e-4, 1e-4, 1e-4), ActuatorLimitPolicy.Reject))
             };
 
             return new SimulationConfiguration(

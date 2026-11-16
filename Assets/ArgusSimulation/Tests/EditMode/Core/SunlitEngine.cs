@@ -13,6 +13,7 @@ namespace Argus.Simulation.Tests
         private readonly AnalyticSimulationEngine _inner = new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0);
 
         public string BackendName => _inner.BackendName;
+        public bool AppliesActuatorCommands => _inner.AppliesActuatorCommands;
         public bool IsInitialized => _inner.IsInitialized;
         public void Initialize(SimulationConfiguration configuration) => _inner.Initialize(configuration);
 

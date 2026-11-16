@@ -154,17 +154,20 @@ Commands are per device (D11, [device-model.md](../../../../docs/device-model.md
 device ID to its values. The set is complete, so an actuator it leaves out is idle and `{}`
 means no output. `applied` lists every configured actuator, idle ones included (CON-2, #34),
 and a command naming a device that is not a configured actuator, with other keys than its
-kind's, or, until BSK-8 (#21) applies commands, with other values than the kind's idle ones, is
-`Rejected`. `states.jsonl` gains each device's per-step state as `devices` with the
-first effectors (BSK-8, #21). These fields replaced the three body-frame vectors before HOST-5
+kind's, or, over an engine that does not apply commands (the analytic fixture), with other
+values than the kind's idle ones, is `Rejected`. `states.jsonl` gains each device's per-step
+state as `devices` with the first stateful actuator, the momentum wheel. These fields replaced the three body-frame vectors before HOST-5
 (#29) froze v1, so the schema stays at version 1.
 
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
 every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
 an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
-reason. `Applied` means the gateway accepted the command for the engine. If the run ended at that
-step (the manifest's `termination` has that `last_sequence`), the engine may not have run it; state
-k+1's `producing_command` is the confirmation that it did. `Clamped` arrives with actuator limits (CORE-10, #46). The file
+reason. `Applied` means the gateway accepted the command for the engine. `Clamped` means it
+accepted the command with a value past its device's limits held at that limit, per the device's
+`limit_policy` (CORE-10, #46): `requested` is the command as sent, `applied` what the engine was
+given, and `reason` names each clamped value; a `reject` policy logs `Rejected` instead. For
+either, if the run ended at that step (the manifest's `termination` has that `last_sequence`), the
+engine may not have run it; state k+1's `producing_command` is the confirmation that it did. The file
 is created in every run directory, so it is empty when no command was received, as in
 Unity-driven runs, which bypass the gateway (G1).
 

@@ -15,8 +15,9 @@ namespace Argus.Simulation.Core
     // StateProduced and SensorOutputProduced: the recorder takes them all, and the state stream
     // takes the state and the non-camera frames. Every command Step receives reaches the recorder
     // through CommandLogged.
-    // TODO(D7, G1): actuator-limit validation (CORE-10) and authority and heartbeat (CORE-9), which
-    // log their decisions through CommandLogged. Serving it to HIL and external controllers is
+    // Each actuator command is held to its device's limits by its kind, then clamped or rejected per
+    // the device's limit_policy (CORE-10). TODO(D7, G1): authority and heartbeat (CORE-9), which log
+    // their decisions through CommandLogged. Serving it to HIL and external controllers is
     // headless/Host GatewayServer.
     public sealed class SimulationGateway
     {
@@ -141,16 +142,24 @@ namespace Argus.Simulation.Core
                 throw new InvalidOperationException(notRunning);
             }
 
-            string rejection = Rejection(command);
+            string rejection = Rejection(command, out DeviceCommandSet limited, out string clamped);
             if (rejection != null)
             {
                 Log(Rejected(command, rejection));
                 throw new ArgumentException(rejection, nameof(command));
             }
 
-            DeviceCommandSet applied = WithIdleActuators(command);
+            // The record keeps the command as sent and what the engine runs: within the limits, or
+            // clamped to them with the reason (CORE-10).
+            DeviceCommandSet applied = WithIdleActuators(limited);
             Log(new CommandRecord(
-                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Applied, command, applied));
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                clamped == null ? CommandOutcome.Applied : CommandOutcome.Clamped,
+                command,
+                applied,
+                clamped));
 
             long sequence = _nextSequence + 1;
             double simulationTimeSeconds = sequence * _scenario.FixedStepSeconds;
@@ -251,8 +260,12 @@ namespace Argus.Simulation.Core
         }
 
         // Why Step refuses a command for step k, or null when it is valid and for k at t_k.
-        private string Rejection(DeviceCommandSet command)
+        // limited is the command held to its devices' limits, and clamped says which values a clamp
+        // policy changed (null when none did).
+        private string Rejection(DeviceCommandSet command, out DeviceCommandSet limited, out string clamped)
         {
+            limited = command;
+            clamped = null;
             if (!command.IsValid)
             {
                 string problem = command.FindProblem();
@@ -280,42 +293,72 @@ namespace Argus.Simulation.Core
                     _nextSimulationTimeSeconds);
             }
 
-            // Only the run's actuators take commands, each with exactly its kind's command values.
-            // TODO(G1): check each command's values against its device's limits (CORE-10, #46).
+            // Only the run's actuators take commands, each with exactly its kind's command values,
+            // then held to the device's limits by its kind (CORE-10): a reject policy refuses the whole
+            // command, and a clamp policy passes each value at its nearest limit.
+            List<DeviceCommand> devices = new List<DeviceCommand>(command.Commands.Count);
+            List<string> clamps = new List<string>();
             foreach (DeviceCommand device in command.Commands)
             {
-                IActuatorKind actuator = ConfiguredActuatorKind(device.DeviceId);
-                if (actuator == null)
+                DeviceConfiguration? configured = ConfiguredActuator(device.DeviceId);
+                if (!configured.HasValue)
                 {
                     return $"Device '{device.DeviceId}' is not an actuator this run configures.";
                 }
 
+                IActuatorKind actuator = (IActuatorKind)configured.Value.KindDefinition;
                 string problem = actuator.FindCommandProblem(device.Values);
                 if (problem != null)
                 {
                     return $"Device '{device.DeviceId}' command {problem}.";
                 }
 
-                // TODO(G1): no engine applies actuator commands yet. The analytic fixture only
-                // records them, and the service builds no effector until BSK-8 (#21), so it would
-                // return UNIMPLEMENTED and end the run after an Applied record. Refuse instead, so
-                // the log tells the truth and the run continues; BSK-8 lifts this.
-                if (!actuator.IsIdle(device.Values))
+                DeviceValues parameters = configured.Value.Parameters;
+                DeviceValues values = actuator.Limit(parameters, device.Values, out string excess);
+                if (excess != null)
                 {
-                    return $"Device '{device.DeviceId}': applying actuator commands is not built yet (BSK-8, #21).";
+                    switch (actuator.LimitPolicyOf(parameters))
+                    {
+                        case ActuatorLimitPolicy.Clamp:
+                            clamps.Add($"Device '{device.DeviceId}' command {excess}; clamped.");
+                            break;
+                        case ActuatorLimitPolicy.Reject:
+                            return $"Device '{device.DeviceId}' command {excess}, and its limit_policy is reject.";
+                        default:
+                            // A valid configuration has a known policy, so this is a bug, not a refusal.
+                            throw new InvalidOperationException(
+                                $"Device '{device.DeviceId}' has limit_policy {actuator.LimitPolicyOf(parameters)}, which the gateway does not apply.");
+                    }
                 }
+
+                // An engine that only records commands (the analytic fixture) would log a command as
+                // Applied that never acted, so refuse it and the run continues. BasiliskEngine applies
+                // every actuator its service accepted at ConfigureRun (BSK-8, #21).
+                if (!_engine.AppliesActuatorCommands && !actuator.IsIdle(values))
+                {
+                    return $"Device '{device.DeviceId}': {_engine.BackendName} does not apply actuator commands.";
+                }
+
+                devices.Add(excess == null ? device : new DeviceCommand(device.DeviceId, values));
+            }
+
+            if (clamps.Count > 0)
+            {
+                limited = new DeviceCommandSet(command.Sequence, command.ApplyAtSimulationTimeSeconds, devices);
+                clamped = string.Join(" ", clamps);
             }
 
             return null;
         }
 
-        private IActuatorKind ConfiguredActuatorKind(string deviceId)
+        // The run's actuator with this device ID, or null.
+        private DeviceConfiguration? ConfiguredActuator(string deviceId)
         {
             foreach (DeviceConfiguration device in _scenario.Devices)
             {
                 if (device.Definition.SensorId == deviceId)
                 {
-                    return device.KindDefinition as IActuatorKind;
+                    return device.KindDefinition is IActuatorKind ? device : (DeviceConfiguration?)null;
                 }
             }
 
@@ -378,7 +421,7 @@ namespace Argus.Simulation.Core
         // Publishes truth and every frame, and returns the controller-visible frames, each through its
         // kind's projection. A sensor, subscriber or projection that throws ends the run, so the
         // gateway never advances past a step whose frames were not all published, and a retried Step
-        // cannot log a second Applied record for it.
+        // cannot log a second Applied or Clamped record for it.
         private Observation Publish(SimulationState state)
         {
             SpacecraftState spacecraft = state.Spacecraft;

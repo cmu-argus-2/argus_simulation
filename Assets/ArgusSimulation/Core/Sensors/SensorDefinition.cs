@@ -54,7 +54,7 @@ namespace Argus.Simulation.Core
         public SensorMount Mount { get; }
 
         // Every definition states it; there is no default, so no sensor, a camera above all, is shown
-        // to a controller by a choice nobody made (#151 review). False for ground-truth sensors (for
+        // to a controller by a choice nobody made (D7). False for ground-truth sensors (for
         // example the nadir camera): the gateway never forwards their frames to a controller, while
         // the recorder still receives them (D7). It must be false
         // for a kind with no controller projection (IDeviceKind.ControllerProjection). A visible

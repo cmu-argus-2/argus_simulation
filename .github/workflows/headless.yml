@@ -170,6 +170,17 @@ jobs:
           dotnet run --project headless/Host/Argus.Simulation.Host.csproj --configuration Release --no-build -- \
             --duration-s 60 --real-time-factor 0 --basilisk-endpoint "$BASILISK_ENDPOINT"
 
+      # BSK-8 (#21): a torque sent through the gateway turns the body over the step it is for. The
+      # test is Explicit, so it runs only when named; a filter that matches nothing still exits 0,
+      # so the step also requires that exactly one test passed.
+      - name: Apply a torque through the gateway
+        env:
+          ARGUS_BASILISK_ENDPOINT: ${{ env.BASILISK_ENDPOINT }}
+        run: |
+          dotnet test headless/Host.Tests/Argus.Simulation.Host.Tests.csproj --configuration Release \
+            --filter "FullyQualifiedName~AGatewayOverTheServiceAppliesATorqueOverItsStep" | tee "$RUNNER_TEMP/actuator.txt"
+          grep -Eq 'Passed: +1, Skipped: +0, Total: +1' "$RUNNER_TEMP/actuator.txt"
+
       - name: Stop the Basilisk service
         if: always()
         run: |

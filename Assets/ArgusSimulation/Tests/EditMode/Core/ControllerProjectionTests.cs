@@ -68,7 +68,7 @@ namespace Argus.Simulation.Tests
 
         // A projection keeps a frame's status or makes it Unavailable to withhold its payload; any other
         // change would show a controller a payload its sensor didn't produce (Stale and Valid carry one),
-        // or hide a fault (#151 review, item 1).
+        // or hide a fault (D7).
         [TestCase(SensorFrameStatus.Valid, SensorFrameStatus.Unavailable, true)]
         [TestCase(SensorFrameStatus.Stale, SensorFrameStatus.Unavailable, true)]
         [TestCase(SensorFrameStatus.Invalid, SensorFrameStatus.Invalid, true)]

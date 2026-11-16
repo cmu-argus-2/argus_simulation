@@ -61,6 +61,11 @@ namespace Argus.Simulation.Core
 
         protected override bool IsValid(MomentumWheelProfile profile) => profile.IsValid;
 
+        // |motor torque| <= max_torque_n_m. max_speed_rad_per_s bounds the wheel's state, not a
+        // command, so it belongs to the backend that integrates the speed.
+        protected override DeviceValues LimitToProfile(MomentumWheelProfile profile, DeviceValues values, out string excess) =>
+            LimitMagnitude(values, MotorTorqueKey, profile.MaxTorqueNewtonMeters, MaxTorque, out excess);
+
         protected override string FindProfileProblem(MomentumWheelProfile profile) => FirstProblem(
             (ActuatorGeometry.IsUnitAxis(profile.SpinAxisBody), SpinAxis, UnitAxis),
             (ActuatorGeometry.IsPositive(profile.SpinInertiaKilogramSquareMeters), SpinInertia, Positive),

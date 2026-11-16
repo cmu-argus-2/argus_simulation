@@ -34,7 +34,9 @@ Basilisk link together. It installs the service from `Argus.Basilisk/uv.lock` (b
 included), generates its Protobuf code, and fetches and verifies the P0 kernel set
 (cached; `Argus.Basilisk/README.md` §8 "Kernels in CI"). It runs the service tests,
 where only the `argus-2026-09-25` tests may skip, then starts the service and runs the
-host against it for 60 s of the P0 run file. Both sides build from `Argus.Contracts/proto`,
+host against it for 60 s of the P0 run file. Last, it applies a torque through the gateway and
+`BasiliskEngine` and checks the body rate over that step
+(`AGatewayOverTheServiceAppliesATorqueOverItsStep`, BSK-8 #21). Both sides build from `Argus.Contracts/proto`,
 so a contract change that one side does not follow fails the job: the host build, a
 service test, or the host run (`StepResponse.spacecraft_shadow_factor is unset.`, exit 1).
 
@@ -140,8 +142,9 @@ file; the host gives each run its own.
   P0's cameras stay `false`, so a run file opts a camera in. It is always `false` for the nadir
   ground-truth camera. `runs/p0-default.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
-  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device with
-  placeholder 1 mN·m limits per axis, until DATA-2 (#68) confirms the actuators. The list may hold any subset of the devices,
+  a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device that rejects
+  anything past 1e-4 N·m per axis, as DATA-2 (#68) gives for the ideal torque, until DATA-2's six
+  coils land in the file. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
 - **Validation:** every field is required and unknown fields are rejected, including
