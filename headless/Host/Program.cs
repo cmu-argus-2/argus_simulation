@@ -134,6 +134,9 @@ namespace Argus.Simulation.Host
             long frameCount = 0;
             gateway.StateProduced += produced => state = produced;
             gateway.SensorOutputProduced += output => frameCount += output.Frames.Count;
+            // The run still ends as it would have; the failure only goes to the log.
+            gateway.SensorEndFailed += failure =>
+                Console.Error.WriteLine($"A sensor could not release its run: {failure.Message}");
 
             // The stream only replaces its latest pair on this thread, so a slow client never delays
             // a step.
@@ -188,6 +191,8 @@ namespace Argus.Simulation.Host
 
                     if (observation.Sequence >= lastSequence)
                     {
+                        // The run reached its duration: its sensors release what they hold (CORE-21).
+                        gateway.Finish();
                         break;
                     }
 
