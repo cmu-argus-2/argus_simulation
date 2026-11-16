@@ -9,6 +9,12 @@ namespace Argus.Simulation.Core
         string BackendName { get; }
         bool IsInitialized { get; }
 
+        // Whether TryStep applies actuator commands to the dynamics. An engine that doesn't only
+        // records them, so the gateway refuses any command other than a kind's idle values (G1).
+        // One flag per engine, not per kind: BasiliskEngine can return true only because the
+        // service refuses, at ConfigureRun, every actuator kind it doesn't build.
+        bool AppliesActuatorCommands { get; }
+
         // Configures a run; produces no state.
         void Initialize(SimulationConfiguration configuration);
 

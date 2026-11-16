@@ -39,6 +39,10 @@ namespace Argus.Simulation.Core
 
         protected override bool IsValid(MagneticTorquerProfile profile) => profile.IsValid;
 
+        // |dipole| <= max_dipole_a_m2, either sign.
+        protected override DeviceValues LimitToProfile(MagneticTorquerProfile profile, DeviceValues values, out string excess) =>
+            LimitMagnitude(values, DipoleKey, profile.MaxDipoleAmpereSquareMeters, MaxDipole, out excess);
+
         protected override string FindProfileProblem(MagneticTorquerProfile profile) => FirstProblem(
             (ActuatorGeometry.IsUnitAxis(profile.DipoleAxisBody), DipoleAxis, UnitAxis),
             (ActuatorGeometry.IsPositive(profile.MaxDipoleAmpereSquareMeters), MaxDipole, Positive));
