@@ -22,7 +22,9 @@ namespace Argus.Simulation.Host.Tests
         // Serves the stream over the analytic gateway while one client never reads and another
         // reads everything. The step loop keeps its pace, and the reader gets distinct, increasing
         // pairs of one generation, no faster than the rate: 400 Hz is a 2.5 ms period, which the
-        // whole-millisecond timer must round up, not down.
+        // whole-millisecond timer must round up, not down. A step that waited on the stalled
+        // client would wait while the rest of the process runs, so a loaded machine's pauses of
+        // the whole process don't count against a step.
         [TestCase(1000.0)]
         [TestCase(400.0)]
         public async Task AStalledClientNeverDelaysTheStepLoop(double rateHz)
@@ -43,30 +45,49 @@ namespace Argus.Simulation.Host.Tests
             List<PbStream.SubscribeResponse> received = new List<PbStream.SubscribeResponse>();
             Task reading = Task.Run(async () =>
             {
-                while (await reader.ResponseStream.MoveNext(CancellationToken.None))
+                try
                 {
-                    received.Add(reader.ResponseStream.Current);
+                    while (await reader.ResponseStream.MoveNext(CancellationToken.None))
+                    {
+                        received.Add(reader.ResponseStream.Current);
+                    }
+                }
+                catch (RpcException exception) when (
+                    exception.StatusCode == StatusCode.Cancelled && server.Publisher.Stopping.IsCancellationRequested)
+                {
+                    // Stop cancelled a send in flight, which resets the stream instead of ending it.
                 }
             });
 
             // Long enough at this rate to fill the stalled stream's HTTP/2 window many times over.
-            TimeSpan slowestStep = TimeSpan.Zero;
+            TimeSpan slowStep = TimeSpan.FromMilliseconds(250);
+            List<(long Start, long End)> slowSteps = new List<(long Start, long End)>();
+            ProcessPauses pauses = new ProcessPauses();
             Stopwatch running = Stopwatch.StartNew();
             long steps = 0;
             while (running.Elapsed < TimeSpan.FromSeconds(1.5))
             {
                 long start = Stopwatch.GetTimestamp();
                 gateway.Step();
-                TimeSpan step = Stopwatch.GetElapsedTime(start);
-                slowestStep = step > slowestStep ? step : slowestStep;
+                long end = Stopwatch.GetTimestamp();
+                if (Stopwatch.GetElapsedTime(start, end) >= slowStep)
+                {
+                    slowSteps.Add((start, end));
+                }
+
                 steps++;
             }
 
             TimeSpan elapsed = running.Elapsed;
+            pauses.Stop();
             server.Publisher.Stop();
             await reading.WaitAsync(TimeSpan.FromSeconds(5));
 
-            Assert.That(slowestStep, Is.LessThan(TimeSpan.FromMilliseconds(250)));
+            foreach ((long start, long end) in slowSteps)
+            {
+                Assert.That(Stopwatch.GetElapsedTime(start, end) - pauses.Within(start, end), Is.LessThan(slowStep));
+            }
+
             Assert.That(steps, Is.GreaterThan(1000));
             Assert.That(received.Count, Is.GreaterThan(10));
             Assert.That(received.Count, Is.LessThanOrEqualTo(elapsed.TotalSeconds * rateHz + 2));
@@ -183,6 +204,58 @@ namespace Argus.Simulation.Host.Tests
                 null,
                 new CallOptions(),
                 new PbStream.SubscribeRequest());
+
+        // The stretches of wall-clock time when the process stalled (the OS descheduled it, or the
+        // runtime suspended it for a GC): gaps of more than 10 ms between the wake-ups of a thread
+        // that sleeps 1 ms at a time.
+        private sealed class ProcessPauses
+        {
+            private static readonly long Gap = Stopwatch.Frequency / 100;
+
+            private readonly List<(long Start, long End)> _pauses = new List<(long Start, long End)>();
+            private readonly Thread _watch;
+            private volatile bool _stopping;
+
+            public ProcessPauses()
+            {
+                _watch = new Thread(Watch) { IsBackground = true };
+                _watch.Start();
+            }
+
+            public void Stop()
+            {
+                _stopping = true;
+                _watch.Join();
+            }
+
+            // How much of [start, end] fell in a pause; read after Stop.
+            public TimeSpan Within(long start, long end)
+            {
+                long paused = 0;
+                foreach ((long pauseStart, long pauseEnd) in _pauses)
+                {
+                    paused += Math.Max(0, Math.Min(end, pauseEnd) - Math.Max(start, pauseStart));
+                }
+
+                return Stopwatch.GetElapsedTime(0, paused);
+            }
+
+            private void Watch()
+            {
+                long last = Stopwatch.GetTimestamp();
+                while (!_stopping)
+                {
+                    Thread.Sleep(1);
+                    long now = Stopwatch.GetTimestamp();
+                    if (now - last > Gap)
+                    {
+                        _pauses.Add((last, now));
+                    }
+
+                    last = now;
+                }
+            }
+        }
 
         private static int FreePort()
         {
