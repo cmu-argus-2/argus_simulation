@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net;
@@ -29,13 +30,22 @@ namespace Argus.Simulation.Host
             "Usage: Argus.Simulation.Host [--duration-s <seconds>] [--real-time-factor <factor>] " +
             "[--basilisk-endpoint <host:port>] [--run-config <path>] [--record <dir>] " +
             "[--stream-endpoint <host:port>] [--stream-rate-hz <hz>]\n" +
+            "       Argus.Simulation.Host --replay <run dir> [--replay-speed <factor>] " +
+            "[--stream-endpoint <host:port>] [--stream-rate-hz <hz>]\n" +
             "  --duration-s         Simulated seconds to run (default 60).\n" +
             "  --real-time-factor   0 runs unpaced (default); above 0 Basilisk paces each step.\n" +
             "  --basilisk-endpoint  Basilisk service (default $" + EndpointVariable + ", then " + DefaultEndpoint + ").\n" +
             "  --run-config         Run configuration file (default runs/p0-default.json).\n" +
             "  --record             Write dataset v1 under this directory, one <run_id>_<segment> folder per run (default: no recording).\n" +
             "  --stream-endpoint    Loopback address the state stream to Unity listens on (default $" + StreamEndpointVariable + ", then " + DefaultStreamEndpoint + ").\n" +
-            "  --stream-rate-hz     Most state-stream sends per second of wall-clock time, per client (default $" + StreamRateVariable + ", then 10).";
+            "  --stream-rate-hz     Most state-stream sends per second of wall-clock time, per client (default $" + StreamRateVariable + ", then 10).\n" +
+            "  --replay             Replay one recorded run directory (<run_id>_<segment>, as --record writes it) over the state stream,\n" +
+            "                       with no Basilisk service, gateway or controller; takes none of the live-run options above.\n" +
+            "  --replay-speed       Replay pace as a multiple of recorded simulation time, above 0 (default 1).";
+
+        // The options that configure a live run, which a replay rejects.
+        private static readonly string[] LiveRunOptions =
+            { "--duration-s", "--real-time-factor", "--basilisk-endpoint", "--run-config", "--record" };
 
         private HostOptions(
             double durationSeconds,
@@ -45,7 +55,9 @@ namespace Argus.Simulation.Host
             string recordDirectory,
             IPEndPoint streamEndpoint,
             double streamRateHz,
-            TimeSpan streamPeriod)
+            TimeSpan streamPeriod,
+            string replayDirectory,
+            double replaySpeed)
         {
             DurationSeconds = durationSeconds;
             RealTimeFactor = realTimeFactor;
@@ -55,6 +67,8 @@ namespace Argus.Simulation.Host
             StreamEndpoint = streamEndpoint;
             StreamRateHz = streamRateHz;
             StreamPeriod = streamPeriod;
+            ReplayDirectory = replayDirectory;
+            ReplaySpeed = replaySpeed;
         }
 
         public double DurationSeconds { get; }
@@ -75,6 +89,12 @@ namespace Argus.Simulation.Host
         // milliseconds, so a client never receives faster than StreamRateHz.
         public TimeSpan StreamPeriod { get; }
 
+        // Null for a live run; otherwise the recorded run directory the host replays (HOST-7).
+        public string ReplayDirectory { get; }
+
+        // Finite and above 0: wall-clock seconds per recorded simulation second is 1 / ReplaySpeed.
+        public double ReplaySpeed { get; }
+
         // Each endpoint and the stream rate come from the flag, then the environment, then the
         // default.
         public static bool TryParse(string[] args, out HostOptions options, out string error)
@@ -87,10 +107,14 @@ namespace Argus.Simulation.Host
             string recordDirectory = null;
             string streamEndpoint = null;
             string streamRate = null;
+            string replayDirectory = null;
+            double replaySpeed = 1.0;
+            HashSet<string> given = new HashSet<string>(StringComparer.Ordinal);
 
             for (int i = 0; i < args.Length; i++)
             {
                 string name = args[i];
+                given.Add(name);
                 if (i + 1 >= args.Length)
                 {
                     error = $"Missing value for {name}.";
@@ -143,10 +167,44 @@ namespace Argus.Simulation.Host
                     case "--stream-rate-hz":
                         streamRate = value;
                         break;
+                    case "--replay":
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            error = "--replay must be a directory path.";
+                            return false;
+                        }
+
+                        replayDirectory = value;
+                        break;
+                    case "--replay-speed":
+                        if (!TryParseDouble(value, out replaySpeed) || replaySpeed <= 0.0)
+                        {
+                            error = "--replay-speed must be a number above 0.";
+                            return false;
+                        }
+
+                        break;
                     default:
                         error = $"Unknown option {name}.";
                         return false;
                 }
+            }
+
+            if (replayDirectory != null)
+            {
+                foreach (string option in LiveRunOptions)
+                {
+                    if (given.Contains(option))
+                    {
+                        error = $"{option} configures a live run; a replay (--replay) takes none.";
+                        return false;
+                    }
+                }
+            }
+            else if (given.Contains("--replay-speed"))
+            {
+                error = "--replay-speed needs --replay.";
+                return false;
             }
 
             endpoint = FirstSet(endpoint, EndpointVariable, DefaultEndpoint);
@@ -174,7 +232,16 @@ namespace Argus.Simulation.Host
             }
 
             options = new HostOptions(
-                durationSeconds, realTimeFactor, address, runConfigurationPath, recordDirectory, stream, streamRateHz, streamPeriod);
+                durationSeconds,
+                realTimeFactor,
+                address,
+                runConfigurationPath,
+                recordDirectory,
+                stream,
+                streamRateHz,
+                streamPeriod,
+                replayDirectory,
+                replaySpeed);
             error = null;
             return true;
         }

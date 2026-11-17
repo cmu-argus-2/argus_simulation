@@ -30,12 +30,13 @@ namespace Argus.Simulation.Host
         // Cancelled by Stop: every subscription finishes its stream.
         public CancellationToken Stopping => _stopping.Token;
 
-        // A new ConfigureRun or Reset: a new generation, with no pair and no cached frame, so no
-        // subscription ever mixes two runs. Throws for a non-camera sensor whose frames the stream
-        // cannot carry as a value map, so the run fails at t_0 instead of a client's first send.
-        public void BeginGeneration(SimulationConfiguration run)
+        // A new ConfigureRun or Reset, or a replay (HOST-7): a new generation, with no pair and no
+        // cached frame, so no subscription ever mixes two runs. Throws for a non-camera sensor whose
+        // frames the stream cannot carry as a value map, so the run fails at t_0 instead of a
+        // client's first send.
+        public void BeginGeneration(SimulationConfiguration run, PbStream.RunSource source = PbStream.RunSource.Live)
         {
-            StreamGeneration generation = new StreamGeneration(Guid.NewGuid().ToString("N"), run);
+            StreamGeneration generation = new StreamGeneration(Guid.NewGuid().ToString("N"), run, source);
             Volatile.Write(ref _latest, null);
             _pendingState = null;
             _latestFrames = new Dictionary<string, ISensorFrame>(StringComparer.Ordinal);
@@ -93,13 +94,15 @@ namespace Argus.Simulation.Host
             _generation ?? throw new InvalidOperationException("The state stream has no run yet.");
     }
 
-    // One ConfigureRun or Reset of the stream: its ID and the run's devices, by role on the stream.
+    // One ConfigureRun or Reset of the stream, or one replay: its ID, where the run comes from and
+    // the run's devices, by role on the stream.
     internal sealed class StreamGeneration
     {
-        public StreamGeneration(string id, SimulationConfiguration run)
+        public StreamGeneration(string id, SimulationConfiguration run, PbStream.RunSource source)
         {
             Id = id;
             Run = run;
+            Source = source;
             Dictionary<string, IBackendSensorKind> streamed = new Dictionary<string, IBackendSensorKind>(StringComparer.Ordinal);
             Cameras = new HashSet<string>(StringComparer.Ordinal);
             foreach (DeviceConfiguration device in run.Devices)
@@ -131,6 +134,9 @@ namespace Argus.Simulation.Host
 
         public string Id { get; }
         public SimulationConfiguration Run { get; }
+
+        // Live or Replay, sent with every pair so the dashboard can label a replay.
+        public PbStream.RunSource Source { get; }
 
         // The non-camera sensors the stream carries, with the kind that writes their payloads.
         public IReadOnlyDictionary<string, IBackendSensorKind> Streamed { get; }

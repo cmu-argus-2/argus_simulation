@@ -221,7 +221,10 @@ the host's state stream (UNITY-6), so every run records there.
 |---|---|---|---|
 | Basilisk run | `headless/Host` (`BasiliskEngine`) | `headless/Host` | Unity, through Core's `IImageRenderer`, over the render link (UNITY-10 #64, G3) |
 
-`manifest.writer.process` records which process wrote the dataset. Unity-driven analytic runs, and
+`manifest.writer.process` records which process wrote the dataset. `headless/Host --replay`
+reads one run directory back and plays it over the state stream (HOST-7, `headless/README.md`):
+the manifest's devices, `states.jsonl` and the non-camera frames of `sensors.jsonl`, with the
+reader checks below. Unity-driven analytic runs, and
 the temporary sensor bridge that fed them, were removed with Unity's analytic source (UNITY-6); the
 analytic engine stays a Core test fixture (D9).
 
