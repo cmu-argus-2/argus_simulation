@@ -9,8 +9,11 @@ import sys
 import pytest
 
 from argus_basilisk.contracts import service_pb
-from argus_basilisk.devices import KINDS
+from argus_basilisk.devices import KINDS, actuators
 from argus_basilisk.validation import (
+    actuator_parameters,
+    command_values,
+    MAXIMUM_PACED_STEP_SECONDS,
     WMM2025_VALIDITY,
     UtcWindow,
     ValidationError,
@@ -116,6 +119,22 @@ def momentum_wheel(device_id="wheel.x", spin_axis=(1.0, 0.0, 0.0), speed=0.0):
     return result
 
 
+def magnetic_torquer(device_id="mtq.xp", axis=X, max_dipole=0.0814):
+    return actuator(device_id, "magnetic_torquer", {
+        "dipole_axis_body": axis,
+        "max_dipole_a_m2": max_dipole,
+        "limit_policy": "clamp",
+    })
+
+
+def thruster(device_id="thruster.px"):
+    return actuator(device_id, "thruster", {
+        "thrust_direction_body": X,
+        "max_thrust_n": 0.01,
+        "limit_policy": "reject",
+    })
+
+
 def light_sensor(device_id, position, sensor_x, sensor_y, sensor_z):
     return device(device_id, "light_sensor", {
         "field_of_view_half_angle_rad": math.pi / 2.0,
@@ -130,7 +149,8 @@ def p0_default_request():
     """The P0 request as BasiliskProtoMapper sends it, with fixed test values.
 
     A baseline for these tests, not a copy of headless/Host/runs/p0-default.json, which holds the
-    DATA-1 (#67) values.
+    DATA-1 (#67) values. Its torque.body keeps a 1 mN·m clamp torque (ideal_body_torque), where P0
+    rejects past 1e-4 N·m, so the service tests can move the body measurably.
     """
     configuration = run_configuration_pb2.RunConfiguration(
         run_id="p0-default",
@@ -265,6 +285,7 @@ INVALID_CASES = [
      "configuration.kernel_set_id"),
     ("negative real_time_factor", lambda r: setattr(r, "real_time_factor", -1.0), "real_time_factor"),
     ("NaN real_time_factor", lambda r: setattr(r, "real_time_factor", math.nan), "real_time_factor"),
+    ("paced step over an hour", lambda r: setattr(r, "real_time_factor", 1e-6), "real_time_factor"),
     ("bad timestamp nanos", lambda r: setattr(r.configuration.epoch_utc, "nanos", 1_000_000_000),
      "configuration.epoch_utc.nanos"),
     # Required messages and oneofs.
@@ -341,14 +362,14 @@ INVALID_CASES = [
      'configuration.devices[1].parameters["range_tesla"]: must be finite and > 0'),
     ("zero light saturation", lambda r: setattr(parameter(r, 4, "saturation_w_per_m2"), "number", 0.0),
      'configuration.devices[4].parameters["saturation_w_per_m2"]: must be finite and > 0'),
-    # bsk 2.11.1 limits.
+    # imuSensor limits.
     ("gyro noise and random walk",
      lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"), "number", 1e-6),
-     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: bsk 2.11.1 cannot combine'),
+     'configuration.devices[0].parameters["gyroscope.bias_random_walk_rad_per_s_per_sqrt_s"]: imuSensor cannot combine'),
     ("accel noise and random walk",
      lambda r: setattr(parameter(r, 0, "accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"), "number", 1e-5),
      'configuration.devices[0].parameters["accelerometer.bias_random_walk_m_per_s2_per_sqrt_s"]: '
-     'bsk 2.11.1 cannot combine'),
+     'imuSensor cannot combine'),
     ("walk bound without random walk",
      lambda r: setattr(parameter(r, 0, "gyroscope.bias_random_walk_bound_rad_per_s"), "number", 1e-3),
      'configuration.devices[0].parameters["gyroscope.bias_random_walk_bound_rad_per_s"]: needs'),
@@ -363,10 +384,39 @@ def test_invalid_argument_names_the_field(mutate, path):
     request = p0_default_request()
     mutate(request)
 
-    problem = only_problem(request)
+    # A wheel is checked like any device, and also refused as not built.
+    problems = [problem for problem in problems_of(request) if not problem.details.endswith(UNBUILT_WHEEL)]
+    assert len(problems) == 1, problems
+    problem = problems[0]
 
     assert problem.code == "INVALID_ARGUMENT"
     assert problem.details.startswith(path), problem.details
+
+
+UNBUILT_WHEEL = "is registered but not built by this service, got 'momentum_wheel'"
+
+
+@pytest.mark.parametrize("built", [momentum_wheel, thruster], ids=["momentum_wheel", "thruster"])
+def test_an_actuator_kind_without_a_builder_is_unimplemented(built):
+    # P0 carries no wheel or thruster (DATA-2, #68), so the service registers both kinds and builds
+    # neither (README §9 "Actuators"). The run is refused instead of ignoring the device.
+    request = p0_default_request()
+    request.configuration.devices.append(built())
+    problem = only_problem(request)
+    assert problem.code == "UNIMPLEMENTED"
+    assert problem.details == f"configuration.devices[9].kind: is registered but not built by this service, got {built().kind!r}"
+
+
+def test_a_run_builds_at_most_36_magnetic_torquers():
+    # bsk MAX_EFF_CNT bounds MtbEffector's arrays; the 37th torquer is the one refused.
+    request = p0_default_request()
+    request.configuration.devices.extend(magnetic_torquer(f"mtq.{index}") for index in range(36))
+    assert problems_of(request) == []
+    request.configuration.devices.append(magnetic_torquer("mtq.36"))
+    problem = only_problem(request)
+    assert problem.code == "UNIMPLEMENTED"
+    assert problem.details == (
+        "configuration.devices[45].kind: one run builds at most 36 devices of this kind, got 'magnetic_torquer'")
 
 
 def test_bad_value_is_named():
@@ -432,22 +482,28 @@ def test_an_unknown_kind_skips_the_parameter_checks():
     assert problem.details.startswith("configuration.devices[1].kind")
 
 
-def test_pacing_is_unimplemented():
+@pytest.mark.parametrize("real_time_factor", [1.0, 0.1 / MAXIMUM_PACED_STEP_SECONDS])
+def test_pacing_is_valid_up_to_an_hour_per_step(real_time_factor):
+    request = p0_default_request()  # 0.1 s steps.
+    request.real_time_factor = real_time_factor
+    assert problems_of(request) == []
+
+
+def test_a_paced_step_over_an_hour_is_invalid():
     request = p0_default_request()
-    request.real_time_factor = 1.0
+    request.real_time_factor = 0.1 / MAXIMUM_PACED_STEP_SECONDS * 0.999
     problem = only_problem(request)
-    assert problem.code == "UNIMPLEMENTED"
-    assert problem.details.startswith("real_time_factor")
+    assert problem.code == "INVALID_ARGUMENT"
+    assert problem.details.startswith("real_time_factor: would pace each step to over 3600 s")
 
 
-def test_invalid_argument_outranks_unimplemented_and_out_of_range():
+def test_invalid_argument_outranks_out_of_range():
     request = p0_default_request()
-    request.real_time_factor = 2.0
     request.configuration.epoch_utc.FromDatetime(datetime(2027, 1, 1, tzinfo=timezone.utc))
     request.configuration.spacecraft.mass_kg = -1.0
 
     codes = [problem.code for problem in problems_of(request)]
-    assert codes == ["INVALID_ARGUMENT", "UNIMPLEMENTED", "OUT_OF_RANGE"]
+    assert codes == ["INVALID_ARGUMENT", "OUT_OF_RANGE"]
     with pytest.raises(ValidationError) as error:
         validate_configure_run(request, coverage_utc=COVERAGE)
     assert error.value.code == "INVALID_ARGUMENT"
@@ -487,6 +543,12 @@ def test_wmm_window_applies_only_with_a_magnetometer():
 
     request.configuration.devices.pop(1)
     assert problems_of(request) == []
+
+    # A magnetic torquer pushes against the same field, so it brings the window back.
+    request.configuration.devices.append(magnetic_torquer())
+    problem = only_problem(request)
+    assert problem.code == "OUT_OF_RANGE"
+    assert "WMM2025 validity (magnetometer or magnetic torquer configured)" in problem.details
 
 
 def test_step_time_check_uses_exact_nanoseconds():
@@ -530,6 +592,8 @@ def test_empty_step_command_is_valid():
 
 
 ACTUATORS = {"torque.body": KINDS["ideal_body_torque"]}
+# As actuator_parameters decodes ideal_body_torque().
+PARAMETERS = {"torque.body": {"max_torque_body_n_m": (1e-3, 1e-3, 1e-3), "limit_policy": "clamp"}}
 
 
 def test_step_command_for_a_device_that_is_not_a_configured_actuator_is_invalid():
@@ -539,13 +603,42 @@ def test_step_command_for_a_device_that_is_not_a_configured_actuator_is_invalid(
     assert error.value.details.startswith("commands.commands[0].device_id: is not an actuator this run configures")
 
 
-def test_idle_step_command_is_valid_and_any_other_is_unimplemented():
-    # No effector is built until BSK-8, so only the idle command, which applies nothing, runs.
-    validate_step_command(torque_command(x=0.0), actuators=ACTUATORS)
+def test_a_command_within_its_devices_limits_is_valid_and_one_past_them_is_invalid():
+    # The gateway applies each device's limit_policy first (CORE-10, #46), so the service never
+    # clamps: a command past the limits is refused, and one at them runs.
+    for x in (0.0, 1e-4, 1e-3, -1e-3):
+        validate_step_command(torque_command(x=x), actuators=ACTUATORS, parameters=PARAMETERS)
     with pytest.raises(ValidationError) as error:
-        validate_step_command(torque_command(), actuators=ACTUATORS)
-    assert error.value.code == "UNIMPLEMENTED"
-    assert error.value.details.startswith("commands.commands[0]: applying actuator commands is not built yet")
+        validate_step_command(torque_command(x=-1.5e-3), actuators=ACTUATORS, parameters=PARAMETERS)
+    assert error.value.code == "INVALID_ARGUMENT"
+    assert error.value.details == (
+        'commands.commands[0].values["torque_body_n_m"]: must be within max_torque_body_n_m (0.001, 0.001, 0.001) '
+        'on each body axis, got (-0.0015, 0.0, 0.0)')
+
+    torquers = {"mtq.xp": KINDS["magnetic_torquer"]}
+    limits = {"mtq.xp": {"dipole_axis_body": X, "max_dipole_a_m2": 0.0814, "limit_policy": "clamp"}}
+    commands = commands_pb2.DeviceCommandSet()
+    dipole = commands.commands.add(device_id="mtq.xp").values["dipole_a_m2"]
+    dipole.number = -0.0814
+    validate_step_command(commands, actuators=torquers, parameters=limits)
+    dipole.number = 0.0815
+    with pytest.raises(ValidationError) as error:
+        validate_step_command(commands, actuators=torquers, parameters=limits)
+    assert error.value.details == (
+        'commands.commands[0].values["dipole_a_m2"]: must be within +-max_dipole_a_m2 (0.0814), got 0.0815')
+
+
+def test_actuator_parameters_and_command_values_decode_the_run_and_fill_in_idle_actuators():
+    request = p0_default_request()
+    request.configuration.devices.append(magnetic_torquer())
+    actuators_ = actuators(request.configuration)
+    assert actuator_parameters(request.configuration) == {
+        **PARAMETERS, "mtq.xp": {"dipole_axis_body": X, "max_dipole_a_m2": 0.0814, "limit_policy": "clamp"}}
+    # The set is complete: the torquer it leaves out runs at its kind's IDLE values.
+    assert command_values(torque_command(), actuators_) == {
+        "torque.body": {"torque_body_n_m": (1e-4, 0.0, 0.0)}, "mtq.xp": {"dipole_a_m2": 0.0}}
+    assert command_values(zero_command(), actuators_) == {
+        "torque.body": {"torque_body_n_m": (0.0, 0.0, 0.0)}, "mtq.xp": {"dipole_a_m2": 0.0}}
 
 
 def test_negative_thrust_is_invalid():
@@ -613,13 +706,15 @@ def test_step_command_timing_and_zero_step_zero():
 
     later = step(3, 2, 200_000_000)
     later.commands.CopyFrom(torque_command())
-    assert [problem.code for problem in step_request_problems(later, 100_000_000, actuators)] == ["UNIMPLEMENTED"]
+    assert step_request_problems(later, 100_000_000, actuators, PARAMETERS) == []
     assert [problem.code for problem in step_request_problems(later, 100_000_000)] == ["INVALID_ARGUMENT"]
 
-    # A command for the wrong step outranks the actuator command it carries.
+    # Both problems are reported: the command for the wrong step and the actuator command past its
+    # limits.
     later.command_sequence = 3
-    assert [problem.code for problem in step_request_problems(later, 100_000_000, actuators)] == [
-        "INVALID_ARGUMENT", "UNIMPLEMENTED"]
+    later.commands.CopyFrom(torque_command(x=1.0))
+    assert [problem.details.split(":")[0] for problem in step_request_problems(
+        later, 100_000_000, actuators, PARAMETERS)] == ["command_sequence", 'commands.commands[0].values["torque_body_n_m"]']
 
     unset = step(3, 2, 200_000_000)
     unset.ClearField("commands")

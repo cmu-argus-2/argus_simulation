@@ -36,7 +36,11 @@ changing the GUI, flight-hardware adapters, sensor contracts, or exporters.
 6. **Pixels are renderer output, not dynamics truth.** The core specifies camera pose,
    timing, and calibration; Unity or another renderer produces image bytes.
 7. **SIL runs are deterministic by default.** SIL and test runs use lockstep `Reset` and
-   `Step`; wall-clock HIL is a separate runtime mode.
+   `Step`; wall-clock HIL is a separate runtime mode. One exception: a camera frame's arrival
+   step, status and pixels are only as deterministic as its renderer (a render that fails is
+   published `Unavailable`; a renderer that streams its scene can return different pixels),
+   while its capture time and capture state are fixed
+   ([target-architecture.md](target-architecture.md) §4, G3).
 
 ## 3. Logical architecture
 
@@ -117,12 +121,17 @@ flowchart TB
 7. Unity receives decimated states independently and cannot block the loop.
 
 This mode can run faster or slower than real time and is the default for SIL and tests.
-On `main`, `SimulationGateway` exposes `Reset()` and `Step(commands)` and returns truth
-`SimulationState`s; `Reset(seed, scenario)`, observation returns (D7) and the decimated
-Unity stream (G2) are planned ([target-architecture.md §4](target-architecture.md#4-run-modes)).
-The step ordering that lets command k be computed from observation k, and what `scenario`
-and an observation hold, are decided in target-architecture §4; `ISimulationEngine` and the
-gateway change to match in CORE-4 (#40).
+On `main`, `SimulationGateway` exposes `Reset(seed, scenario)`, which returns observation 0,
+and `Step(command k)`, which returns observation k+1 (CORE-4, #40). An observation holds the
+controller-visible frames, never a truth `SimulationState` (D7). Truth and every frame leave the
+gateway through its `StateProduced` and `SensorOutputProduced` events, and the recorder receives
+them all. The state stream that `headless/Host` serves (HOST-3, `StateStreamPublisher`) does not:
+it keeps one pair, replaced every step, of the step's state and the latest frame of each
+non-camera sensor as of that step. It carries no camera frames, whose images go over the render
+link (UNITY-10), and each subscription sends the latest pair at most at the stream rate. Unity's
+client is a placeholder (UNITY-5, G2). The step ordering that lets command k be computed from
+observation k, and what `scenario` and an observation hold, are decided in
+[target-architecture.md §4](target-architecture.md#4-run-modes).
 
 ### 5.2 Hardware-in-the-loop mode
 
@@ -237,8 +246,10 @@ Dynamics state
 
 For GUI-only use, Unity may display its render texture locally. When flight software or a
 flight computer requires pixels, the renderer returns an `ImageFrame` for that exact
-simulation sequence. A graphics-free run must explicitly select an alternate image provider or mark
-the camera `Unavailable`; it must not silently return a black image.
+simulation sequence. The gateway gives a controller that frame as a `CameraObservation`: the
+pixels and exposure timing, without the camera pose or the Sun (D7, CORE-23). A graphics-free
+run must explicitly select an alternate image provider or mark the camera `Unavailable`; it
+must not silently return a black image.
 
 NASA GIBS imagery is an Earth texture/reference source, not ground truth by itself.
 Validation must retain capture time, footprint, camera calibration, and source imagery
@@ -282,8 +293,11 @@ units, ECI/ECEF conversion, attitude convention, timestamp conversion, resets, a
 command application. `BasiliskStateMapperTests` covers frames, attitude and time with literal
 SPICE data. On real Basilisk, HOST-4 (#28) and HOST-5 (#29) confirmed units, J2000 to ITRF93,
 the attitude convention, timestamps and resets on the host's output, against CSPICE and an
-independent orbit propagation (target-architecture G4). Still missing: command application,
-since no backend applies commands yet (target-architecture G1, BSK-8 #21).
+independent orbit propagation (target-architecture G4). Command application on real Basilisk
+is covered by BSK-8 (#21): the service tests check a constant ideal body torque against Euler's
+equation, the step each command acts over, and the magnetic torquers' `m × B`, and
+`AGatewayOverTheServiceAppliesATorqueOverItsStep` checks it through the gateway and
+`BasiliskEngine`.
 
 ## 12. Transport strategy
 
@@ -375,7 +389,8 @@ folders, is [code-organization.md](code-organization.md).
 
 - [x] Implement the `BasiliskEngine` client and mapping tests.
 - [ ] Implement the Basilisk service and validate `BasiliskEngine` against it.
-- [ ] Validate the analytic and Basilisk trajectories against reference cases.
+- [x] Validate the analytic and Basilisk trajectories against reference cases (HOST-8, #32: the Basilisk path
+      validated, the analytic fixture's deviation measured and development only; target-architecture G4).
 - [ ] Add synchronized camera rendering and NASA-image comparison metrics.
 
 ## 16. Current limitations
@@ -389,7 +404,7 @@ star-tracker, power, thermal, radio and radiation models are unavailable until t
 and hardware profiles are implemented. The body cameras (CORE-6) and the nadir ground-truth camera (CORE-8) are built, but their frames are
 `Unavailable` until a renderer exists (UNITY-4). The v1
 Basilisk-link schemas and the `BasiliskEngine` client exist; the Basilisk service's
-pacing and actuators, the other network transports and the physical hardware adapters are not
+actuators, the other network transports and the physical hardware adapters are not
 implemented yet.
 
 ## References

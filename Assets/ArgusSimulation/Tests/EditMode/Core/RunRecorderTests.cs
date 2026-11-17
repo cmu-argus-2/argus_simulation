@@ -85,6 +85,46 @@ namespace Argus.Simulation.Tests
             Assert.That(Field(manifest, "dropped_states"), Is.EqualTo("0"));
         }
 
+        // CORE-10: a clamped command is one commands.jsonl line with the command as sent, what the
+        // engine ran and why, and the next state's producing_command is what the engine ran.
+        [Test]
+        public void AClampedCommandIsRecordedAsSentAndAsApplied()
+        {
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                AnalyticSimulationEngine analytic = Analytic();
+                SimulationGateway gateway = RecordedGateway(recorder, new ApplyingEngine(analytic), analytic.Orbit);
+                gateway.Reset(0, new SimulationConfiguration(
+                    "test-run",
+                    DateTimeOffset.UnixEpoch,
+                    0.5,
+                    devices: new[]
+                    {
+                        IdealBodyTorqueKind.Instance.Configure(
+                            new SensorDefinition("torque.body", "test-actuator", "torque_body", 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false),
+                            new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))
+                    }));
+                gateway.Step(new DeviceCommandSet(0, 0.0, new[]
+                {
+                    new DeviceCommand("torque.body", new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(-0.002, 0.0005, 0.0)).Build())
+                }));
+                recorder.Close();
+            }
+
+            string run = Path.Combine(_root, "test-run_0");
+            string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
+            Assert.That(commands.Length, Is.EqualTo(1));
+            Assert.That(Field(commands[0], "outcome"), Is.EqualTo("\"Clamped\""));
+            Assert.That(commands[0], Does.Contain(
+                "\"reason\":\"Device 'torque.body' command values[\\\"torque_body_n_m\\\"] (-0.002, 0.0005, 0) is past " +
+                "max_torque_body_n_m (0.001, 0.001, 0.001); clamped.\""));
+            Assert.That(commands[0], Does.Contain("\"requested\":{\"sequence\":0"));
+            Assert.That(commands[0], Does.Contain("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[-0.002,0.0005,0]}}"));
+            Assert.That(commands[0], Does.EndWith("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[-0.001,0.0005,0]}}}}"));
+            string[] states = File.ReadAllLines(Path.Combine(run, "states.jsonl"));
+            Assert.That(states[1], Does.Contain("\"torque_body_n_m\":[-0.001,0.0005,0]"));
+        }
+
         [Test]
         public void StalledWriterNeverDelaysTheStepLoop()
         {
@@ -214,7 +254,7 @@ namespace Argus.Simulation.Tests
             {
                 recorder.BeginRun(
                     new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, 0.1),
-                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity) });
+                    new[] { new SensorDefinition(cameraId, "test-camera", "cam_test", 1.0, "simulation", SensorMount.Identity, isControllerVisible: true) });
                 recorder.RecordSensorOutput(new SensorOutputSet("test-run", 13, 1.3, new ISensorFrame[]
                 {
                     Frame(late, SensorFrameStatus.Valid, new ImageFrame(late, ImageEncoding.Rgb8, new byte[4 * 2 * 3], "test-renderer"))
@@ -319,10 +359,14 @@ namespace Argus.Simulation.Tests
             return gateway;
         }
 
+        // Not controller-visible: the recorder gets every frame either way, and the ideal body-rate
+        // stand-in publishes an AngularRateMeasurement, which the imu kind's projection does not take
+        // (CORE-23).
         private static SimulationConfiguration Scenario(double fixedStepSeconds)
         {
             DeviceConfiguration rate = ImuKind.Instance.Configure(
-                new SensorDefinition("imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity),
+                new SensorDefinition(
+                    "imu.body_rate", "test-rate", "body", fixedStepSeconds, DeviceSource.Basilisk, SensorMount.Identity, isControllerVisible: false),
                 TestImu.P0LikeProfile());
             return new SimulationConfiguration("test-run", DateTimeOffset.UnixEpoch, fixedStepSeconds, devices: new[] { rate });
         }

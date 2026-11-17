@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Argus.Simulation.Core;
 using NUnit.Framework;
@@ -6,36 +7,124 @@ namespace Argus.Simulation.Tests
 {
     public sealed class DeviceKindsTests
     {
-        // Each kind declares whether the backend models it, so Argus never computes a kind the
-        // backend models (D10, CORE-18), and whether a controller may see its frames, which a kind
-        // whose frames carry truth may not (D7), and whether it is a camera (ICameraKind: the
-        // recorder's cameras[] and the shared profile-ID rule, CORE-6). A new kind fails here until it
-        // has a row.
+        // CORE-10: each actuator kind holds a command to its device's limits. Within them, the values
+        // come back as given and excess is null; past them, each value is at its nearest limit, with its
+        // sign, and excess names it. At the limit is within.
+        [TestCase("ideal_body_torque", 1e-3, 1e-3, null)]
+        [TestCase("ideal_body_torque", 2e-3, 1e-3, "values[\"torque_body_n_m\"] (0, 0.002, -0.0005) is past max_torque_body_n_m (0.001, 0.001, 0.001)")]
+        [TestCase("ideal_body_torque", -2e-3, -1e-3, "values[\"torque_body_n_m\"] (0, -0.002, -0.0005) is past max_torque_body_n_m (0.001, 0.001, 0.001)")]
+        [TestCase("magnetic_torquer", -0.0814, -0.0814, null)]
+        [TestCase("magnetic_torquer", -0.1, -0.0814, "values[\"dipole_a_m2\"] -0.1 is past max_dipole_a_m2 0.0814")]
+        [TestCase("momentum_wheel", 2e-3, 1e-3, "values[\"motor_torque_n_m\"] 0.002 is past max_torque_n_m 0.001")]
+        [TestCase("momentum_wheel", -5e-4, -5e-4, null)]
+        [TestCase("thruster", 0.02, 0.01, "values[\"thrust_n\"] 0.02 is past max_thrust_n 0.01")]
+        [TestCase("thruster", 0.0, 0.0, null)]
+        public void EachActuatorKindHoldsACommandToItsDevicesLimits(string kindName, double command, double expected, string expectedExcess)
+        {
+            (IActuatorKind kind, DeviceValues parameters, string key) = kindName switch
+            {
+                "ideal_body_torque" => ((IActuatorKind)IdealBodyTorqueKind.Instance,
+                    Parameters(IdealBodyTorqueKind.Instance.Configure(Actuator(), new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))),
+                    IdealBodyTorqueKind.TorqueKey),
+                "magnetic_torquer" => (MagneticTorquerKind.Instance,
+                    Parameters(MagneticTorquerKind.Instance.Configure(Actuator(), new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.0814, ActuatorLimitPolicy.Clamp))),
+                    MagneticTorquerKind.DipoleKey),
+                "momentum_wheel" => (MomentumWheelKind.Instance,
+                    Parameters(MomentumWheelKind.Instance.Configure(Actuator(), new MomentumWheelProfile(new Vector3d(0.0, 0.0, 1.0), 3.39e-6, 1e-3, 600.0, ActuatorLimitPolicy.Reject), 0.0)),
+                    MomentumWheelKind.MotorTorqueKey),
+                _ => (ThrusterKind.Instance,
+                    Parameters(ThrusterKind.Instance.Configure(Actuator(), new ThrusterProfile(new Vector3d(1.0, 0.0, 0.0), 0.01, ActuatorLimitPolicy.Reject))),
+                    ThrusterKind.ThrustKey)
+            };
+            // The torque's other axes are within, so only the y component changes.
+            bool isVector = kindName == "ideal_body_torque";
+            DeviceValues values = isVector
+                ? new DeviceValues.Builder().Add(key, new Vector3d(0.0, command, -5e-4)).Build()
+                : new DeviceValues.Builder().Add(key, command).Build();
+            Assert.That(kind.FindCommandProblem(values), Is.Null);
+
+            DeviceValues limited = kind.Limit(parameters, values, out string excess);
+
+            Assert.That(excess, Is.EqualTo(expectedExcess));
+            if (isVector)
+            {
+                Assert.That(limited.Vector3(key), Is.EqualTo(new Vector3d(0.0, expected, -5e-4)));
+            }
+            else
+            {
+                Assert.That(limited.Number(key), Is.EqualTo(expected));
+            }
+
+            Assert.That(ReferenceEquals(limited, values), Is.EqualTo(expectedExcess == null), "unchanged values come back as given");
+        }
+
+        // The ideal torque holds each body axis to its own limit: x and y are past theirs, and z, past
+        // x's and y's limits but within its own, is unchanged. Any axis checked against another's limit
+        // gives a different result.
         [Test]
-        public void EveryKindDeclaresWhoModelsItWhetherAControllerMaySeeItAndWhetherItIsACamera()
+        public void TheIdealTorqueHoldsEachAxisToItsOwnLimit()
+        {
+            DeviceValues parameters = IdealBodyTorqueKind.Instance.Configure(
+                Actuator(), new IdealBodyTorqueProfile(new Vector3d(1e-3, 2e-3, 3e-3), ActuatorLimitPolicy.Clamp)).Parameters;
+            DeviceValues command = new DeviceValues.Builder()
+                .Add(IdealBodyTorqueKind.TorqueKey, new Vector3d(1.5e-3, 2.5e-3, 2.5e-3))
+                .Build();
+
+            DeviceValues limited = IdealBodyTorqueKind.Instance.Limit(parameters, command, out string excess);
+
+            Assert.That(limited.Vector3(IdealBodyTorqueKind.TorqueKey), Is.EqualTo(new Vector3d(1e-3, 2e-3, 2.5e-3)));
+            Assert.That(excess, Is.EqualTo(
+                "values[\"torque_body_n_m\"] (0.0015, 0.0025, 0.0025) is past max_torque_body_n_m (0.001, 0.002, 0.003)"));
+        }
+
+        [Test]
+        public void AnActuatorsLimitPolicyIsItsParameter()
+        {
+            DeviceConfiguration clamp = MagneticTorquerKind.Instance.Configure(
+                Actuator(), new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.0814, ActuatorLimitPolicy.Clamp));
+            DeviceConfiguration reject = MagneticTorquerKind.Instance.Configure(
+                Actuator(), new MagneticTorquerProfile(new Vector3d(1.0, 0.0, 0.0), 0.0814, ActuatorLimitPolicy.Reject));
+
+            Assert.That(MagneticTorquerKind.Instance.LimitPolicyOf(clamp.Parameters), Is.EqualTo(ActuatorLimitPolicy.Clamp));
+            Assert.That(MagneticTorquerKind.Instance.LimitPolicyOf(reject.Parameters), Is.EqualTo(ActuatorLimitPolicy.Reject));
+        }
+
+        private static SensorDefinition Actuator() =>
+            new SensorDefinition("act.test", "test-actuator", "act_test", 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false);
+
+        private static DeviceValues Parameters(DeviceConfiguration configuration) => configuration.Parameters;
+
+        // Each kind declares whether the backend models it, so Argus never computes a kind the
+        // backend models (D10, CORE-18); what a controller sees of its frames (its ControllerProjection's
+        // output, D7): nothing for a kind whose frames are truth, the measurement itself for a kind
+        // whose frames carry none, and for a camera a CameraObservation without the pose (CORE-23);
+        // and whether it is a camera (ICameraKind: the recorder's cameras[] and the shared profile-ID
+        // rule, CORE-6). A new kind fails here until it has a row.
+        [Test]
+        public void EveryKindDeclaresWhoModelsItWhatAControllerSeesAndWhetherItIsACamera()
         {
             const DeviceRole sensor = DeviceRole.Sensor;
             const DeviceRole actuator = DeviceRole.Actuator;
-            (string Name, DeviceRole Role, bool IsBackendModelled, bool MayBeControllerVisible, bool IsCamera)[] kinds =
+            (string Name, DeviceRole Role, bool IsBackendModelled, Type ControllerPayload, bool IsCamera)[] kinds =
             {
-                ("imu", sensor, true, true, false),
-                ("magnetometer", sensor, true, true, false),
-                ("light_sensor", sensor, true, true, false),
-                ("camera", sensor, false, false, true),
-                ("nadir_ground_truth_camera", sensor, false, false, true),
-                ("ideal_body_torque", actuator, true, false, false),
-                ("momentum_wheel", actuator, true, false, false),
-                ("magnetic_torquer", actuator, true, false, false),
-                ("thruster", actuator, true, false, false)
+                ("imu", sensor, true, typeof(ImuMeasurement), false),
+                ("magnetometer", sensor, true, typeof(MagnetometerMeasurement), false),
+                ("light_sensor", sensor, true, typeof(LightSensorMeasurement), false),
+                ("camera", sensor, false, typeof(CameraObservation), true),
+                ("nadir_ground_truth_camera", sensor, false, null, true),
+                ("ideal_body_torque", actuator, true, null, false),
+                ("momentum_wheel", actuator, true, null, false),
+                ("magnetic_torquer", actuator, true, null, false),
+                ("thruster", actuator, true, null, false)
             };
 
             Assert.That(DeviceKinds.All.Select(kind => kind.Name), Is.EquivalentTo(kinds.Select(row => row.Name)));
-            foreach ((string name, DeviceRole role, bool isBackendModelled, bool mayBeControllerVisible, bool isCamera) in kinds)
+            foreach ((string name, DeviceRole role, bool isBackendModelled, Type controllerPayload, bool isCamera) in kinds)
             {
                 IDeviceKind kind = DeviceKinds.Find(name);
                 Assert.That(kind.Role, Is.EqualTo(role), name);
                 Assert.That(kind.IsBackendModelled, Is.EqualTo(isBackendModelled), name);
-                Assert.That(kind.MayBeControllerVisible, Is.EqualTo(mayBeControllerVisible), name);
+                Assert.That(kind.ControllerProjection?.OutputPayloadType, Is.EqualTo(controllerPayload), name);
                 Assert.That(kind is IBackendSensorKind, Is.EqualTo(isBackendModelled && role == sensor), name);
                 Assert.That(kind is IActuatorKind, Is.EqualTo(role == actuator), name);
                 Assert.That(kind is ICameraKind, Is.EqualTo(isCamera), name);
@@ -43,6 +132,95 @@ namespace Argus.Simulation.Tests
 
             Assert.That(default(DeviceConfiguration).IsBackendModelled, Is.False);
             Assert.That(default(DeviceConfiguration).MayBeControllerVisible, Is.False);
+        }
+
+        // A kind's projection takes the payload its sensor publishes, so a visible device's frames
+        // never fail the gateway's type check; and a device may be visible exactly when its kind has
+        // a projection. Every registered kind is covered through its registry sample.
+        [Test]
+        public void EveryProjectionTakesWhatItsKindsSensorPublishes()
+        {
+            foreach (DeviceConfiguration sample in RegistrySamples())
+            {
+                ControllerProjection projection = sample.KindDefinition.ControllerProjection;
+                Assert.That(sample.MayBeControllerVisible, Is.EqualTo(projection != null), sample.Kind);
+                if (projection != null)
+                {
+                    ISensor built = sample.KindDefinition.CreateSensor(sample, null);
+                    Assert.That(projection.InputPayloadType, Is.EqualTo(PublishedPayload(built)), sample.Kind);
+                }
+            }
+        }
+
+        // No kind shows a controller a truth type (D7): no projection outputs, or holds anywhere in
+        // its payload's fields, a state, a render request or an ImageFrame (which holds a render
+        // request). The kinds table pins each output type, but a new row is written by the same hand
+        // as its kind, so this check doesn't depend on it.
+        [Test]
+        public void NoKindShowsAControllerATruthType()
+        {
+            Type[] truth =
+            {
+                typeof(SimulationState), typeof(SpacecraftState), typeof(EnvironmentState),
+                typeof(RenderRequest), typeof(ImageFrame)
+            };
+            foreach (IDeviceKind kind in DeviceKinds.All)
+            {
+                if (kind.ControllerProjection != null)
+                {
+                    Type output = kind.ControllerProjection.OutputPayloadType;
+                    Assert.That(TruthReachableFrom(output, truth, new System.Collections.Generic.HashSet<Type>()), Is.Null, kind.Name);
+                }
+            }
+        }
+
+        // The first truth type that type is, or holds at any depth, or null: through nullables, arrays
+        // and generic type arguments of any assembly, and through the instance fields of this
+        // project's types, base classes' private fields included.
+        private static Type TruthReachableFrom(Type type, Type[] truth, System.Collections.Generic.HashSet<Type> seen)
+        {
+            if (truth.Contains(type))
+            {
+                return type;
+            }
+
+            if (type.IsArray)
+            {
+                return TruthReachableFrom(type.GetElementType(), truth, seen);
+            }
+
+            if (type.IsGenericType)
+            {
+                foreach (Type argument in type.GetGenericArguments())
+                {
+                    Type found = TruthReachableFrom(argument, truth, seen);
+                    if (found != null)
+                    {
+                        return found;
+                    }
+                }
+            }
+
+            if (type.Assembly != typeof(IDeviceKind).Assembly || !seen.Add(type))
+            {
+                return null;
+            }
+
+            for (Type level = type; level != null && level.Assembly == type.Assembly; level = level.BaseType)
+            {
+                foreach (System.Reflection.FieldInfo field in level.GetFields(
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly))
+                {
+                    Type found = TruthReachableFrom(field.FieldType, truth, seen);
+                    if (found != null)
+                    {
+                        return found;
+                    }
+                }
+            }
+
+            return null;
         }
 
         // Parameters are exactly the kind's keys, each with its declared type and a finite value, and
@@ -342,6 +520,28 @@ namespace Argus.Simulation.Tests
         // Both camera kinds share CameraProfileKind's keys and checks.
         private static readonly CameraProfileKind[] CameraKinds = { CameraKind.Instance, NadirGroundTruthCameraKind.Instance };
 
+        // WriteOutput is ReadOutput's inverse under each Basilisk-modelled kind's keys, so the state
+        // stream sends the keys the service sent (HOST-3).
+        [Test]
+        public void BackendSensorKindsWriteTheOutputTheyRead()
+        {
+            object[] measurements =
+            {
+                new ImuMeasurement(new Vector3d(1e-3, -2e-3, 3e-3), new Vector3d(0.0, 0.1, -0.2)),
+                new MagnetometerMeasurement(new Vector3d(2.1e-5, -1.0e-6, 4.4e-5)),
+                new LightSensorMeasurement(1361.0)
+            };
+            IBackendSensorKind[] kinds = { ImuKind.Instance, MagnetometerKind.Instance, LightSensorKind.Instance };
+            for (int i = 0; i < kinds.Length; i++)
+            {
+                DeviceValues output = kinds[i].WriteOutput(measurements[i]);
+                Assert.That(output.Keys, Is.EquivalentTo(kinds[i].OutputKeys.Select(key => key.Name)), kinds[i].Name);
+                Assert.That(kinds[i].ReadOutput(output), Is.EqualTo(measurements[i]), kinds[i].Name);
+            }
+
+            Assert.Throws<System.ArgumentException>(() => ImuKind.Instance.WriteOutput(measurements[1]));
+        }
+
         // A spacecraft whose only actuator is one ideal body torque device is valid. Each actuator
         // kind rejects bad limits, axes and keys, an actuator has no period and an unrotated mount,
         // and device IDs are unique across sensors and actuators (CON-2).
@@ -436,7 +636,7 @@ namespace Argus.Simulation.Tests
         }
 
         private static SensorDefinition Definition(string sensorId, string source = DeviceSource.Basilisk) =>
-            new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, source, SensorMount.Identity);
+            new SensorDefinition(sensorId, "test-model", sensorId.Replace('.', '_'), 0.1, source, SensorMount.Identity, isControllerVisible: true);
 
         // A kind's own source, or Basilisk's for a name the registry doesn't know.
         private static string SourceOf(string kind) =>
@@ -478,6 +678,23 @@ namespace Argus.Simulation.Tests
                 ActuatorDefinition("thruster.px"),
                 new ThrusterProfile(new Vector3d(-1.0, 0.0, 0.0), 0.01, ActuatorLimitPolicy.Reject))
         };
+
+        // The payload of a sensor's frames: T of the SensorModel<T> or BackendSensorModel<T> it derives from.
+        private static Type PublishedPayload(ISensor sensor)
+        {
+            for (Type type = sensor.GetType(); type != null; type = type.BaseType)
+            {
+                if (type.IsGenericType &&
+                    (type.GetGenericTypeDefinition() == typeof(SensorModel<>) ||
+                     type.GetGenericTypeDefinition() == typeof(BackendSensorModel<>)))
+                {
+                    return type.GetGenericArguments()[0];
+                }
+            }
+
+            Assert.Fail($"{sensor.GetType().Name} derives from neither SensorModel<T> nor BackendSensorModel<T>");
+            return null;
+        }
 
         // An actuator has no sample period and publishes no frames (docs/device-model.md §1).
         private static SensorDefinition ActuatorDefinition(string deviceId) =>

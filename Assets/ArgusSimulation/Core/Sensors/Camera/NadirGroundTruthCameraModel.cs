@@ -4,7 +4,7 @@ namespace Argus.Simulation.Core
 {
     // The north-up nadir ground-truth camera (D5, CORE-8): a reference view straight down from the
     // spacecraft position that ignores attitude. It is ground truth, so it goes to the recorder but
-    // never to a controller (its kind may not be controller-visible, D7). NadirGroundTruthCameraKind
+    // never to a controller (its kind has no controller projection, D7). NadirGroundTruthCameraKind
     // builds it from a nadir_ground_truth_camera device configuration.
     public sealed class NadirGroundTruthCameraModel : CameraModel
     {

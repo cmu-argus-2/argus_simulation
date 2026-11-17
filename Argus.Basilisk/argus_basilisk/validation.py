@@ -1,7 +1,7 @@
 """ConfigureRun and Step-command validation (README §3 and §11).
 
 Pure functions over the generated argus.sim.v1 and argus.basilisk.v1 messages. They repeat Core
-IsValid so Argus and Basilisk agree on what a valid run is (G5), add the bsk 2.11.1 limits, and
+IsValid so Argus and Basilisk agree on what a valid run is (G5), add the imuSensor limits, and
 run before anything touches Basilisk. Devices are checked against the kind registry (devices.KINDS).
 This module never imports Basilisk.
 """
@@ -14,7 +14,6 @@ import re
 from typing import Protocol
 
 from . import devices
-from .devices import magnetometer
 
 # Core ClassicalOrbitElements: periapsis above the equator also catches an altitude entered as a.
 EARTH_EQUATORIAL_RADIUS_M = 6_378_137.0
@@ -24,6 +23,10 @@ QUATERNION_UNIT_TOLERANCE = 1e-6
 
 # Core SimulationConfiguration.IsKernelSetId; the service turns the ID into a file name.
 KERNEL_SET_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+
+# headless/Host BasiliskEngine.MaximumPacedStepSeconds: ClockSynch sleeps fixed_step / factor of
+# wall time per step, so a tiny factor would hold one Step for hours (README §5).
+MAXIMUM_PACED_STEP_SECONDS = 3600.0
 
 # google.protobuf.Timestamp range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z.
 _TIMESTAMP_MIN_SECONDS = -62_135_596_800
@@ -84,7 +87,8 @@ def validate_configure_run(
     Args:
         request: argus.basilisk.v1.ConfigureRunRequest.
         coverage_utc: The kernel set's coverage_utc (start and end, inclusive).
-        wmm_validity: WMM validity window, checked only when a magnetometer is configured.
+        wmm_validity: WMM validity window, checked only when a magnetometer or a magnetic torquer
+            is configured (devices.needs_magnetic_field).
 
     The error carries every problem of its code, joined with "; ".
     """
@@ -106,9 +110,9 @@ def configure_run_problems(
         problems.unset("configuration")
         return problems.ranked()
 
-    _check_real_time_factor(problems, request.real_time_factor, "real_time_factor")
-
     configuration = request.configuration
+    _check_real_time_factor(problems, request.real_time_factor, configuration.fixed_step_ns, "real_time_factor")
+
     path = "configuration"
     if not configuration.run_id.strip():
         problems.invalid(f"{path}.run_id", "must not be blank", configuration.run_id)
@@ -132,7 +136,7 @@ def configure_run_problems(
         problems.unset(f"{path}.spacecraft")
 
     _check_devices(problems, configuration.devices, configuration.fixed_step_ns, f"{path}.devices")
-    has_magnetometer = bool(devices.of_kind(configuration.devices, magnetometer.KIND))
+    needs_magnetic_field = devices.needs_magnetic_field(configuration)
 
     epoch_path = f"{path}.epoch_utc"
     if not configuration.HasField("epoch_utc"):
@@ -142,26 +146,27 @@ def configure_run_problems(
             timestamp_to_ns(configuration.epoch_utc),
             epoch_path,
             coverage_utc=coverage_utc,
-            wmm_validity=wmm_validity if has_magnetometer else None,
+            wmm_validity=wmm_validity if needs_magnetic_field else None,
         ))
 
     return problems.ranked()
 
 
-def validate_step_request(request, fixed_step_ns: int, actuators=None) -> None:
-    """Raise for a StepRequest whose commands are unset, malformed, for the wrong step, or for a
-    device that is not a configured actuator (README §3 Step 3). The caller has checked run_id,
-    sequence and sim_time_ns."""
-    _raise_first(step_request_problems(request, fixed_step_ns, actuators))
+def validate_step_request(request, fixed_step_ns: int, actuators=None, parameters=None) -> None:
+    """Raise for a StepRequest whose commands are unset, malformed, for the wrong step, for a
+    device that is not a configured actuator, or past a device's limits (README §3 Step 3). The
+    caller has checked run_id, sequence and sim_time_ns."""
+    _raise_first(step_request_problems(request, fixed_step_ns, actuators, parameters))
 
 
-def step_request_problems(request, fixed_step_ns: int, actuators=None) -> list[ValidationError]:
+def step_request_problems(request, fixed_step_ns: int, actuators=None, parameters=None) -> list[ValidationError]:
     """Return every problem with a StepRequest's commands, INVALID_ARGUMENT first.
 
     Step(n) carries command n-1, which acts over [t_n-1, t_n) (target-architecture §4), so
     command_sequence and command_time_ns must name step n-1. Step(0) follows no command: both
     are unset and the command set is empty. actuators maps the run's configured actuators to their
-    kind modules (devices.actuators).
+    kind modules (devices.actuators), and parameters each to its decoded parameters
+    (actuator_parameters).
     """
     problems = _Problems()
     sequence = request.sequence
@@ -184,29 +189,33 @@ def step_request_problems(request, fixed_step_ns: int, actuators=None) -> list[V
         problems.unset("commands")
     else:
         problems.extend(step_command_problems(
-            request.commands, actuators=actuators, first_step=sequence == 0))
+            request.commands, actuators=actuators, parameters=parameters, first_step=sequence == 0))
     return problems.ranked()
 
 
 def validate_step_command(
-        commands, path: str = "commands", *, actuators=None, first_step: bool = False) -> None:
-    """Raise for a Step DeviceCommandSet that is malformed or names a device that is not a
-    configured actuator (README §3 Step 3)."""
-    _raise_first(step_command_problems(commands, path, actuators=actuators, first_step=first_step))
+        commands, path: str = "commands", *, actuators=None, parameters=None, first_step: bool = False) -> None:
+    """Raise for a Step DeviceCommandSet that is malformed, names a device that is not a
+    configured actuator, or is past a device's limits (README §3 Step 3)."""
+    _raise_first(step_command_problems(
+        commands, path, actuators=actuators, parameters=parameters, first_step=first_step))
 
 
 def step_command_problems(
-        commands, path: str = "commands", *, actuators=None, first_step: bool = False
+        commands, path: str = "commands", *, actuators=None, parameters=None, first_step: bool = False
 ) -> list[ValidationError]:
     """Return every problem with a Step DeviceCommandSet, INVALID_ARGUMENT first.
 
     The set is complete (docs/device-model.md §6): an actuator it leaves out is idle, so the
     empty set is no output and always valid. Each device appears at most once and must be one of
     the run's actuators (actuators maps each ID to its kind module), with exactly its kind's
-    command keys, each of its type and finite. first_step: the command of Step(0), which acts over
-    no interval, so it must be empty.
+    command keys, each of its type and finite, and within the device's limits when parameters maps
+    its ID to its decoded parameters: the gateway applies each device's limit_policy first (CORE-10,
+    #46), so a command past them is refused, never clamped. first_step: the command of Step(0),
+    which acts over no interval, so it must be empty.
     """
     actuators = actuators or {}
+    parameters = parameters or {}
     problems = _Problems()
     seen = {}
     for index, command in enumerate(commands.commands):
@@ -223,13 +232,14 @@ def step_command_problems(
             before = problems.count
             values_path = f"{command_path}.values"
             values = _check_values(problems, kind, kind.COMMANDS, command.values, values_path, "command key")
+
+            def invalid(key, reason, value):
+                problems.invalid(f"{values_path}[{json.dumps(key)}]", reason, value)
+
             if hasattr(kind, "check_command"):
-                kind.check_command(
-                    values, lambda key, reason, value: problems.invalid(f"{values_path}[{json.dumps(key)}]", reason, value))
-            # An idle command applies nothing, so it needs no effector. Lifted by BSK-8 (#21), which
-            # applies the commands of configured actuators (G1).
-            if problems.count == before and values != kind.IDLE:
-                problems.unimplemented(command_path, "applying actuator commands is not built yet", device_id)
+                kind.check_command(values, invalid)
+            if problems.count == before and hasattr(kind, "check_limits") and device_id in parameters:
+                kind.check_limits(values, parameters[device_id], invalid)
             continue
 
         for key in sorted(command.values):
@@ -260,7 +270,8 @@ def check_utc_in_range(
         utc_ns: Nanoseconds since 1970-01-01T00:00:00Z (see timestamp_to_ns).
         path: Field path named in the error, such as "epoch_utc + sim_time_ns".
         coverage_utc: The kernel set's coverage_utc (start and end, inclusive).
-        wmm_validity: WMM validity window, or None when no magnetometer is configured.
+        wmm_validity: WMM validity window, or None when no magnetometer or magnetic torquer is
+            configured.
 
     ConfigureRun checks the epoch; Step(n) checks epoch + t_n before executing (README §3 Step 4),
     because CSPICE aborts the whole process outside coverage.
@@ -279,7 +290,7 @@ def utc_range_problems(
     problems = _Problems()
     windows = [("kernel coverage_utc", coverage_utc)]
     if wmm_validity is not None:
-        windows.append(("WMM2025 validity (magnetometer configured)", wmm_validity))
+        windows.append(("WMM2025 validity (magnetometer or magnetic torquer configured)", wmm_validity))
     for name, window in windows:
         start = _datetime_to_ns(window.start)
         end = _datetime_to_ns(window.end)
@@ -295,6 +306,26 @@ def utc_range_problems(
 def timestamp_to_ns(timestamp) -> int:
     """Return a google.protobuf.Timestamp as exact integer nanoseconds since the Unix epoch."""
     return timestamp.seconds * _NANOSECONDS_PER_SECOND + timestamp.nanos
+
+
+def decoded_values(values) -> dict:
+    """A DeviceValue map as Python values by key (see _decode); for maps validation passed."""
+    return {key: _decode(value) for key, value in values.items()}
+
+
+def actuator_parameters(configuration) -> dict:
+    """Each configured actuator's decoded parameters, by device ID."""
+    return {
+        device.device_id: decoded_values(device.parameters)
+        for device in configuration.devices
+        if devices.is_actuator(devices.KINDS.get(device.kind))}
+
+
+def command_values(commands, actuators) -> dict:
+    """A validated Step DeviceCommandSet as decoded command values for every actuator of the run,
+    each one it leaves out at its kind's IDLE values (docs/device-model.md §6)."""
+    given = {command.device_id: decoded_values(command.values) for command in commands.commands}
+    return {device_id: given.get(device_id, dict(kind.IDLE)) for device_id, kind in actuators.items()}
 
 
 class _Problems:
@@ -334,12 +365,12 @@ def _raise_first(problems: list[ValidationError]) -> None:
     raise ValidationError(code, "; ".join(problem.details for problem in problems if problem.code == code))
 
 
-def _check_real_time_factor(problems: _Problems, value: float, path: str) -> None:
+def _check_real_time_factor(problems: _Problems, value: float, fixed_step_ns: int, path: str) -> None:
+    # 0 is unpaced; > 0 paces the run with ClockSynch (README §5).
     if not math.isfinite(value) or value < 0.0:
         problems.invalid(path, "must be finite and >= 0", value)
-    elif value > 0.0:
-        # Lifted by BSK-7 (#20) when ClockSynch pacing is built (README §5).
-        problems.unimplemented(path, "pacing (ClockSynch) is not built yet; use 0", value)
+    elif value > 0.0 and fixed_step_ns / _NANOSECONDS_PER_SECOND / value > MAXIMUM_PACED_STEP_SECONDS:
+        problems.invalid(path, f"would pace each step to over {MAXIMUM_PACED_STEP_SECONDS:g} s", value)
 
 
 def _check_orbit(problems: _Problems, orbit, path: str) -> None:
@@ -428,6 +459,7 @@ def _check_inertia(problems: _Problems, matrix, path: str) -> None:
 def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: str) -> None:
     """Check every DeviceConfiguration: the common fields here, the parameters against its kind."""
     seen_ids: dict[str, int] = {}
+    kind_counts: dict[str, int] = {}
     for index, device in enumerate(configured):
         device_path = f"{path}[{index}]"
 
@@ -479,6 +511,14 @@ def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: st
         _check_values(
             problems, kind, devices.state_keys(kind), device.initial_state, f"{device_path}.initial_state",
             "initial-state key")
+        # A registered actuator kind without a builder has no Argus part yet (README §9 "Actuators").
+        if not devices.is_built(kind):
+            problems.unimplemented(f"{device_path}.kind", "is registered but not built by this service", device.kind)
+        kind_counts[device.kind] = kind_counts.get(device.kind, 0) + 1
+        maximum = getattr(kind, "MAX_DEVICES", None)
+        if maximum is not None and kind_counts[device.kind] == maximum + 1:
+            problems.unimplemented(
+                f"{device_path}.kind", f"one run builds at most {maximum} devices of this kind", device.kind)
 
 
 def _check_parameters(problems: _Problems, kind, parameters, path: str) -> None:

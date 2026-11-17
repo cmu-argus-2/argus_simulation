@@ -40,6 +40,23 @@ class Inputs:
     albedo_msgs: Mapping[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ActuatorGroup:
+    """The Basilisk modules an actuator kind builds for all of a run's devices of that kind
+    (BSK-8, #21)."""
+
+    # The kind's devices, in configuration order.
+    device_ids: tuple
+    # On the dynamics task, before the spacecraft (README §6).
+    modules: tuple
+    # Added to the spacecraft hub with addDynamicEffector.
+    effectors: tuple
+    # write(commands, time_ns): commands maps each of device_ids to its decoded command values.
+    write: Callable[[Mapping[str, Mapping], int], None]
+    # Standalone messages the modules subscribe to, kept alive with the group.
+    keep: tuple = ()
+
+
 def number_value(value: float) -> devices_pb.DeviceValue:
     return devices_pb.DeviceValue(number=value)
 

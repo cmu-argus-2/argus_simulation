@@ -29,6 +29,8 @@ namespace Argus.Simulation.Core
         private ImuKind()
             : base(
                 KindName,
+                // A measured rate and specific force carry no truth, so a controller sees them as they are.
+                ControllerProjection.Identity<ImuMeasurement>(),
                 new[]
                 {
                     new DeviceKey(AngularVelocity, DeviceValueType.Vector3),
@@ -111,5 +113,10 @@ namespace Argus.Simulation.Core
 
         protected override ImuMeasurement Read(DeviceValues output) =>
             new ImuMeasurement(output.Vector3(AngularVelocity), output.Vector3(SpecificForce));
+
+        protected override DeviceValues Write(ImuMeasurement measurement) => new DeviceValues.Builder()
+            .Add(AngularVelocity, measurement.AngularVelocitySensorRadiansPerSecond)
+            .Add(SpecificForce, measurement.SpecificForceSensorMetersPerSecondSquared)
+            .Build();
     }
 }

@@ -18,6 +18,8 @@ namespace Argus.Simulation.Core
         private LightSensorKind()
             : base(
                 KindName,
+                // A measured irradiance carries no truth, so a controller sees it as it is.
+                ControllerProjection.Identity<LightSensorMeasurement>(),
                 new[] { new DeviceKey(Irradiance, DeviceValueType.Number) },
                 new DeviceKey(FieldOfView, DeviceValueType.Number),
                 new DeviceKey(ScaleFactor, DeviceValueType.Number),
@@ -49,5 +51,8 @@ namespace Argus.Simulation.Core
 
         protected override LightSensorMeasurement Read(DeviceValues output) =>
             new LightSensorMeasurement(output.Number(Irradiance));
+
+        protected override DeviceValues Write(LightSensorMeasurement measurement) =>
+            new DeviceValues.Builder().Add(Irradiance, measurement.IrradianceWattsPerSquareMeter).Build();
     }
 }

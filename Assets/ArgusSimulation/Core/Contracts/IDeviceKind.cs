@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Argus.Simulation.Core
@@ -38,10 +39,13 @@ namespace Argus.Simulation.Core
         // Argus never computes them. Argus-computed kinds never reach the backend.
         bool IsBackendModelled { get; }
 
-        // Whether a controller may see the kind's frames (D7). The gateway forwards a controller-
-        // visible frame unchanged, so a kind whose frames carry truth may not be visible, and
-        // SimulationConfiguration.IsValid rejects such a device configured as visible.
-        bool MayBeControllerVisible { get; }
+        // What a controller sees of the kind's frames (D7), or null when a controller may never see
+        // them. The gateway applies it to every frame of a device configured as controller-visible,
+        // and SimulationConfiguration.IsValid rejects a visible device of a kind with none, so the
+        // two can't disagree. A kind whose frames carry no truth declares the identity on its
+        // payload; the camera kind drops the pose and the Sun (CameraControllerProjection, CORE-23);
+        // ground-truth kinds and actuators declare none.
+        ControllerProjection ControllerProjection { get; }
 
         // Every parameter key, all required.
         IReadOnlyList<DeviceKey> ParameterKeys { get; }
@@ -67,5 +71,25 @@ namespace Argus.Simulation.Core
         // The typed measurement of a non-empty output map (an empty map is Unavailable). Throws
         // ArgumentException naming the key when the map is not exactly the declared keys and types.
         object ReadOutput(DeviceValues output);
+
+        // The output map of a measurement of this kind, under its declared keys: the inverse of
+        // ReadOutput, for links that carry frames as value maps (the state stream, HOST-3). Throws
+        // ArgumentException for a measurement of another type.
+        DeviceValues WriteOutput(object measurement);
+
+        // A frame of this kind from a link that carries its payload as the output map, such as the
+        // state stream in Unity (UNITY-5). Valid and Stale frames read the map as ReadOutput does;
+        // Unavailable and Invalid frames carry no payload, so their map must be empty.
+        ISensorFrame CreateFrame(
+            string runId,
+            string sensorId,
+            string frameId,
+            long sequence,
+            long stateSequence,
+            double simulationTimeSeconds,
+            DateTimeOffset timestampUtc,
+            SensorFrameStatus status,
+            string source,
+            DeviceValues output);
     }
 }

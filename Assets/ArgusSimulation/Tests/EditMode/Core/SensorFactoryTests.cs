@@ -54,13 +54,13 @@ namespace Argus.Simulation.Tests
         private static DeviceConfiguration Imu()
         {
             return ImuKind.Instance.Configure(
-                new SensorDefinition("imu.main", "test-imu", "imu_main", 0.1, "basilisk", SensorMount.Identity),
+                new SensorDefinition("imu.main", "test-imu", "imu_main", 0.1, "basilisk", SensorMount.Identity, isControllerVisible: true),
                 TestImu.Profile());
         }
 
         private static DeviceConfiguration Camera() =>
             CameraKind.Instance.Configure(
-                new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, "argus", SensorMount.Identity),
+                new SensorDefinition("cam.px", "arducam-imx708", "cam_px", 1.0, "argus", SensorMount.Identity, isControllerVisible: true),
                 TestCameras.Profile(Imx708, 0.0005));
 
         // An analytic state: the camera still renders without an EnvironmentState.

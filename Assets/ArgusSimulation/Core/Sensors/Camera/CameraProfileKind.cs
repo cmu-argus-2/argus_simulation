@@ -5,7 +5,7 @@ namespace Argus.Simulation.Core
     // A camera kind whose parameters are the DATA-6 (#71) CameraProfile, each value with where it came
     // from (CORE-6): CameraKind and NadirGroundTruthCameraKind. Argus computes every camera and never
     // sends one to Basilisk (CORE-18). The kinds share their keys and checks here, so they cannot
-    // drift apart, and differ only in name, visibility and the model they build.
+    // drift apart, and differ only in name, controller projection and the model they build.
     public abstract class CameraProfileKind : DeviceKind<CameraProfile>, ICameraKind
     {
         private const string ProfileId = "profile_id";
@@ -31,12 +31,13 @@ namespace Argus.Simulation.Core
         private const string ExtrinsicsOrigin = "extrinsics.origin";
         private const string OrientationVerified = "extrinsics.orientation_verified";
 
-        protected CameraProfileKind(string name, bool mayBeControllerVisible)
+        // projection: what a controller sees of the camera's frames, or null for never (D7).
+        protected CameraProfileKind(string name, ControllerProjection projection)
             : base(
                 name,
                 DeviceRole.Sensor,
                 isBackendModelled: false,
-                mayBeControllerVisible,
+                projection,
                 new[]
                 {
                     new DeviceKey(ProfileId, DeviceValueType.Text),
