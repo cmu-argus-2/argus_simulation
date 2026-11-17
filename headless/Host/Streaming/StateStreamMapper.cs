@@ -37,7 +37,8 @@ namespace Argus.Simulation.Host
             {
                 State = ToProto(state, snapshot.Generation),
                 SensorOutput = output,
-                RunGeneration = snapshot.Generation.Id
+                RunGeneration = snapshot.Generation.Id,
+                Source = snapshot.Generation.Source
             };
         }
 
