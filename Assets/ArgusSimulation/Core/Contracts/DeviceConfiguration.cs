@@ -42,7 +42,8 @@ namespace Argus.Simulation.Core
         // SimulationConfiguration.BackendSensors and the Basilisk mapper's check of that list use this
         // one condition (CORE-22).
         public bool IsBackendSensor => IsBackendModelled && KindDefinition is IBackendSensorKind;
-        public bool MayBeControllerVisible => KindDefinition?.MayBeControllerVisible ?? false;
+        // Whether the device may be controller-visible: its kind declares a controller projection (D7).
+        public bool MayBeControllerVisible => KindDefinition?.ControllerProjection != null;
 
         // An actuator takes a command every step, so its sample period is 0, and it publishes no
         // frames, so it is not controller-visible. Its axis is a body-frame parameter, so its mount

@@ -304,7 +304,7 @@ namespace Argus.Simulation.Host
             }
 
             Check(
-                !definition.IsControllerVisible || kind.MayBeControllerVisible,
+                !definition.IsControllerVisible || kind.ControllerProjection != null,
                 Join(path, "controllerVisible"),
                 $"must be false, because {kindName} frames carry truth a controller may not see (D7)");
             return configuration;

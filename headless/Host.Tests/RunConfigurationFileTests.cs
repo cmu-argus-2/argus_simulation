@@ -149,6 +149,26 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
         }
 
+        // A run file opts a camera in to the controller, which sees it through the camera kind's
+        // projection, without the pose (D7, CORE-23). P0's body cameras stay non-visible
+        // (P0FileHasTheFourDataSixBodyCameras).
+        [Test]
+        public void ControllerVisibleCameraLoads()
+        {
+            JsonObject root = P0();
+            JsonObject visible = CameraNode("cam.test");
+            visible["controllerVisible"] = true;
+            root["devices"].AsArray().Add(visible);
+
+            SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            Assert.That(withCamera.IsValid, Is.True);
+            DeviceConfiguration camera = withCamera.Devices[withCamera.Devices.Count - 1];
+            Assert.That(
+                (camera.Kind, camera.Definition.IsControllerVisible, camera.MayBeControllerVisible),
+                Is.EqualTo(("camera", true, true)));
+        }
+
         // The nadir ground-truth camera is a devices[] entry of its own kind, with the camera's
         // DATA-6 parameters and its own profile ID next to P0's body cameras. Argus computes it, so it
         // is never sent to Basilisk either (CORE-8).
@@ -193,7 +213,6 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("invalid intrinsics and a long exposure", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
         [TestCase("fractional pixel count", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
         [TestCase("period off the step grid", "devices[{new}].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
-        [TestCase("controller-visible camera", "devices[{new}].controllerVisible: must be false")]
         [TestCase("fisheye", "devices[{new}].parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
         [TestCase("non-zero distortion", "devices[{new}].parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion")]
         [TestCase("noise model", "devices[{new}].parameters[\"noise.source\"]: must be \"none\"")]
@@ -286,11 +305,6 @@ namespace Argus.Simulation.Host.Tests
                     JsonObject offGrid = CameraNode("cam.test");
                     offGrid["samplePeriodSeconds"] = 0.25;
                     devices.Add(offGrid);
-                    break;
-                case "controller-visible camera":
-                    JsonObject visible = CameraNode("cam.test");
-                    visible["controllerVisible"] = true;
-                    devices.Add(visible);
                     break;
                 case "fisheye":
                     devices.Add(CameraWith("distortion", "model", "kannala-brandt"));
@@ -554,12 +568,27 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
-        [Test]
-        public void HostExitsWithCode2BeforeConnecting()
+        // The nadir ground-truth camera may never be shown to a controller (D7), so a file that does
+        // is bad input too.
+        [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
+        [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
+        public void HostExitsWithCode2BeforeConnecting(string change, string expectedMessage)
         {
             string path = Path.Combine(Path.GetTempPath(), $"argus-bad-run-{Guid.NewGuid():N}.json");
             JsonObject root = P0();
-            root["initialOrbit"]["eccentricity"] = 1.5;
+            JsonArray devices = root["devices"].AsArray();
+            expectedMessage = expectedMessage.Replace("{new}", devices.Count.ToString());
+            if (change == "invalid orbit")
+            {
+                root["initialOrbit"]["eccentricity"] = 1.5;
+            }
+            else
+            {
+                JsonObject visibleNadir = NadirCameraNode("cam.nadir_gt");
+                visibleNadir["controllerVisible"] = true;
+                devices.Add(visibleNadir);
+            }
+
             File.WriteAllText(path, root.ToJsonString());
             TextWriter originalError = Console.Error;
             StringWriter error = new StringWriter();
@@ -570,7 +599,7 @@ namespace Argus.Simulation.Host.Tests
                 int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9" });
 
                 Assert.That(exitCode, Is.EqualTo(2));
-                Assert.That(error.ToString(), Does.Contain("initialOrbit: needs finite elements"));
+                Assert.That(error.ToString(), Does.Contain(expectedMessage));
             }
             finally
             {
@@ -729,7 +758,7 @@ namespace Argus.Simulation.Host.Tests
         private static JsonObject Lifted() => new JsonObject { ["enabled"] = true, ["testProcedure"] = "bench-coil-1" };
 
         // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
-        // controller-visible: a camera frame carries truth (D7).
+        // controller-visible, like P0's body cameras: a run file opts a camera in (CORE-23).
         private static JsonObject CameraNode(string deviceId) => new JsonObject
         {
             ["deviceId"] = deviceId,
@@ -838,7 +867,7 @@ namespace Argus.Simulation.Host.Tests
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
             Vector3d Negate(Vector3d v) => new Vector3d(-v.X, -v.Y, -v.Z);
             SensorDefinition Definition(string sensorId, string modelName, string frameId, SensorMount mount) =>
-                new SensorDefinition(sensorId, modelName, frameId, 0.1, "basilisk", mount);
+                new SensorDefinition(sensorId, modelName, frameId, 0.1, "basilisk", mount, isControllerVisible: true);
             DeviceConfiguration Light(string sensorId, string frameId, Vector3d position, Vector3d sensorX, Vector3d sensorY, Vector3d sensorZ) =>
                 LightSensorKind.Instance.Configure(
                     Definition(sensorId, "placeholder-face-light-sensor", frameId, new SensorMount(position, Quaterniond.FromBasis(sensorX, sensorY, sensorZ))),

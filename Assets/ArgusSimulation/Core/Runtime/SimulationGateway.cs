@@ -19,13 +19,17 @@ namespace Argus.Simulation.Core
         Controller = 1
     }
 
-    // Deterministic closed-loop session, used by the tests and headless/Host. It returns only
+    // Closed-loop session, used by the tests and headless/Host; deterministic except for camera
+    // frames, which are only as deterministic as their renderer (Reset, §4). It returns only
     // controller-visible observations (D7) in the DATA-5 order (target-architecture §4):
     // Reset(seed, scenario) returns observation 0, and a step applies command k over [t_k, t_k+1) and
-    // returns observation k+1. Truth and every sensor frame, including ground truth, reach the
-    // recorder and Unity through StateProduced and SensorOutputProduced; every command it receives,
-    // applies, holds or discards reaches it through CommandLogged, and every authority change through
-    // AuthorityLogged (D6).
+    // returns observation k+1. An observation holds each controller-visible frame through its kind's
+    // controller projection (IDeviceKind.ControllerProjection), so a camera frame reaches a controller
+    // as a CameraObservation without its pose or Sun (CORE-23). Truth and every sensor frame as
+    // sampled, including ground truth, leave the gateway through StateProduced and
+    // SensorOutputProduced: the recorder takes them all, and the state stream takes the state and the
+    // non-camera frames. Every command the gateway receives, applies, holds or discards reaches the
+    // recorder through CommandLogged, and every authority change through AuthorityLogged (D6).
     // Each actuator command is held to its device's limits by its kind, then clamped or rejected per
     // the device's limit_policy (CORE-10). One controller at a time holds actuator authority
     // (IControllerGateway, CORE-9); its accepted calls are its heartbeat, and a missed heartbeat past the run's
@@ -44,7 +48,8 @@ namespace Argus.Simulation.Core
         private readonly Func<TimeSpan> _clock;
         private SimulationConfiguration _scenario;
         private SensorManager _sensors;
-        private HashSet<string> _controllerVisibleSensorIds;
+        // Each controller-visible sensor's projection, by sensor ID.
+        private Dictionary<string, ControllerProjection> _controllerProjections;
         private long _nextSequence;
         private double _nextSimulationTimeSeconds;
         private SpacecraftState _lastSpacecraft;
@@ -95,7 +100,9 @@ namespace Argus.Simulation.Core
         // Every truth state, starting with the state at t_0.
         public event Action<SimulationState> StateProduced;
 
-        // Every sensor frame sampled at a step, controller-visible or not.
+        // Every sensor frame sampled at a step, controller-visible or not, as its sensor published it.
+        // Subscribers must not write payload buffers such as ImageFrame.Data: the recorder queues
+        // them by reference, and a controller's camera copy is taken after this event (D6, D7).
         public event Action<SensorOutputSet> SensorOutputProduced;
 
         // The terminal observation when the run ends, so the recorder knows why (D6).
@@ -146,7 +153,12 @@ namespace Argus.Simulation.Core
         public bool PhysicalActuatorsEnabled => _isRunning && _scenario.PhysicalActuators.Enabled;
 
         // Starts the scenario with seed in place of its RandomSeed and returns observation 0. The
-        // same seed and scenario give the same observations. Every run starts with no controller.
+        // same seed and scenario give the same observations, except camera frames, which are only
+        // as deterministic as their renderer: the step on which a frame arrives, its status (a
+        // render that fails is published Unavailable) and its pixels (a renderer that streams its
+        // scene can return different pixels) can differ between runs, while its capture time and
+        // capture state are fixed (G3). A lockstep wait for renders is UNITY-4's (#57). Every run
+        // starts with no controller.
         public Observation Reset(int seed, SimulationConfiguration scenario)
         {
             ThrowIfInsideEvent();
@@ -173,6 +185,7 @@ namespace Argus.Simulation.Core
             // scenario: before the engine is configured (for Basilisk, a call to the service) and with
             // the run in progress left running (CORE-22).
             SensorManager sensors = BuildSensors(run);
+            Dictionary<string, ControllerProjection> projections = ControllerProjections(run);
             // The run in progress, if any, ends here. A command a controller submitted for it is logged
             // as discarded first, under that run and while it still runs, so it lands in its segment
             // (CORE-9).
@@ -200,7 +213,7 @@ namespace Argus.Simulation.Core
             _engine.Initialize(run);
             _scenario = run;
             _sensors = sensors;
-            _controllerVisibleSensorIds = ControllerVisibleSensorIds(run);
+            _controllerProjections = projections;
 
             if (!_engine.TryReset(out SimulationState state) || !IsExpectedState(state, 0, 0.0, null))
             {
@@ -1122,29 +1135,47 @@ namespace Argus.Simulation.Core
             }
         }
 
-        // Publishes truth and every frame, and returns the controller-visible frames. A sensor or
-        // subscriber that throws ends the run, so the gateway never advances past a step whose
-        // frames were not all published.
+        // Publishes truth and every frame, and returns the controller-visible frames, each through its
+        // kind's projection. A sensor, subscriber or projection that throws ends the run, so the
+        // gateway never advances past a step whose frames were not all published, and a retried Step
+        // cannot log a second Applied or Clamped record for it.
         private Observation Publish(SimulationState state)
         {
-            SensorOutputSet output;
+            SpacecraftState spacecraft = state.Spacecraft;
+            Observation observation;
             try
             {
                 Raise(StateProduced, state);
-                output = _sensors.Sample(new SensorSampleContext(_scenario.RunId, state));
+                SensorOutputSet output = _sensors.Sample(new SensorSampleContext(_scenario.RunId, state));
                 Raise(SensorOutputProduced, output);
+                observation = Observation.Owning(
+                    state.RunId,
+                    spacecraft.Sequence,
+                    spacecraft.SimulationTimeSeconds,
+                    spacecraft.TimestampUtc,
+                    state.DynamicsBackend,
+                    ControllerFrames(output),
+                    ObservationStatus.Ok);
             }
             catch (Exception exception)
             {
                 EndBeforeRethrow(() => End(
-                    ObservationStatus.Stopped, $"Publishing step {state.Spacecraft.Sequence} failed: {exception.Message}"));
+                    ObservationStatus.Stopped, $"Publishing step {spacecraft.Sequence} failed: {exception.Message}"));
                 throw;
             }
 
+            _lastSpacecraft = spacecraft;
+            return observation;
+        }
+
+        // The controller-visible frames in output order, each as its kind's projection gives it.
+        // ControllerProjection.Project throws for a payload of another type than the kind declared.
+        private ISensorFrame[] ControllerFrames(SensorOutputSet output)
+        {
             int visibleCount = 0;
             foreach (ISensorFrame frame in output.Frames)
             {
-                if (_controllerVisibleSensorIds.Contains(frame.SensorId))
+                if (_controllerProjections.ContainsKey(frame.SensorId))
                 {
                     visibleCount++;
                 }
@@ -1154,22 +1185,13 @@ namespace Argus.Simulation.Core
             int index = 0;
             foreach (ISensorFrame frame in output.Frames)
             {
-                if (_controllerVisibleSensorIds.Contains(frame.SensorId))
+                if (_controllerProjections.TryGetValue(frame.SensorId, out ControllerProjection projection))
                 {
-                    visible[index++] = frame;
+                    visible[index++] = projection.Project(frame);
                 }
             }
 
-            SpacecraftState spacecraft = state.Spacecraft;
-            _lastSpacecraft = spacecraft;
-            return Observation.Owning(
-                state.RunId,
-                spacecraft.Sequence,
-                spacecraft.SimulationTimeSeconds,
-                spacecraft.TimestampUtc,
-                state.DynamicsBackend,
-                visible,
-                ObservationStatus.Ok);
+            return visible;
         }
 
         // ObservationPublished, once the step is committed. A subscriber that throws ends the run, as
@@ -1410,18 +1432,30 @@ namespace Argus.Simulation.Core
             return definitions;
         }
 
-        private static HashSet<string> ControllerVisibleSensorIds(SimulationConfiguration run)
+        // Each controller-visible sensor's projection. SimulationConfiguration.IsValid already rejects
+        // a visible device whose kind has none; this refuses one again, before anything runs, rather
+        // than show its frames unchanged.
+        private static Dictionary<string, ControllerProjection> ControllerProjections(SimulationConfiguration run)
         {
-            HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
+            Dictionary<string, ControllerProjection> projections =
+                new Dictionary<string, ControllerProjection>(StringComparer.Ordinal);
             foreach (DeviceConfiguration device in run.Devices)
             {
                 if (IsSensor(device) && device.Definition.IsControllerVisible)
                 {
-                    ids.Add(device.Definition.SensorId);
+                    ControllerProjection projection = device.KindDefinition.ControllerProjection;
+                    if (projection == null)
+                    {
+                        throw new ArgumentException(
+                            $"Device '{device.Definition.SensorId}' is controller-visible, but its kind " +
+                            $"{device.Kind} has no controller projection (D7).");
+                    }
+
+                    projections.Add(device.Definition.SensorId, projection);
                 }
             }
 
-            return ids;
+            return projections;
         }
 
         private static bool IsSensor(DeviceConfiguration device) => device.KindDefinition?.Role == DeviceRole.Sensor;
