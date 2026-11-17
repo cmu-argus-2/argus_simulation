@@ -250,10 +250,13 @@ serves it (HOST-6).
   cannot change the spacecraft, the heartbeat timeout or the physical-actuator setting. Only the
   authority holder of a lockstep run may reset; the host owns the runs it steps.
 - **Camera images inline:** a controller-visible camera's pixels travel in the observation
-  as raw RGB8 (`CameraObservation.pixels_rgb8`). P0's IMX708 at 4608 x 2592 is about 34 MiB, so
-  both ends raise gRPC's 4 MiB message limit to fit the largest controller-visible camera.
-  P0's cameras are not controller-visible, so P0 sessions stay small. Shared memory
-  (system-architecture §12) can be added beside it if images become the bottleneck.
+  as raw RGB8 (`CameraObservation.pixels_rgb8`). `SessionStarted.max_message_bytes` tells the
+  client the largest message it will receive: 4 MiB (gRPC's default) with no controller-visible
+  camera, otherwise the largest such camera's width x height x 3 plus 1 MiB. P0's IMX708 at
+  4608 x 2592 gives 36,880,384 bytes (about 35.2 MiB). The client sets its receive limit to that
+  value; its own messages stay within the default 4 MiB. P0's cameras are not
+  controller-visible, so P0 sessions stay at 4 MiB. Shared memory (system-architecture §12)
+  can be added beside it if images become the bottleneck.
 
 ### Session rules
 
@@ -265,12 +268,19 @@ serves it (HOST-6).
   sent before that call's result: a lockstep `StepCommand` gets observation k+1, then its
   result; a `ResetRun` gets the old run's `RunEnded`, observation 0, then its result.
 - Every session gets every observation, holder or not. Observations are never decimated or
-  dropped. The server keeps at most 16 unsent messages per session; a session that falls
-  further behind is ended with `RESOURCE_EXHAUSTED`, which revokes its authority (failsafe).
-  HTTP/2 flow control bounds the calls a client can queue.
+  dropped. The server keeps at most 16 unsent messages per session, and at most
+  4 x `max_message_bytes` of them, whichever comes first; a session that falls further behind
+  is ended with `RESOURCE_EXHAUSTED`, which revokes its authority (failsafe). The worst case is
+  16 MiB per session with no controller-visible camera, and about 141 MiB with one IMX708
+  (4 x 35.2 MiB); the host holds that for each session it serves. HTTP/2 flow control bounds
+  the calls a client can queue.
 - Every accepted call is a heartbeat; a refused call is not (CORE-9). A holder silent past the
   heartbeat timeout loses authority, and every actuator runs idle until a controller claims
-  again. Every command the server receives, malformed or refused, reaches the command log.
+  again.
+- Every command that decodes into a Core `DeviceCommandSet`, accepted or refused, reaches the
+  command log (dataset v1). One that doesn't (`sequence`, `apply_at_simulation_time_s` or
+  `commands` unset, or a `DeviceValue` with no value set) never became a command: it gets a
+  refused `CallResult` naming the field and is not logged.
 - A terminal observation carries its status (`BACKEND_FAILED`, `STOPPED`) and no frames, never
   its termination reason, which can carry backend failure text (D7). Refusal text is the
   gateway's own and is sent.

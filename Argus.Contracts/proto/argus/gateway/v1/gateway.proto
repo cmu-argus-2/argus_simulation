@@ -61,7 +61,10 @@ message StepCommand {
 }
 
 // Core DeviceCommandSet: the command computed from observation k, acting over [t_k, t_k+1)
-// (DATA-5, #70).
+// (DATA-5, #70). A command the server can't decode into one (sequence, apply_at_simulation_time_s
+// or commands unset, or a DeviceValue with no value set) gets a refused CallResult naming the field
+// and is not logged: it never became a command. Every command that decodes, accepted or refused,
+// reaches the command log (dataset v1).
 message CommandForStep {
   // k, observation k's sequence. Required; 0 is a valid step.
   optional int64 sequence = 1;
@@ -111,6 +114,12 @@ message SessionStarted {
   // The run's heartbeat timeout in seconds of the host's wall clock (monotonic, not simulation
   // time); 0 when it is off. Required.
   optional double heartbeat_timeout_wall_s = 3;
+  // The largest message the server sends on this session, in bytes; the client sets its gRPC
+  // receive limit to at least this. 4 MiB (4194304, gRPC's default) when no camera is
+  // controller-visible; otherwise the largest controller-visible camera's width x height x 3 plus
+  // 1 MiB for the rest of the observation, if that is more. Fixed for the session, since a link
+  // cannot change the spacecraft. Messages from the client stay within gRPC's default 4 MiB.
+  uint64 max_message_bytes = 4;
 }
 
 // The answer to one call.
@@ -118,8 +127,9 @@ message CallResult {
   // The call's ConnectRequest.request_id.
   uint64 request_id = 1;
   bool accepted = 2;
-  // Why the gateway refused the call; empty when accepted. A refused command is logged as Rejected
-  // with this reason (dataset v1).
+  // Why the gateway refused the call; empty when accepted. A refused command that decoded is logged
+  // as Rejected with this reason (dataset v1); one that didn't decode is not logged
+  // (CommandForStep).
   string refusal = 3;
 }
 
