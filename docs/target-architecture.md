@@ -90,7 +90,7 @@ flowchart TB
 | Camera rig / renderer | `Unity/Cameras/` | `CubeSatCameraRig` renders 4 body cameras and a north-up nadir ground-truth camera every frame | Implements `IImageRenderer`: renders each `CameraModel` `RenderRequest` and returns an `ImageFrame` | main (renderer role planned) |
 | SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | Follower: publishes the host's states as `StateStreamClient` delivers them, never stepping, re-timing or pausing them; `CesiumSpacecraftPoseDriver` interpolates between them for display | Same | main (UNITY-6) |
 | State source | `Unity/Runtime/StateStreamClient.cs` (`ISimulationStateSource`) | The scene's only source: the host's state stream (UNITY-5). Unity runs no simulation of its own, so the host's run file is the one configuration (G5) | Same | main |
-| Mission dashboard | `Unity/UI/` | Truth from the host's `SimulationState`, the stream's status and rate, camera status from the rig, fixed text for the other sensors, GT imagery date, capture. No pause, step, time scale, reset or nudges: the host owns the run | Lists the host's sensor frames (UNITY-7); nudges return as engine commands sent to the host (UNITY-11) | main (sensor list and commands planned) |
+| Mission dashboard | `Unity/UI/` | Truth from the host's `SimulationState`, the stream's status and rate, camera status from the rig, each sensor's latest frame and status (valid, stale, unavailable) from the streamed `SensorOutputSet` (UNITY-7), GT imagery date, capture. No pause, step, time scale, reset or nudges: the host owns the run | Nudges return as engine commands sent to the host (UNITY-11) | main (commands planned) |
 | Navigation episode exporter | `Unity/Export/NavigationEpisodeExporter.cs` | Pauses the runner, renders the cameras, writes PNG + JSONL | UNITY-9 (#63) retires it once its reader moves to dataset v1 (D6, #69) | main (to retire) |
 | Dynamics | `Core/Dynamics/`, `Core/Contracts/` | `AnalyticSimulationEngine` + `CircularOrbitModel`; the analytic engine reports no environment | `ISimulationEngine` returns a `SimulationState` with `EnvironmentState` in Basilisk runs; the analytic engine stays as a test fixture | main (contract done; producer planned) |
 | Sensor models | `Core/Sensors/`, `Core/Sensors/Camera/` | `SensorManager`, `SensorModel<T>`, `IdealBodyRateSensorModel`; `BackendSensorModel<T>` with `ImuSensor`, `MagnetometerSensor`, `LightSensor`; `CameraModel` and the Argus-computed `BodyCameraModel` and `NadirGroundTruthCameraModel` (CORE-8), built by `CameraKind` and `NadirGroundTruthCameraKind` through `SensorFactory` with the renderer the host or Unity supplies (CORE-18) | Adds rendering on request (UNITY-4); the backend sensors publish what `BasiliskEngine` maps from Basilisk sensors (D10) | main (the four P0 body cameras with the DATA-6 profile, CORE-6) |
@@ -261,13 +261,16 @@ ground-truth sensors) to the recorder. The state stream takes only the state and
 1. `headless/Host` runs the gateway over `BasiliskEngine` from its run file and serves the
    decimated state stream (HOST-3).
 2. `StateStreamClient` receives each pair and publishes it on Unity's main thread.
-   `SimulationRunner` republishes each state unchanged and measures how fast the run advances
+   `SimulationRunner` republishes each state unchanged, keeps the `SensorOutputSet` paired with
+   it (`LastOutput`, from `ISensorOutputSource`) and measures how fast the run advances
    (`SimulationRate`); a new run or subscription raises `HistoryReset`.
 3. `CesiumSpacecraftPoseDriver` interpolates the CubeSat between the last two states, one
    arrival interval behind; `OrbitTrailRenderer` draws the received track; `NadirTilePriority`
    loads the nadir view first after each jump, without holding the run.
-4. `SimulatorDashboard` shows truth and the stream's status. A capture holds the CubeSat at the
-   captured state while its tiles load, so the images match the exported state.
+4. `SimulatorDashboard` shows truth, the stream's status and every sensor in `LastOutput`
+   with its status, age and reading, marked not live while the stream is down. A capture holds
+   the CubeSat at the captured state while its tiles load, so the images match the exported
+   state.
 
 ## 5. Contract changes needed
 

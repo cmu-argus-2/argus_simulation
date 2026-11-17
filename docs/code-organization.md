@@ -57,7 +57,7 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 
 | Responsibility | Main classes |
 |---|---|
-| Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource` |
+| Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `ISensorOutputSource` |
 | Controller interface (CORE-9) | `IControllerGateway` (claim, release, heartbeat, submit or step), implemented by `SimulationGateway` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `PhysicalActuatorSetting`, `CommandRecord`, `AuthorityRecord`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |

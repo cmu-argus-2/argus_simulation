@@ -36,6 +36,12 @@ namespace Argus.Simulation.Tests
             dashboardObject.AddComponent<SimulatorDashboard>();
 
             source.Publish(0);
+            source.PublishOutput(new SensorOutputSet("test-run", 0, 0.0, new ISensorFrame[]
+            {
+                Frame("imu-0", SensorFrameStatus.Valid, new ImuMeasurement(new Vector3d(0.01, 0.0, 0.0), new Vector3d(0.0, 0.0, 0.0))),
+                Frame("magnetometer-0", SensorFrameStatus.Stale, new MagnetometerMeasurement(new Vector3d(2e-5, 0.0, -3e-5))),
+                Frame("light-0", SensorFrameStatus.Unavailable, default(LightSensorMeasurement))
+            }));
             yield return null;
 
             CubeSatCameraRig cameraRig = spacecraft.GetComponent<CubeSatCameraRig>();
@@ -61,7 +67,14 @@ namespace Argus.Simulation.Tests
             Text telemetry = GameObject.Find("Telemetry Text").GetComponent<Text>();
             StringAssert.Contains("SPACECRAFT TRUTH", telemetry.text);
             StringAssert.Contains("HOST SENSORS", telemetry.text);
-            StringAssert.Contains("UNAVAILABLE — no model registered", telemetry.text);
+            // Every streamed sensor with its status; only frames with a reading show one.
+            StringAssert.Contains("imu-0:</color>  <color=#4DFF94>VALID", telemetry.text);
+            StringAssert.Contains("magnetometer-0:</color>  <color=#FAB838>STALE", telemetry.text);
+            StringAssert.Contains("light-0:</color>  <color=#FF7366>UNAVAILABLE", telemetry.text);
+            StringAssert.Contains("ω rad/s", telemetry.text);
+            StringAssert.Contains("B µT", telemetry.text);
+            StringAssert.DoesNotContain("E W/m²", telemetry.text);
+            StringAssert.DoesNotContain("no model registered", telemetry.text);
             StringAssert.DoesNotContain("GPS fix", telemetry.text);
             StringAssert.DoesNotContain("mock", telemetry.text.ToLowerInvariant());
             Assert.That(exporter.IsCaptureInProgress, Is.False);
@@ -85,5 +98,8 @@ namespace Argus.Simulation.Tests
 
             LogAssert.NoUnexpectedReceived();
         }
+
+        private static ISensorFrame Frame<T>(string sensorId, SensorFrameStatus status, T payload) =>
+            new SensorFrame<T>("test-run", sensorId, sensorId + "/0", 0, 0, 0.0, System.DateTimeOffset.UnixEpoch, status, "test", payload);
     }
 }
