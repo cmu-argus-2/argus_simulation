@@ -24,7 +24,9 @@ namespace Argus.Simulation.Core
         // TODO(#99): bound the queue by bytes as well as items before a renderer supplies camera pixels
         // (UNITY-4). One full-resolution P0 frame (4608 x 2592 Rgb8) is 35.8 MB, so 65,536 queued frames
         // would be ~2.3 TB. ImageFrame.Data is also queued by reference, so a renderer that reuses its
-        // readback buffer would change frames already queued.
+        // readback buffer would change frames already queued (D6), and could put another camera's
+        // pixels, such as the nadir ground truth, in a frame a controller sees (D7). IImageRenderer
+        // states the rule: a fresh array per frame, never written again.
         public const int DefaultCapacity = 65536;
 
         private const string StatesFile = "states.jsonl";

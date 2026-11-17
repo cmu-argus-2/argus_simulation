@@ -148,9 +148,13 @@ its own.
   `noise.source` (`none`), `exposure_duration_s` and `extrinsics.*`. Each value is read as the
   type its kind declares. `initialState` holds the kind's initial-state keys: only
   `momentum_wheel` has one (`speed_rad_per_s`), and the field is optional for the other kinds. `controllerVisible` is `false` for a ground-truth sensor: the gateway
-  never returns its frames to a controller, though the recorder still receives them (D7). It
-  must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
-  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `spacecraft/argus-p0.json` includes the four body cameras
+  never returns its frames to a controller, though the recorder still receives them (D7). A
+  visible `camera` reaches a controller as a `CameraObservation`, with the pixels and exposure
+  timing but not the camera pose or the Sun (CORE-23). The host builds its cameras with no
+  renderer and serves no controller yet, so here a visible camera's frames are `Unavailable`
+  until a renderer exists (UNITY-4 #57, UNITY-10 #64) and the gateway is served (HOST-6 #30).
+  P0's cameras stay `false`, so a run file opts a camera in. It is always `false` for the nadir
+  ground-truth camera. `spacecraft/argus-p0.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
   a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device that rejects
   anything past 1e-4 N·m per axis, as DATA-2 (#68) gives for the ideal torque, until DATA-2's six
@@ -168,16 +172,15 @@ its own.
   at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
   one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
   the camera that set it and the part that differs
-  (`devices[12].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
+  (`devices[16].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` and `spacecraft/argus-p0.json` are placeholder data, not confirmed hardware. Its magnetometer and
-light-sensor noise are 0 until DATA-1 (#67) gives the sigmas; the service accepts both
-(`Argus.Basilisk/README.md` §9).
-TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
-light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
-and epoch.
+`runs/p0-default.json` and `spacecraft/argus-p0.json` hold the DATA-1 (#67) values. The IMU,
+magnetometer and light-sensor parts come from datasheets and flight code. The 2U body (mass, inertia, light-sensor positions),
+the epoch and the orbit are team estimates, not measured or launch-contract numbers; real
+numbers are a change to these files. The four body cameras keep Argus-2's mounts (z = −0.029 m),
+while the 2U body's ±Z faces are at ±0.1135 m, until the 2U camera layout is known (#133).
 
 ## Rules
 

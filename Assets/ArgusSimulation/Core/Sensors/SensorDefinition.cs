@@ -32,7 +32,7 @@ namespace Argus.Simulation.Core
             double samplePeriodSeconds,
             string source,
             SensorMount mount,
-            bool isControllerVisible = true)
+            bool isControllerVisible)
         {
             SensorId = sensorId;
             ModelName = modelName;
@@ -53,9 +53,12 @@ namespace Argus.Simulation.Core
         public string Source { get; }
         public SensorMount Mount { get; }
 
-        // False for ground-truth sensors (for example the nadir camera): the gateway never forwards
-        // their frames to a controller, while the recorder still receives them (D7). It must be false
-        // for a kind whose frames carry truth, such as a camera (IDeviceKind.MayBeControllerVisible).
+        // Every definition states it; there is no default, so no sensor, a camera above all, is shown
+        // to a controller by a choice nobody made (D7). False for ground-truth sensors (for
+        // example the nadir camera): the gateway never forwards their frames to a controller, while
+        // the recorder still receives them (D7). It must be false
+        // for a kind with no controller projection (IDeviceKind.ControllerProjection). A visible
+        // camera reaches a controller through its kind's projection, without its pose (CORE-23).
         public bool IsControllerVisible { get; }
 
         // A valid sensor definition: the common fields and a positive sample period.

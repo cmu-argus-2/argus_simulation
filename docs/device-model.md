@@ -22,11 +22,11 @@ Common fields, the same for every kind:
 |---|---|---|
 | `deviceId` | `device_id` | Unique across all of the spacecraft's devices, sensors and actuators alike (ordinal). Commands, frames and recorded state address a device by it. |
 | `kind` | `kind` | A registered kind name in snake_case: `imu`, `magnetometer`, `light_sensor`, `camera` (CORE-18), and later `ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`. |
-| `modelName` | Core only | The part, as a parameter set for its kind (`placeholder-mems-imu`, `arducam-imx708`). Recorded; not sent to the service. |
+| `modelName` | Core only | The part, as a parameter set for its kind (`bosch-bmx160-gyro125dps-accel8g`, `arducam-imx708`). Recorded; not sent to the service. |
 | `frameId` | Core only | The sensor frame's name in frames and datasets. |
 | `mount` | `mount` | `positionBodyMeters` (lever arm from the centre of mass) and `deviceToBody` (v_body = q v_device q*). It replaces `SensorMount`'s `sensorToBody`. An actuator's axis is a body-frame parameter, so its `deviceToBody` must be the identity; a thruster acts at its `positionBodyMeters`. |
 | `samplePeriodSeconds` | `sample_period_ns` | Sensors only: a positive whole number of fixed steps. Actuators have none: they take a command every step. |
-| `controllerVisible` | `controller_visible` | Sensors only; unset means visible. False for ground-truth sensors (D7). |
+| `controllerVisible` | `controller_visible` | Sensors only; the run file requires it, and Core's `SensorDefinition` has no default for it (D7). The service wire (`run_configuration.proto`) carries only backend-modelled devices, never a camera, and no Core code reads this field from it. A controller-facing wire (CON-3 #35) must not make a camera visible by default. False for ground-truth sensors (D7). A visible device's frames reach a controller through its kind's controller projection (§2); a device whose kind has none, such as the nadir ground-truth camera, may not be visible. |
 | `parameters` | `parameters` | The kind's fixed values (§3). |
 | `initialState` | `initial_state` | The kind's state at t = 0, for example a wheel's speed. Empty for kinds with no state, which includes the three P0 sensors. |
 
@@ -45,7 +45,16 @@ Each kind declares:
 - **its parameters and initial state:** for each key, its type (§3), whether it is required or what
   its default is, and its range.
 - **its output (sensors):** the measurement keys it publishes each sample. In Core, a typed payload
-  such as `ImuMeasurement` in a `SensorFrame<T>`; on the wire, the same keys in a value map.
+  such as `ImuMeasurement` in a `SensorFrame<T>`; on the wire, the same keys in a value map. A
+  camera publishes an `ImageFrame`, which holds its render request: the true camera pose and Sun.
+- **what a controller sees (sensors):** its controller projection (`IDeviceKind.ControllerProjection`,
+  D7), which the gateway applies to each frame of a visible device. It names the payload it takes
+  and the one it gives, and keeps the frame's envelope (`ControllerProjection`); it keeps the
+  status, or makes the frame `Unavailable` to withhold a payload; an `Invalid` frame stays `Invalid`. A Basilisk-modelled kind's measurement
+  carries no truth, so its projection is the identity. A `camera` gives a `CameraObservation`:
+  the camera ID, the frame's sequence, the exposure start and duration, and raw RGB pixels, with
+  no pose, Sun or intrinsics (CORE-23). `nadir_ground_truth_camera` and the actuators have none,
+  so they may not be visible.
 - **its command values and idle values (actuators):** what a command carries, and what the
   actuator does in a step whose command leaves it out (zero torque, zero dipole). Limits and
   clamp-or-reject are its parameters (CORE-10, #46).
@@ -114,51 +123,51 @@ A new kind needs no contract change: the schema does not check fields, the kind 
 
 ## 4. Profile and run file
 
-A spacecraft profile holds the body and its devices. Here is the P0 profile, abbreviated: the
-accelerometer, the magnetometer, the other five light sensors and the four body cameras (CORE-6)
-follow the same pattern.
+A spacecraft profile holds the body and its devices. Here is the P0 profile with the DATA-1 (#67) values,
+abbreviated: the accelerometer, the magnetometer, the other eight light sensors, the four body
+cameras (CORE-6) and the torque actuator follow the same pattern.
 
 ```json
 {
   "profileId": "argus-p0",
   "body": {
-    "massKilograms": 1.33,
-    "inertiaBodyKilogramSquareMeters": [[2.536e-3, 0, 0], [0, 2.536e-3, 0], [0, 0, 2.217e-3]]
+    "massKilograms": 2.6,
+    "inertiaBodyKilogramSquareMeters": [[1.906e-2, 0, 0], [0, 1.931e-2, 0], [0, 0, 8.24e-3]]
   },
   "devices": [
     {
       "deviceId": "imu.main",
       "kind": "imu",
-      "modelName": "placeholder-mems-imu",
+      "modelName": "bosch-bmx160-gyro125dps-accel8g",
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
       "mount": { "positionBodyMeters": [0, 0, 0], "deviceToBody": { "x": 0, "y": 0, "z": 0, "w": 1 } },
       "parameters": {
         "gyroscope": {
-          "noise_density_rad_per_s_per_sqrt_hz": 1.2e-4,
+          "noise_density_rad_per_s_per_sqrt_hz": 1.2217e-4,
           "bias_random_walk_rad_per_s_per_sqrt_s": 0,
           "bias_random_walk_bound_rad_per_s": 0,
           "constant_bias_sensor_rad_per_s": [0, 0, 0],
           "scale_factor_per_axis": [1, 1, 1],
-          "range_rad_per_s": 4.363,
-          "resolution_rad_per_s": 1.33e-4
+          "range_rad_per_s": 2.18166,
+          "resolution_rad_per_s": 6.6514e-5
         },
-        "accelerometer": { "noise_density_m_per_s2_per_sqrt_hz": 1.8e-3, "...": "..." }
+        "accelerometer": { "noise_density_m_per_s2_per_sqrt_hz": 1.7652e-3, "...": "..." }
       }
     },
     {
       "deviceId": "light.px",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_px",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "mount": { "positionBodyMeters": [0.05, 0, 0], "deviceToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": 0.5 } },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1,
-        "noise_std_w_per_m2": 0,
+        "noise_std_w_per_m2": 1,
         "bias_w_per_m2": 0,
-        "saturation_w_per_m2": 2000
+        "saturation_w_per_m2": 1460
       }
     }
   ]
@@ -171,14 +180,14 @@ itself (or an absolute one):
 
 ```json
 {
-  "epochUtc": "2025-01-15T00:00:00Z",
+  "epochUtc": "2026-06-01T12:00:00Z",
   "fixedStepSeconds": 0.1,
   "randomSeed": 1,
   "kernelSetId": "argus-2026-11-02",
-  "initialOrbit": { "semiMajorAxisMeters": 6878137.0, "...": "..." },
+  "initialOrbit": { "semiMajorAxisMeters": 6958137.0, "raanDegrees": 234.06, "...": "..." },
   "initialAttitude": {
     "bodyToJ2000": { "x": 0, "y": 0, "z": 0, "w": 1 },
-    "angularVelocityBodyRadiansPerSecond": [0, 0, 0]
+    "angularVelocityBodyRadiansPerSecond": [0.1, -0.08, 0.12]
   },
   "spacecraftProfile": "../spacecraft/argus-p0.json"
 }
@@ -190,7 +199,7 @@ itself (or an absolute one):
 - The dataset manifest records `profileId`, the path as written, and the resolved body and
   devices, so a dataset stands alone: `configuration.spacecraft_profile` (`profile_id`, `path`)
   beside `configuration.spacecraft` and `devices`.
-- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 13 P0 devices: the 8 sensors
+- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 16 P0 devices: the 11 sensors
   Basilisk models, the 4 body cameras and the `torque.body` actuator) and a run file that names it
   (HOST-9).
 - `spacecraftProfile` may also be the profile object itself. HOST-8's frozen reference cases
@@ -281,21 +290,22 @@ message DeviceCommandSet {
 ## 7. Registry
 
 - **Core:** each kind is one class implementing `IDeviceKind` (`Core/Contracts/IDeviceKind.cs`).
-  The class holds the kind's name, role, modeller, declarations and validation. A sensor kind
-  builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`) also reads its output map
-  into its measurement type, and a camera kind (`ICameraKind`) gives its `CameraProfile`, for the
-  manifest's `cameras` and the shared profile-ID rule (CORE-6). An actuator kind (`IActuatorKind`,
-  on `ActuatorKind<TProfile>`) gives its command keys, its idle values and its command check; the
-  gateway runs an actuator a command leaves out at its idle values. It also owns its limit check,
-  `Limit(parameters, values, out excess)` with `LimitPolicyOf(parameters)` (CORE-10), so a new
-  kind brings its own and the gateway doesn't change: `ideal_body_torque` per body axis, ±max for
-  `magnetic_torquer` and a `momentum_wheel`'s motor torque, and [0, max] thrust. A wheel's
-  `max_speed_rad_per_s` bounds its state, not a command, so the backend that integrates the speed
-  owns it.
+  The class holds the kind's name, role, modeller, controller projection, declarations and
+  validation. A sensor kind builds its `ISensor`; a Basilisk-modelled one (`IBackendSensorKind`)
+  also reads its output map into its measurement type, and a camera kind (`ICameraKind`) gives
+  its `CameraProfile`, for the manifest's `cameras` and the shared profile-ID rule (CORE-6). An
+  actuator kind (`IActuatorKind`, on `ActuatorKind<TProfile>`) gives its command keys, its idle
+  values and its command check; the gateway runs an actuator a command leaves out at its idle
+  values. It also owns its limit check, `Limit(parameters, values, out excess)` with
+  `LimitPolicyOf(parameters)` (CORE-10), so a new kind brings its own and the gateway doesn't
+  change: `ideal_body_torque` per body axis, ±max for `magnetic_torquer` and a `momentum_wheel`'s
+  motor torque, and [0, max] thrust. A wheel's `max_speed_rad_per_s` bounds its state, not a
+  command, so the backend that integrates the speed owns it.
   `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` check the keys and read
   them into the kind's typed profile, so `ImuKind`, `MagnetometerKind`, `LightSensorKind` and
   `CameraProfileKind` only list their keys and map them. `CameraKind` and
-  `NadirGroundTruthCameraKind` share `CameraProfileKind`'s keys and differ only in name and model.
+  `NadirGroundTruthCameraKind` share `CameraProfileKind`'s keys and differ only in name,
+  controller projection and model.
   A kind declares its initial-state keys the same way (`InitialStateKeys`, none by default), and names the failing group of an invalid profile
   (`parameters["gyroscope.*"]`). `DeviceKinds` lists every registration in one
   file. It replaced the `SensorKind` switches in `SensorFactory`, `SensorConfiguration`, the
@@ -309,7 +319,8 @@ message DeviceCommandSet {
   `validation.py` and the scenario walk `KINDS` instead of switching on kinds. Kind modules import
   numpy and Basilisk only inside `build`, so validation runs without Basilisk.
 - **Adding a kind** means writing its Core class, its service module if Basilisk models it, one
-  registration on each side, and its tests. No proto, gateway, recorder or file-format change.
+  registration on each side, and its tests. The Core class declares its controller projection, or
+  none. No proto, gateway, recorder or file-format change.
 
 Both sides declare a kind's keys. A single machine-readable schema both read is out of scope for
 now.

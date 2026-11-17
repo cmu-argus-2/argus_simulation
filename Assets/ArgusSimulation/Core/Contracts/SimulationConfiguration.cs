@@ -102,9 +102,10 @@ namespace Argus.Simulation.Core
         // Every sensor samples only at step states, so its period must be a whole number of steps
         // (an actuator has none, DeviceConfiguration.IsValid):
         // otherwise an Argus sensor samples unevenly under a period it never keeps (CORE-18). Basilisk
-        // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor whose
-        // frames carry truth may not be controller-visible, because the gateway forwards those frames
-        // unchanged (D7, IDeviceKind.MayBeControllerVisible). Device IDs are unique across the run.
+        // also needs whole steps; BasiliskEngine checks those in exact nanoseconds. A sensor may be
+        // controller-visible only if its kind declares a controller projection, which the gateway
+        // applies to each of its frames (D7, IDeviceKind.ControllerProjection). Device IDs are
+        // unique across the run.
         // Cameras that share a profile ID share its parameter set, so the recorded profile_id names
         // one set (ICameraKind, CORE-6); the profile is read only once the device is valid.
         private static bool AreDevicesValid(IReadOnlyList<DeviceConfiguration> devices, double fixedStepSeconds)

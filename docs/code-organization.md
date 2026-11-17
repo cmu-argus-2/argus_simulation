@@ -45,7 +45,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 │   ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
 │   ├── Gateway/                  # GatewayServer (placeholder)
 │   ├── Streaming/                # StateStreamServer, StateStreamPublisher, StateStreamMapper (argus/stream/v1)
-│   ├── runs/                     # Run configuration files (p0-default.json: placeholder data; reference/: HOST-8's frozen cases)
+│   ├── runs/                     # Run configuration files (p0-default.json: the DATA-1 P0 run; reference/: HOST-8's frozen cases)
 │   └── spacecraft/               # Spacecraft profiles: body and devices (argus-p0.json, which p0-default.json flies)
 └── Host.Tests/                   # Host tests (NUnit)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
@@ -61,7 +61,7 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 | Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
-| Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry), `DeviceSource` (a device's `basilisk` or `argus` label, from its kind); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases; actuators `IActuatorKind`, `ActuatorLimitPolicy`, `ActuatorGeometry`, and `IdealBodyTorqueKind`, `MomentumWheelKind`, `MagneticTorquerKind` and `ThrusterKind` with their profiles, on `ActuatorKind<TProfile>` (in `Core/Actuators`) |
+| Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `ControllerProjection` (what a controller sees of a kind's frames, D7), `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry), `DeviceSource` (a device's `basilisk` or `argus` label, from its kind); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases; actuators `IActuatorKind`, `ActuatorLimitPolicy`, `ActuatorGeometry`, and `IdealBodyTorqueKind`, `MomentumWheelKind`, `MagneticTorquerKind` and `ThrusterKind` with their profiles, on `ActuatorKind<TProfile>` (in `Core/Actuators`) |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
 | Headless orchestration | `SimulationGateway` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program`; the state stream to Unity `StateStreamServer`, `StateStreamPublisher`, `StateStreamMapper` |
@@ -69,7 +69,7 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorSlot`, `SensorManager`, `SensorFrame<TPayload>` |
 | Implemented sensor models | `IdealBodyRateSensorModel`; camera base `CameraModel` and the Argus-computed `BodyCameraModel` (the Arducam IMX708 is its P0 parameter set) and `NadirGroundTruthCameraModel`; Basilisk-sourced `BackendSensorModel<TMeasurement>`, `ImuSensor`, `MagnetometerSensor`, `LightSensor`, `SensorFactory`, `SensorMeasurementSet` |
 | P0 sensor contracts | `ImuMeasurement`, `MagnetometerMeasurement`, `LightSensorMeasurement`, `GyroscopeProfile`, `AccelerometerProfile`, `ImuProfile`, `MagnetometerProfile`, `LightSensorProfile` |
-| Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame`; camera profiles `CameraProfile`, `CameraDistortion`, `CameraExtrinsicsProvenance` (in `Core/Sensors/Camera`) |
+| Camera/image contracts | `CameraIntrinsics`, `RenderRequest`, `ImageFrame`, `CameraObservation` (a camera frame as a controller sees it, CORE-23); camera profiles `CameraProfile`, `CameraDistortion`, `CameraExtrinsicsProvenance`, and the camera kind's `CameraControllerProjection` (in `Core/Sensors/Camera`) |
 | Unity runtime bridge | `SimulationRunner` (follower), the host's state stream `StateStreamClient`, `StateStreamMapper` |
 | Unity camera system | `CubeSatCameraRig`, `NadirTilePriority` |
 | Cesium integration | `CesiumIonEnvironmentLoader`, `NasaGibsRasterController`, `RuntimeGlobeCameraController` |
