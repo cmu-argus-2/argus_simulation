@@ -116,7 +116,7 @@ def configure_run_problems(
     _check_real_time_factor(problems, request.real_time_factor, configuration.fixed_step_ns, "real_time_factor")
 
     path = "configuration"
-    if not configuration.run_id.strip():
+    if _is_blank_as_dotnet(configuration.run_id):
         problems.invalid(f"{path}.run_id", "must not be blank", configuration.run_id)
     if configuration.fixed_step_ns == 0:
         problems.invalid(f"{path}.fixed_step_ns", "must be > 0", configuration.fixed_step_ns)
@@ -379,20 +379,17 @@ def _check_real_time_factor(problems: _Problems, value: float, fixed_step_ns: in
 
 def _check_gateway_settings(problems: _Problems, configuration, path: str) -> None:
     # The gateway's heartbeat timeout and physical-actuator inhibit (CORE-9). The service does not
-    # use them, but they are part of the run configuration, so it validates them as Core does.
+    # use them, but they are part of the run configuration, so it validates them as Core does. They
+    # were added to v1 after it froze, so either may be unset (a host built before them): unset reads
+    # as the default, the heartbeat timeout off and the inhibit on (Argus.Contracts/README.md, Presence).
     timeout_path = f"{path}.heartbeat_timeout_wall_s"
-    if not configuration.HasField("heartbeat_timeout_wall_s"):
-        problems.unset(timeout_path)
+    timeout = configuration.heartbeat_timeout_wall_s if configuration.HasField("heartbeat_timeout_wall_s") else 0.0
+    if not math.isfinite(timeout) or timeout < 0.0:
+        problems.invalid(timeout_path, "must be finite and >= 0", timeout)
         timeout = None
-    else:
-        timeout = configuration.heartbeat_timeout_wall_s
-        if not math.isfinite(timeout) or timeout < 0.0:
-            problems.invalid(timeout_path, "must be finite and >= 0", timeout)
-            timeout = None
 
     inhibit_path = f"{path}.physical_actuators"
     if not configuration.HasField("physical_actuators"):
-        problems.unset(inhibit_path)
         return
     inhibit = configuration.physical_actuators
     if inhibit.enabled:
@@ -504,7 +501,7 @@ def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: st
         device_path = f"{path}[{index}]"
 
         device_id = device.device_id
-        if not device_id.strip():
+        if _is_blank_as_dotnet(device_id):
             problems.invalid(f"{device_path}.device_id", "must not be blank", device_id)
         if device_id in seen_ids:
             problems.invalid(f"{device_path}.device_id", f"duplicates {path}[{seen_ids[device_id]}]", device_id)

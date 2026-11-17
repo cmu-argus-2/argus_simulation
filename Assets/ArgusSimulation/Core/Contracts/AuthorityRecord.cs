@@ -10,7 +10,8 @@ namespace Argus.Simulation.Core
         // The claim was refused because another controller holds authority.
         Refused = 1,
 
-        // The controller holding authority gave it up; the run is uncontrolled again.
+        // The controller holding authority gave it up, or its run ended (stopped, failed, finished or
+        // reset), which the reason then says; the run is uncontrolled again.
         Released = 2,
 
         // The controller holding authority lost it: a missed heartbeat or a revoke (CORE-9). The
@@ -51,26 +52,33 @@ namespace Argus.Simulation.Core
                 throw new ArgumentException("A controller ID is required.", nameof(controllerId));
             }
 
-            // A refusal or a loss says why; a claim or a release does not. A change nobody listed here
-            // is refused.
-            bool needsReason;
+            // A refusal or a loss says why, and a claim does not; a release says why only when the run's
+            // end made it, and a given reason is never blank. A change nobody listed here is refused.
+            bool? hasReason;
             switch (change)
             {
                 case AuthorityChange.Claimed:
+                    hasReason = false;
+                    break;
                 case AuthorityChange.Released:
-                    needsReason = false;
+                    hasReason = null;
                     break;
                 case AuthorityChange.Refused:
                 case AuthorityChange.Lost:
-                    needsReason = true;
+                    hasReason = true;
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(change), change, "Not a known authority change.");
             }
 
-            if (needsReason == string.IsNullOrWhiteSpace(reason))
+            if (reason != null && string.IsNullOrWhiteSpace(reason))
             {
-                throw new ArgumentException("Refused and Lost records need a reason, and only they have one.", nameof(reason));
+                throw new ArgumentException("A reason, when given, is not blank.", nameof(reason));
+            }
+
+            if (hasReason.HasValue && hasReason.Value != (reason != null))
+            {
+                throw new ArgumentException("Refused and Lost records need a reason, and a Claimed record has none.", nameof(reason));
             }
 
             RunId = runId;
@@ -90,7 +98,8 @@ namespace Argus.Simulation.Core
         public string ControllerId { get; }
         public AuthorityChange Change { get; }
 
-        // Why a claim was refused or authority lost; null when Claimed or Released.
+        // Why a claim was refused, authority lost, or a tenure ended with its run; null when Claimed
+        // or released by the holder.
         public string Reason { get; }
     }
 }

@@ -1269,6 +1269,8 @@ namespace Argus.Simulation.Tests
                 (AuthorityChange.Released, "fsw"), (AuthorityChange.Claimed, "agent"),
             }));
             Assert.That(h.Authority[1].Reason, Does.Contain("'fsw'"));
+            // A holder's own release has no reason; only a release the run's end makes says why.
+            Assert.That(h.Authority[2].Reason, Is.Null);
             Assert.That(h.Gateway.AuthorityHolder, Is.EqualTo("agent"));
         }
 
@@ -1631,6 +1633,100 @@ namespace Argus.Simulation.Tests
                 Assert.That(order.Take(2), Is.EqualTo(new[] { "Held", "Rejected" }));
                 Assert.That(h.AppliedTorque(), Is.EqualTo(0.0));
             }
+        }
+
+        // A tenure that ends with its run is closed in authority.jsonl: the holder is Released with how
+        // the run ended, under that run, before the next one starts (#156 review).
+        [Test]
+        public void ATenureThatEndsWithItsRunIsReleased()
+        {
+            foreach ((Action<Harness> end, string reason) in new (Action<Harness>, string)[]
+            {
+                (harness => harness.Gateway.Finish(), "the run reached its last step"),
+                (harness => harness.Gateway.Stop("stopped by the test"), "the run ended (stopped by the test)"),
+                (harness => harness.Gateway.Reset(0, harness.Scenario), "the run was reset"),
+            })
+            {
+                Harness h = new Harness();
+                List<string> order = new List<string>();
+                h.Gateway.AuthorityLogged += record => order.Add(record.Change.ToString());
+                h.Gateway.RunStarted += (run, sensors) => order.Add("RunStarted");
+                h.Gateway.RunTerminated += observation => order.Add("RunTerminated");
+                h.Gateway.RunEnded += () => order.Add("RunEnded");
+                h.Gateway.TryClaim("fsw", out _);
+                h.Gateway.Step();
+
+                end(h);
+
+                AuthorityRecord released = h.Authority.Last();
+                Assert.That((released.Change, released.ControllerId, released.Reason, released.Sequence), Is.EqualTo((AuthorityChange.Released, "fsw", reason, 1L)));
+                // Under the run it closes: before its end is announced and before the next run starts.
+                Assert.That(order.Take(3), Is.EqualTo(new[] { "Claimed", "Released", order[2] }));
+                Assert.That(order[2] == "RunTerminated" || order[2] == "RunEnded", Is.True, order[2]);
+            }
+
+            // No holder, no record.
+            Harness idle = new Harness();
+            idle.Gateway.Finish();
+            Assert.That(idle.Authority, Is.Empty);
+        }
+
+        // A call made to the wrong step driver is told so, before its liveness is judged: a silent
+        // lockstep holder that submits by mistake is pointed to Step, not dropped (#156 fix review).
+        [Test]
+        public void TheStepDriverIsCheckedBeforeLiveness()
+        {
+            Harness h = new Harness(timeoutSeconds: 1.0, stepDriver: StepDriver.Controller);
+            h.Gateway.TryClaim("agent", out _);
+
+            h.Clock.Set(5.0);
+            Assert.That(h.Gateway.TrySubmit("agent", TorqueAt(0, 5e-4), out string refusal), Is.False);
+
+            Assert.That(refusal, Does.Contain("call Step"));
+            Assert.That(h.Changes(), Is.EqualTo(new[] { (AuthorityChange.Claimed, "agent") }));
+        }
+
+        // A claim whose log fails is not a tenure: the run ends without a Released for it, so the log
+        // never closes a claim it did not record (#156 fix review).
+        [Test]
+        public void AClaimWhoseLogFailsLeavesNoTenure()
+        {
+            Harness h = new Harness();
+            List<Observation> terminated = new List<Observation>();
+            h.Gateway.RunTerminated += terminated.Add;
+            h.Gateway.AuthorityLogged += record =>
+            {
+                if (record.Change == AuthorityChange.Claimed)
+                {
+                    throw new IOException("disk full");
+                }
+            };
+
+            Assert.Throws<IOException>(() => h.Gateway.TryClaim("fsw", out _));
+
+            Assert.That(h.Changes(), Is.EqualTo(new[] { (AuthorityChange.Claimed, "fsw") }));
+            Assert.That((terminated.Count, h.Gateway.AuthorityHolder), Is.EqualTo((1, (string)null)));
+        }
+
+        // Closing a tenure whose log subscriber throws ends the run once, without recursion.
+        [Test]
+        public void AReleaseWhoseLogFailsEndsTheRunOnce()
+        {
+            Harness h = new Harness();
+            List<Observation> terminated = new List<Observation>();
+            h.Gateway.RunTerminated += terminated.Add;
+            h.Gateway.TryClaim("fsw", out _);
+            h.Gateway.AuthorityLogged += record =>
+            {
+                if (record.Change == AuthorityChange.Released)
+                {
+                    throw new IOException("disk full");
+                }
+            };
+
+            Assert.Throws<IOException>(() => h.Gateway.Finish());
+
+            Assert.That((terminated.Count, h.Gateway.IsRunning, h.Gateway.AuthorityHolder), Is.EqualTo((1, false, (string)null)));
         }
 
         // A discard whose log subscriber throws ends the run once, without recursion, and the caller

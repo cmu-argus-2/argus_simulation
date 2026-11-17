@@ -32,10 +32,11 @@ message RunConfiguration {
   // Backend-modelled devices only, in configuration order (CORE-18).
   repeated DeviceConfiguration devices = 9;
   // Gateway settings (CORE-9), carried with the run so the configuration stays one message (G5); the
-  // Basilisk service validates them as Core does and otherwise ignores them. Both are always set. The
-  // heartbeat timeout for the controller holding actuator authority, in seconds of wall-clock time
-  // (the host's monotonic clock, not simulation time); 0 turns it off, so presence tells it from a
-  // missing value.
+  // Basilisk service validates them as Core does and otherwise ignores them. The host always sets both;
+  // added after v1 froze, either may be unset by an older host, and unset reads as the default: the
+  // heartbeat timeout off and the inhibit on. The heartbeat timeout for the controller holding
+  // actuator authority, in seconds of wall-clock time (the host's monotonic clock, not simulation
+  // time); 0 turns it off.
   optional double heartbeat_timeout_wall_s = 10;
   // The physical-actuator inhibit, for HIL-1 (#66) to enforce.
   PhysicalActuators physical_actuators = 11;

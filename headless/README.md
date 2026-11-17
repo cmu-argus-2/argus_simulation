@@ -157,8 +157,8 @@ file; the host gives each run its own.
   both keys required. Lifting it needs `heartbeatTimeoutWallSeconds` in (0, 60] s, so a silent
   controller fails safe, and a paced run whose step (`fixedStepSeconds / --real-time-factor`) is no
   longer than half the timeout, since the gateway hears a controller about once per paced step:
-  otherwise the host exits 2. An explicit `null` is refused ("is
-  required"). The inhibit is enforced by HIL-1 (#66); runs without hardware are
+  otherwise the host exits 2. An explicit `null` is refused: omit
+  the key instead. The inhibit is enforced by HIL-1 (#66); runs without hardware are
   unaffected.
 - **Validation:** every other field is required and unknown fields are rejected, including
   parameters the kind does not declare. Each part is checked with its Core `IsValid` and

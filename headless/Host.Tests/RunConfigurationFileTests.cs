@@ -424,9 +424,9 @@ namespace Argus.Simulation.Host.Tests
             Assert.That((configuration.PhysicalActuators.Enabled, configuration.PhysicalActuators.TestProcedure), Is.EqualTo((true, "bench-coil-1")));
         }
 
-        [TestCase("timeout null", "heartbeatTimeoutWallSeconds: is required")]
+        [TestCase("timeout null", "heartbeatTimeoutWallSeconds: must be a number; omit it to turn the failsafe off")]
         [TestCase("timeout negative", "heartbeatTimeoutWallSeconds: must be finite and >= 0")]
-        [TestCase("inhibit null", "physicalActuators: is required")]
+        [TestCase("inhibit null", "physicalActuators: must be an object; omit it to keep the inhibit on")]
         [TestCase("inhibit not an object", "physicalActuators: must be an object")]
         [TestCase("procedure missing", "physicalActuators.testProcedure: is required")]
         [TestCase("unknown inhibit key", "physicalActuators.armed: is not a known field")]

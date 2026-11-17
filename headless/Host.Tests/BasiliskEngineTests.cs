@@ -127,9 +127,8 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(rates[3].Z, Is.EqualTo(rates[2].Z).Within(1e-15));
         }
 
-        // CORE-9: the gateway settings always reach the run configuration message, even at their
-        // defaults, because an unset message field is invalid, never defaulted, and a heartbeat
-        // timeout of 0 (off) must be told apart from a missing one (Argus.Contracts/README.md).
+        // CORE-9: this host always sends the gateway settings, even at their defaults; the service
+        // also accepts an older host that leaves them unset (Argus.Contracts/README.md, Presence).
         [Test]
         public void TheGatewaySettingsAlwaysReachTheRunConfigurationMessage()
         {

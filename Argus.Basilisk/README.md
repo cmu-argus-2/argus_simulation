@@ -109,9 +109,9 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      definite; unit initial quaternion (within 1e-6); finite rate;
    - `kernel_set_id` matches `[a-z0-9][a-z0-9._-]{0,63}`; `fixed_step_ns > 0`;
      `real_time_factor` finite and ≥ 0; unique device IDs; each `sample_period_ns` a
-     positive multiple of `fixed_step_ns`; every message field set, and the `optional` scalar
-     `heartbeat_timeout_wall_s` set; the gateway settings
-     (CORE-9), which the service validates and otherwise ignores: `heartbeat_timeout_wall_s`
+     positive multiple of `fixed_step_ns`; every message field set, except the gateway settings
+     (CORE-9), which the service validates and otherwise ignores, and which may be unset (added
+     after v1 froze; unset reads as the failsafe off and the inhibit on): `heartbeat_timeout_wall_s`
      finite and ≥ 0, and `physical_actuators` with a non-blank `test_procedure` and a timeout in
      (0, 60] when `enabled`, and an empty `test_procedure` when not; a unit
      `mount.device_to_body` and a finite `mount.position_body_m`;
@@ -674,7 +674,7 @@ lag-1 autocorrelation are the same on both versions.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof, or an unset `heartbeat_timeout_wall_s` (an `optional` scalar whose 0 means off); an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, past the device's limits, or in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof (the gateway settings excepted, §2); an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, past the device's limits, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer or magnetic torquer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |

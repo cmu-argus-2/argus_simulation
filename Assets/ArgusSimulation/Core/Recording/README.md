@@ -201,11 +201,14 @@ rejected for a step is logged against it, but at most one line per `sequence` ha
 `SimulationGateway.AuthorityLogged` raises an `AuthorityRecord` (`Core/Contracts/AuthorityRecord.cs`)
 for every claim, refused claim, release and loss of actuator authority once a run has started. The
 file is created in every run directory, so it is empty when no controller attached. In file order
-`sequence` never decreases. What it leaves out: a refused heartbeat or release, and a claim with an
-unusable ID or with no run running, are returned to the caller only (heartbeats are frequent, and
-an unusable ID cannot be recorded); and a tenure that ends with its run (a stop, a finish, a
-terminal step or a reset) has no line of its own, since the manifest's `termination` says how the
-run ended.
+`sequence` never decreases. A tenure that ends with its run (a stop, a finish, a terminal step or a
+reset) is closed by a `Released` line whose reason says how the run ended, written before the run's
+own end. A re-claim by the holder starts a new tenure without closing the old one, and a line the
+recorder had to drop is counted in `dropped_authority`. If logging a claim fails, the run ends there
+(the manifest's `termination` names the failure), and a `Claimed` line already written for it has no
+`Released`. What it leaves out: a refused heartbeat or release, and a
+claim with an unusable ID or with no run running, are returned to the caller only (heartbeats are
+frequent, and an unusable ID cannot be recorded).
 
 | field | type | source |
 |---|---|---|
@@ -214,7 +217,7 @@ run ended.
 | `simulation_time_s` | number | t_k |
 | `controller_id` | string | the controller that claimed, was refused, released or lost authority |
 | `change` | string | `Claimed`, `Refused`, `Released` or `Lost` |
-| `reason` | string or `null` | why a claim was refused (it names the holder) or authority lost (a missed heartbeat, with the silence and the timeout, or the owner's revoke reason); `null` for `Claimed` and `Released` |
+| `reason` | string or `null` | why a claim was refused (it names the holder) or authority lost (a missed heartbeat, with the silence and the timeout, or the owner's revoke reason), or how the run ended for a `Released` the run's end made; `null` for `Claimed` and for a release by the holder |
 
 ### `images/<sensorId>/<sequence>.png`
 

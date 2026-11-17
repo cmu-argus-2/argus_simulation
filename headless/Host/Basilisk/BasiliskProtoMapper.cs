@@ -40,8 +40,8 @@ namespace Argus.Simulation.Host
                     InitialBodyToJ2000 = ToProto(spacecraft.InitialBodyToJ2000),
                     InitialAngularVelocityBodyRadPerS = ToProto(spacecraft.InitialAngularVelocityBodyRadiansPerSecond)
                 },
-                // Gateway settings (CORE-9), always set: an unset message field is invalid, and 0 (off)
-                // must be told apart from a missing timeout (Argus.Contracts/README.md, Presence).
+                // Gateway settings (CORE-9), always set by this host; the service also accepts an older
+                // host that leaves them unset (Argus.Contracts/README.md, Presence).
                 HeartbeatTimeoutWallS = configuration.HeartbeatTimeoutWallSeconds,
                 PhysicalActuators = new PbSim.PhysicalActuators
                 {

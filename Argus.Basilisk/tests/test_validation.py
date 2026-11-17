@@ -426,14 +426,32 @@ def test_bad_value_is_named():
 
 
 @pytest.mark.parametrize("field", ["heartbeat_timeout_wall_s", "physical_actuators"])
-def test_gateway_settings_must_be_set(field):
-    # CORE-9: the service ignores them, but an unset field is invalid, never defaulted
-    # (Argus.Contracts/README.md, Presence).
+def test_unset_gateway_settings_read_as_their_safe_values(field):
+    # CORE-9, #156 review: added to v1 after it froze, so a host built before them still configures
+    # runs; unset reads as off and inhibited (Argus.Contracts/README.md, Presence).
     request = p0_default_request()
     request.configuration.ClearField(field)
-    problem = only_problem(request)
-    assert problem.code == "INVALID_ARGUMENT"
-    assert problem.details == f"configuration.{field}: required field is not set"
+    assert problems_of(request) == []
+
+
+def test_a_lifted_inhibit_without_a_timeout_is_refused():
+    request = p0_default_request()
+    request.configuration.ClearField("heartbeat_timeout_wall_s")
+    request.configuration.physical_actuators.enabled = True
+    request.configuration.physical_actuators.test_procedure = "bench-coil-1"
+    assert only_problem(request).details == (
+        "configuration.physical_actuators.enabled: needs heartbeat_timeout_wall_s in (0, 60], got 0.0")
+
+
+@pytest.mark.parametrize("value, blank", [("\x1f", False), ("\u3000", True)])
+def test_ids_are_blank_as_dotnet_reads_them(value, blank):
+    # Core's string.IsNullOrWhiteSpace decides blank for every text the host also checks (#156 review).
+    run = p0_default_request()
+    run.configuration.run_id = value
+    device = p0_default_request()
+    device.configuration.devices[0].device_id = value
+    assert any("run_id" in problem.details for problem in problems_of(run)) == blank
+    assert any("device_id: must not be blank" in problem.details for problem in problems_of(device)) == blank
 
 
 @pytest.mark.parametrize("timeout, enabled, procedure, expected", [

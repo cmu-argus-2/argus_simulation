@@ -71,15 +71,19 @@ namespace Argus.Simulation.Host
                 SpacecraftConfiguration spacecraft = Spacecraft(Field(root, "spacecraft", ""), "spacecraft");
                 DeviceConfiguration[] devices = Devices(Field(root, "devices", ""), "devices", runId, epochUtc, fixedStepSeconds);
                 double heartbeatTimeoutWallSeconds = 0.0;
-                if (root.TryGetProperty("heartbeatTimeoutWallSeconds", out _))
+                if (root.TryGetProperty("heartbeatTimeoutWallSeconds", out JsonElement timeout))
                 {
+                    Check(timeout.ValueKind != JsonValueKind.Null, "heartbeatTimeoutWallSeconds", "must be a number; omit it to turn the failsafe off");
                     heartbeatTimeoutWallSeconds = Number(root, "heartbeatTimeoutWallSeconds", "");
                     Check(heartbeatTimeoutWallSeconds >= 0.0, "heartbeatTimeoutWallSeconds", "must be finite and >= 0");
                 }
 
-                PhysicalActuatorSetting physicalActuators = root.TryGetProperty("physicalActuators", out _)
-                    ? PhysicalActuators(Field(root, "physicalActuators", ""), "physicalActuators", heartbeatTimeoutWallSeconds)
-                    : PhysicalActuatorSetting.Inhibited;
+                PhysicalActuatorSetting physicalActuators = PhysicalActuatorSetting.Inhibited;
+                if (root.TryGetProperty("physicalActuators", out JsonElement inhibit))
+                {
+                    Check(inhibit.ValueKind != JsonValueKind.Null, "physicalActuators", "must be an object; omit it to keep the inhibit on");
+                    physicalActuators = PhysicalActuators(inhibit, "physicalActuators", heartbeatTimeoutWallSeconds);
+                }
 
                 SimulationConfiguration configuration = new SimulationConfiguration(
                     runId,

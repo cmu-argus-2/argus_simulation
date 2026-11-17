@@ -15,7 +15,9 @@ namespace Argus.Simulation.Core
         Host = 0,
 
         // Only the controller holding authority steps, with Step(controllerId, command): lockstep SIL
-        // and agent runs (target-architecture §4). Physical actuators are refused.
+        // and agent runs (target-architecture §4). Physical actuators are refused. Wall time between
+        // the holder's calls counts as silence, so the run's heartbeat timeout is longer than the
+        // controller's slowest step, or the controller sends heartbeats while it plans (#156 review).
         Controller = 1
     }
 
@@ -114,6 +116,8 @@ namespace Argus.Simulation.Core
         public event Action<CommandRecord> CommandLogged;
 
         // The authority log (D6, CORE-9): every claim, refusal, release and loss once a run has started.
+        // A claim is raised before the holder changes, so a claim whose log fails is no tenure; a
+        // release or a loss after, so its subscribers already see no holder.
         public event Action<AuthorityRecord> AuthorityLogged;
 
         // Every controller-visible observation, once its step is committed (NextSequence already
@@ -190,6 +194,7 @@ namespace Argus.Simulation.Core
             // as discarded first, under that run and while it still runs, so it lands in its segment
             // (CORE-9).
             DiscardPending("the run was reset");
+            EndTenure("the run was reset");
             bool replacesRun = _isRunning;
             _isRunning = false;
             _hasStartedRun = false;
@@ -310,45 +315,19 @@ namespace Argus.Simulation.Core
         public Observation Step(string controllerId, DeviceCommandSet command)
         {
             ThrowIfInsideEvent();
-            // An unusable ID is the reason first: its line can carry no controller.
-            string idProblem = ControllerIdProblem(controllerId);
-            if (idProblem != null)
-            {
-                if (_hasStartedRun)
-                {
-                    Log(Rejected(command, idProblem));
-                }
-
-                throw new ArgumentException(idProblem, nameof(controllerId));
-            }
-
-            if (!_isRunning)
-            {
-                if (_hasStartedRun)
-                {
-                    Log(Rejected(command, NotRunning, controllerId));
-                }
-
-                throw new InvalidOperationException(NotRunning);
-            }
-
-            string refusal = null;
-            if (_stepDriver != StepDriver.Controller)
-            {
-                refusal = "This run is stepped by its owner; submit commands with TrySubmit.";
-            }
-            else
-            {
-                CheckLiveness();
-                if (_holder != controllerId)
-                {
-                    refusal = NotHolder(controllerId);
-                }
-            }
-
+            string refusal = ControllerCallRefusal(controllerId, StepDriver.Controller, out bool unusableId);
             if (refusal != null)
             {
-                Log(Rejected(command, refusal, controllerId));
+                if (_hasStartedRun)
+                {
+                    Log(Rejected(command, refusal, unusableId ? null : controllerId));
+                }
+
+                if (unusableId)
+                {
+                    throw new ArgumentException(refusal, nameof(controllerId));
+                }
+
                 throw new InvalidOperationException(refusal);
             }
 
@@ -430,13 +409,15 @@ namespace Argus.Simulation.Core
                 DiscardPending($"controller '{controllerId}' claimed authority again");
             }
 
+            // Logged before the tenure starts, so a claim whose log fails (which ends the run) is no
+            // tenure, and the run's end closes none it did not record.
+            LogAuthority(AuthorityChange.Claimed, controllerId, null);
             _holder = controllerId;
             _lastHeard = _clock();
             _isFailsafe = false;
             _failsafeReason = null;
             _held = WithIdleActuators(DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
             _heldFromSequence = -1;
-            LogAuthority(AuthorityChange.Claimed, controllerId, null);
             return true;
         }
 
@@ -526,6 +507,7 @@ namespace Argus.Simulation.Core
             }
 
             DiscardPending("the run reached its last step");
+            EndTenure("the run reached its last step");
             _isRunning = false;
             ClearAuthority();
             EndSensors();
@@ -707,27 +689,10 @@ namespace Argus.Simulation.Core
         {
             limited = command;
             clamped = null;
-            // An unusable ID is the reason first: its line can carry no controller.
-            string idProblem = ControllerIdProblem(controllerId);
-            if (idProblem != null)
+            string refusal = ControllerCallRefusal(controllerId, StepDriver.Host, out _);
+            if (refusal != null)
             {
-                return idProblem;
-            }
-
-            if (!_isRunning)
-            {
-                return NotRunning;
-            }
-
-            if (_stepDriver != StepDriver.Host)
-            {
-                return "This run is stepped by the controller holding authority; call Step(controllerId, command).";
-            }
-
-            CheckLiveness();
-            if (_holder != controllerId)
-            {
-                return NotHolder(controllerId);
+                return refusal;
             }
 
             // An invalid command is refused as invalid first, so it is never mistaken for a duplicate.
@@ -763,12 +728,38 @@ namespace Argus.Simulation.Core
         }
 
         // Why a release or heartbeat from this controller is refused, or null.
-        private string HolderRefusal(string controllerId)
+        private string HolderRefusal(string controllerId) => ControllerCallRefusal(controllerId, null, out _);
+
+        // Why a call from a controller that must hold authority (a step, a submission, a heartbeat or
+        // a release) is refused, or null, in one order: an unusable ID first (its line can carry no
+        // controller), then no run, then the wrong step driver for the call (null for a heartbeat or
+        // release), then liveness, then authority. A claim checks the ID and the run the same way, then
+        // decides authority itself (TryClaim); a rule added here for every call belongs there too.
+        private string ControllerCallRefusal(string controllerId, StepDriver? expected, out bool unusableId)
         {
-            string refusal = ControllerIdProblem(controllerId) ?? (_isRunning ? null : NotRunning);
-            if (refusal != null)
+            string idProblem = ControllerIdProblem(controllerId);
+            unusableId = idProblem != null;
+            if (unusableId)
             {
-                return refusal;
+                return idProblem;
+            }
+
+            if (!_isRunning)
+            {
+                return NotRunning;
+            }
+
+            if (expected.HasValue && _stepDriver != expected.Value)
+            {
+                switch (_stepDriver)
+                {
+                    case StepDriver.Host:
+                        return "This run is stepped by its owner; submit commands with TrySubmit.";
+                    case StepDriver.Controller:
+                        return "This run is stepped by the controller holding authority; call Step(controllerId, command).";
+                    default:
+                        throw new InvalidOperationException($"Step driver {_stepDriver} is not one the gateway knows.");
+                }
             }
 
             CheckLiveness();
@@ -847,6 +838,21 @@ namespace Argus.Simulation.Core
                 pending.ControllerId));
         }
 
+        // A tenure that ends with its run is closed in the authority log: the holder is Released with how
+        // the run ended, under that run and while it still runs (#156 review). The holder is cleared
+        // first, so a log subscriber that throws (which ends the run through End) finds no tenure left.
+        private void EndTenure(string reason)
+        {
+            string holder = _holder;
+            if (holder == null || !_hasStartedRun)
+            {
+                return;
+            }
+
+            _holder = null;
+            LogAuthority(AuthorityChange.Released, holder, reason);
+        }
+
         private void ClearAuthority()
         {
             _holder = null;
@@ -879,6 +885,7 @@ namespace Argus.Simulation.Core
             // A submitted command that never ran is logged under this run while it still runs; a
             // discard whose log fails ends the run here again, with nothing left to discard.
             DiscardPending($"the run ended ({reason})");
+            EndTenure($"the run ended ({reason})");
             _isRunning = false;
             ClearAuthority();
             Observation observation = new Observation(

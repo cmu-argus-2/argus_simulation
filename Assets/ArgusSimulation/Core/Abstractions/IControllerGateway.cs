@@ -9,7 +9,9 @@ namespace Argus.Simulation.Core
     // a missed heartbeat past the run's timeout fails the run safe. Which calls step the run depends on
     // the gateway's StepDriver: when its owner steps it (paced and HIL runs), the controller submits
     // each step's command with TrySubmit and the owner's Step() applies it; when the controller steps it
-    // (lockstep), it calls Step. The owner's own calls (Reset, Step(), Stop, Finish, CheckHeartbeat,
+    // (lockstep), it calls Step. In lockstep, wall time between calls is silence: the run's timeout is
+    // longer than the controller's slowest step, or a controller that can call while it plans sends
+    // heartbeats then. The owner's own calls (Reset, Step(), Stop, Finish, CheckHeartbeat,
     // Revoke) are not part of it. Single-threaded: call it from the thread that runs the gateway, never
     // from inside one of its events.
     public interface IControllerGateway
