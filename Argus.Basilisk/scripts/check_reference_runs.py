@@ -36,7 +36,7 @@ REFERENCE_RUNS = REPO / "headless" / "Host" / "runs" / "reference"
 SCHEMA_VERSION = "argus-dataset/1"
 EARTH_FIXED_FRAME = "Itrf93"
 DYNAMICS_BACKEND = {"name": "basilisk", "version": "2.12.2"}  # the μ constants above are this version's (BSK-15, #140)
-DROPPED_COUNTERS = ("dropped_states", "dropped_frames", "dropped_commands")
+DROPPED_COUNTERS = ("dropped_states", "dropped_frames", "dropped_commands", "dropped_authority")
 COUNTED_FILES = ("states.jsonl", "sensors.jsonl")
 
 
@@ -130,8 +130,13 @@ def dataset_problems(manifest: dict, lines_read: dict, case: dict) -> list[str]:
         problems.append("overflow is missing: the recorder's drop counts are unknown")
     else:
         for counter in DROPPED_COUNTERS:
-            if overflow.get(counter) != 0:
-                problems.append(f"{counter} is {overflow.get(counter)!r}: the recorder dropped data, or didn't say")
+            value = overflow.get(counter)
+            # A dataset written before authority.jsonl existed (CORE-9) has no counter for it either; it
+            # reads as an empty log (Core/Recording/README.md, Schema version).
+            if value is None and counter == "dropped_authority" and "authority.jsonl" not in (manifest.get("files") or {}):
+                value = 0
+            if value != 0:
+                problems.append(f"{counter} is {value!r}: the recorder dropped data, or didn't say")
     configuration = manifest.get("configuration") or {}
     if configuration.get("fixed_step_s") != case["step_s"]:
         problems.append(f"fixed_step_s is {configuration.get('fixed_step_s')!r}, the case runs at {case['step_s']}")

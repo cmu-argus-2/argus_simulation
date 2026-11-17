@@ -24,12 +24,15 @@ namespace Argus.Simulation.Core
         // TODO(#99): bound the queue by bytes as well as items before a renderer supplies camera pixels
         // (UNITY-4). One full-resolution P0 frame (4608 x 2592 Rgb8) is 35.8 MB, so 65,536 queued frames
         // would be ~2.3 TB. ImageFrame.Data is also queued by reference, so a renderer that reuses its
-        // readback buffer would change frames already queued.
+        // readback buffer would change frames already queued (D6), and could put another camera's
+        // pixels, such as the nadir ground truth, in a frame a controller sees (D7). IImageRenderer
+        // states the rule: a fresh array per frame, never written again.
         public const int DefaultCapacity = 65536;
 
         private const string StatesFile = "states.jsonl";
         private const string SensorsFile = "sensors.jsonl";
         private const string CommandsFile = "commands.jsonl";
+        private const string AuthorityFile = "authority.jsonl";
         private const string ManifestFile = "manifest.json";
 
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
@@ -45,7 +48,8 @@ namespace Argus.Simulation.Core
 
         // Guarded by _gate.
         private int _queuedData;
-        private int _queuedRejections;
+        private int _queuedRefusals;
+        private int _queuedAuthority;
         private DropItem _openDrop;
         private bool _closing;
         private bool _hasRun;
@@ -192,7 +196,7 @@ namespace Argus.Simulation.Core
             }
         }
 
-        public void RecordState(SimulationState state) => Enqueue(new StateItem(state), 1, 0, 0);
+        public void RecordState(SimulationState state) => Enqueue(new StateItem(state), 1, 0, 0, 0);
 
         public void RecordCommand(CommandRecord record)
         {
@@ -201,7 +205,17 @@ namespace Argus.Simulation.Core
                 throw new ArgumentNullException(nameof(record));
             }
 
-            Enqueue(new CommandItem(record), 0, 0, 1, record.Outcome == CommandOutcome.Rejected);
+            Enqueue(new CommandItem(record, CommandBudget(record.Outcome)), 0, 0, 1, 0);
+        }
+
+        public void RecordAuthority(AuthorityRecord record)
+        {
+            if (record == null)
+            {
+                throw new ArgumentNullException(nameof(record));
+            }
+
+            Enqueue(new AuthorityItem(record, AuthorityBudget(record.Change)), 0, 0, 0, 1);
         }
 
         // Never dropped, even when the queue is full: the manifest must say why a run ended.
@@ -231,7 +245,7 @@ namespace Argus.Simulation.Core
                 throw new ArgumentNullException(nameof(output));
             }
 
-            Enqueue(new OutputItem(output), 0, output.Frames.Count, 0);
+            Enqueue(new OutputItem(output), 0, output.Frames.Count, 0, 0);
         }
 
         public void Close()
@@ -261,7 +275,65 @@ namespace Argus.Simulation.Core
             }
         }
 
-        private void Enqueue(Item item, int states, int frames, int commands, bool isRejection = false)
+        // Each budget holds at most _capacity items: steps (states, frames, applied, clamped, held and
+        // failsafe commands); refusals (rejected commands and refused claims), so a stalled disk drops
+        // steps before the only record of a refusal; and the other authority changes, so a flood of
+        // refusals never crowds out a loss (CORE-9).
+        private enum Budget
+        {
+            Data,
+            Refusals,
+            Authority
+        }
+
+        private static Budget CommandBudget(CommandOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case CommandOutcome.Applied:
+                case CommandOutcome.Clamped:
+                case CommandOutcome.Held:
+                case CommandOutcome.Failsafe:
+                    return Budget.Data;
+                case CommandOutcome.Rejected:
+                    return Budget.Refusals;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "Not a known command outcome.");
+            }
+        }
+
+        private static Budget AuthorityBudget(AuthorityChange change)
+        {
+            switch (change)
+            {
+                case AuthorityChange.Refused:
+                    return Budget.Refusals;
+                case AuthorityChange.Claimed:
+                case AuthorityChange.Released:
+                case AuthorityChange.Lost:
+                    return Budget.Authority;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(change), change, "Not a known authority change.");
+            }
+        }
+
+        // Under _gate: the queued count of a budget, by reference so callers can change it.
+        private ref int Queued(Budget budget)
+        {
+            switch (budget)
+            {
+                case Budget.Data:
+                    return ref _queuedData;
+                case Budget.Refusals:
+                    return ref _queuedRefusals;
+                case Budget.Authority:
+                    return ref _queuedAuthority;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(budget), budget, "Not a known recorder budget.");
+            }
+        }
+
+        private void Enqueue(BudgetedItem item, int states, int frames, int commands, int authority)
         {
             lock (_gate)
             {
@@ -271,7 +343,8 @@ namespace Argus.Simulation.Core
                     throw new InvalidOperationException("Call BeginRun before recording a run.");
                 }
 
-                if ((isRejection ? _queuedRejections : _queuedData) >= _capacity)
+                ref int queued = ref Queued(item.Budget);
+                if (queued >= _capacity)
                 {
                     if (_openDrop == null)
                     {
@@ -281,18 +354,11 @@ namespace Argus.Simulation.Core
                     _openDrop.States += states;
                     _openDrop.Frames += frames;
                     _openDrop.Commands += commands;
+                    _openDrop.Authority += authority;
                     return;
                 }
 
-                if (isRejection)
-                {
-                    _queuedRejections++;
-                }
-                else
-                {
-                    _queuedData++;
-                }
-
+                queued++;
                 Push(item);
             }
         }
@@ -336,13 +402,9 @@ namespace Argus.Simulation.Core
                         _openDrop = null;
                     }
 
-                    if (item is CommandItem command && command.Record.Outcome == CommandOutcome.Rejected)
+                    if (item is BudgetedItem budgeted)
                     {
-                        _queuedRejections--;
-                    }
-                    else if (item is StateItem || item is OutputItem || item is CommandItem)
-                    {
-                        _queuedData--;
+                        Queued(budgeted.Budget)--;
                     }
                 }
 
@@ -398,11 +460,17 @@ namespace Argus.Simulation.Core
                 case TerminationItem termination:
                     _current.Termination = termination.Observation;
                     break;
+                case AuthorityItem authority:
+                    _current.Write(authority.Record);
+                    break;
                 case DropItem drop:
                     _current.DroppedStates += drop.States;
                     _current.DroppedFrames += drop.Frames;
                     _current.DroppedCommands += drop.Commands;
+                    _current.DroppedAuthority += drop.Authority;
                     break;
+                default:
+                    throw new InvalidOperationException($"The recorder has no writer for {item.GetType().Name}.");
             }
         }
 
@@ -426,6 +494,17 @@ namespace Argus.Simulation.Core
 
         private abstract class Item
         {
+        }
+
+        // An item that counts against one of the queue's budgets until the writer takes it.
+        private abstract class BudgetedItem : Item
+        {
+            protected BudgetedItem(Budget budget)
+            {
+                Budget = budget;
+            }
+
+            public Budget Budget { get; }
         }
 
         private sealed class BeginItem : Item
@@ -454,9 +533,10 @@ namespace Argus.Simulation.Core
             public DateTimeOffset CreatedUtc { get; }
         }
 
-        private sealed class StateItem : Item
+        private sealed class StateItem : BudgetedItem
         {
             public StateItem(SimulationState state)
+                : base(Budget.Data)
             {
                 State = state;
             }
@@ -464,9 +544,10 @@ namespace Argus.Simulation.Core
             public SimulationState State { get; }
         }
 
-        private sealed class OutputItem : Item
+        private sealed class OutputItem : BudgetedItem
         {
             public OutputItem(SensorOutputSet output)
+                : base(Budget.Data)
             {
                 Output = output;
             }
@@ -474,14 +555,26 @@ namespace Argus.Simulation.Core
             public SensorOutputSet Output { get; }
         }
 
-        private sealed class CommandItem : Item
+        private sealed class CommandItem : BudgetedItem
         {
-            public CommandItem(CommandRecord record)
+            public CommandItem(CommandRecord record, Budget budget)
+                : base(budget)
             {
                 Record = record;
             }
 
             public CommandRecord Record { get; }
+        }
+
+        private sealed class AuthorityItem : BudgetedItem
+        {
+            public AuthorityItem(AuthorityRecord record, Budget budget)
+                : base(budget)
+            {
+                Record = record;
+            }
+
+            public AuthorityRecord Record { get; }
         }
 
         private sealed class TerminationItem : Item
@@ -499,6 +592,7 @@ namespace Argus.Simulation.Core
             public long States;
             public long Frames;
             public long Commands;
+            public long Authority;
         }
 
         // One run directory, written only by the writer thread.
@@ -509,11 +603,13 @@ namespace Argus.Simulation.Core
             private readonly StreamWriter _states;
             private readonly StreamWriter _sensors;
             private readonly StreamWriter _commands;
+            private readonly StreamWriter _authority;
             private string _dynamicsBackend;
             private ReferenceFrame? _earthFixedFrame;
             private long _stateLines;
             private long _sensorLines;
             private long _commandLines;
+            private long _authorityLines;
 
             public Segment(string directory, BeginItem begin)
             {
@@ -528,11 +624,13 @@ namespace Argus.Simulation.Core
                 _states = OpenLines(StatesFile);
                 _sensors = OpenLines(SensorsFile);
                 _commands = OpenLines(CommandsFile);
+                _authority = OpenLines(AuthorityFile);
             }
 
             public long DroppedStates { get; set; }
             public long DroppedFrames { get; set; }
             public long DroppedCommands { get; set; }
+            public long DroppedAuthority { get; set; }
             public Observation Termination { get; set; }
 
             public void Write(RunRecorder recorder, SimulationState state)
@@ -564,6 +662,7 @@ namespace Argus.Simulation.Core
                     .Key("simulation_time_s").Value(record.SimulationTimeSeconds)
                     .Key("outcome").Value(record.Outcome.ToString())
                     .Key("reason").Value(record.Reason)
+                    .Key("controller_id").Value(record.ControllerId)
                     .Key("requested");
                 WriteCommand(json, record.Requested);
                 json.Key("applied");
@@ -572,11 +671,27 @@ namespace Argus.Simulation.Core
                 _commandLines++;
             }
 
+            // Sequence and time are the gateway's next step when authority changed (CORE-9).
+            public void Write(AuthorityRecord record)
+            {
+                _authority.WriteLine(new DatasetJsonWriter().BeginObject()
+                    .Key("run_id").Value(record.RunId)
+                    .Key("sequence").Value(record.Sequence)
+                    .Key("simulation_time_s").Value(record.SimulationTimeSeconds)
+                    .Key("controller_id").Value(record.ControllerId)
+                    .Key("change").Value(record.Change.ToString())
+                    .Key("reason").Value(record.Reason)
+                    .EndObject()
+                    .ToString());
+                _authorityLines++;
+            }
+
             public void Finish(RunRecorder recorder)
             {
                 _states.Dispose();
                 _sensors.Dispose();
                 _commands.Dispose();
+                _authority.Dispose();
                 WriteManifest(recorder, complete: true);
             }
 
@@ -587,6 +702,7 @@ namespace Argus.Simulation.Core
                     _states.Dispose();
                     _sensors.Dispose();
                     _commands.Dispose();
+                    _authority.Dispose();
                 }
                 catch (IOException)
                 {
@@ -789,6 +905,11 @@ namespace Argus.Simulation.Core
                         .Key("fixed_step_s").Value(run.FixedStepSeconds)
                         .Key("random_seed").Value(run.RandomSeed)
                         .Key("kernel_set_id").Value(run.KernelSetId)
+                        .Key("heartbeat_timeout_wall_s").Value(run.HeartbeatTimeoutWallSeconds)
+                        .Key("physical_actuators").BeginObject()
+                            .Key("enabled").Value(run.PhysicalActuators.Enabled)
+                            .Key("test_procedure").Value(run.PhysicalActuators.TestProcedure)
+                            .EndObject()
                         .Key("initial_orbit");
                 WriteInitialOrbit(json, run.InitialOrbit);
                 json.Key("spacecraft");
@@ -834,7 +955,8 @@ namespace Argus.Simulation.Core
                 {
                     json.Key(StatesFile).BeginObject().Key("lines").Value(_stateLines).EndObject()
                         .Key(SensorsFile).BeginObject().Key("lines").Value(_sensorLines).EndObject()
-                        .Key(CommandsFile).BeginObject().Key("lines").Value(_commandLines).EndObject();
+                        .Key(CommandsFile).BeginObject().Key("lines").Value(_commandLines).EndObject()
+                        .Key(AuthorityFile).BeginObject().Key("lines").Value(_authorityLines).EndObject();
                 }
 
                 json.EndObject()
@@ -844,6 +966,7 @@ namespace Argus.Simulation.Core
                         .Key("dropped_states").Value(DroppedStates)
                         .Key("dropped_frames").Value(DroppedFrames)
                         .Key("dropped_commands").Value(DroppedCommands)
+                        .Key("dropped_authority").Value(DroppedAuthority)
                         .EndObject()
                     .EndObject();
                 // Written beside it and swapped in, so a crash never leaves a half-written manifest.

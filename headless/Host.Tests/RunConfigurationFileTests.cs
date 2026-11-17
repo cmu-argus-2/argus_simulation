@@ -100,6 +100,35 @@ namespace Argus.Simulation.Host.Tests
             AssertClose(definition.Mount.PositionBodyMeters, new Vector3d(tx, ty, tz), "position");
         }
 
+        // DATA-1 (#67): one light sensor on each of the ±X, ±Y and −Z faces, and four on +Z tilted 45°
+        // toward ±X and ±Y. Each normal is stated here, apart from the file's quaternions, so a mount
+        // copied wrongly into both the file and CompiledP0Default still fails.
+        private const double Diagonal = 0.7071067811865476;
+
+        [TestCase("light.px", 1.0, 0.0, 0.0)]
+        [TestCase("light.mx", -1.0, 0.0, 0.0)]
+        [TestCase("light.py", 0.0, 1.0, 0.0)]
+        [TestCase("light.my", 0.0, -1.0, 0.0)]
+        [TestCase("light.mz", 0.0, 0.0, -1.0)]
+        [TestCase("light.zp_xp", Diagonal, 0.0, Diagonal)]
+        [TestCase("light.zp_ym", 0.0, -Diagonal, Diagonal)]
+        [TestCase("light.zp_xm", -Diagonal, 0.0, Diagonal)]
+        [TestCase("light.zp_yp", 0.0, Diagonal, Diagonal)]
+        public void P0FileLightSensorsFaceTheirIntendedNormals(string deviceId, double nx, double ny, double nz)
+        {
+            SimulationConfiguration p0 = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, RunId);
+            string[] lights = p0.Devices.Where(device => device.Kind == LightSensorKind.KindName).Select(device => device.Definition.SensorId).ToArray();
+            Assert.That(lights, Is.EquivalentTo(new[]
+            {
+                "light.px", "light.mx", "light.py", "light.my", "light.mz",
+                "light.zp_xp", "light.zp_ym", "light.zp_xm", "light.zp_yp"
+            }));
+
+            // A light sensor's boresight is its device +z axis (Argus.Basilisk/argus_basilisk/devices/light_sensor.py).
+            Quaterniond deviceToBody = p0.Devices.Single(device => device.Definition.SensorId == deviceId).Definition.Mount.SensorToBody;
+            AssertClose(deviceToBody.Rotate(new Vector3d(0, 0, 1)), new Vector3d(nx, ny, nz), deviceId + " normal");
+        }
+
         [TestCase(0)]
         [TestCase(1)]
         public void FileWithASubsetOfTheDevicesLoads(int deviceCount)
@@ -149,6 +178,26 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(Request(withCamera), Is.EqualTo(Request(p0)));
         }
 
+        // A run file opts a camera in to the controller, which sees it through the camera kind's
+        // projection, without the pose (D7, CORE-23). P0's body cameras stay non-visible
+        // (P0FileHasTheFourDataSixBodyCameras).
+        [Test]
+        public void ControllerVisibleCameraLoads()
+        {
+            JsonObject root = P0();
+            JsonObject visible = CameraNode("cam.test");
+            visible["controllerVisible"] = true;
+            root["devices"].AsArray().Add(visible);
+
+            SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            Assert.That(withCamera.IsValid, Is.True);
+            DeviceConfiguration camera = withCamera.Devices[withCamera.Devices.Count - 1];
+            Assert.That(
+                (camera.Kind, camera.Definition.IsControllerVisible, camera.MayBeControllerVisible),
+                Is.EqualTo(("camera", true, true)));
+        }
+
         // The nadir ground-truth camera is a devices[] entry of its own kind, with the camera's
         // DATA-6 parameters and its own profile ID next to P0's body cameras. Argus computes it, so it
         // is never sent to Basilisk either (CORE-8).
@@ -193,7 +242,6 @@ namespace Argus.Simulation.Host.Tests
         [TestCase("invalid intrinsics and a long exposure", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
         [TestCase("fractional pixel count", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
         [TestCase("period off the step grid", "devices[{new}].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
-        [TestCase("controller-visible camera", "devices[{new}].controllerVisible: must be false")]
         [TestCase("fisheye", "devices[{new}].parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
         [TestCase("non-zero distortion", "devices[{new}].parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion")]
         [TestCase("noise model", "devices[{new}].parameters[\"noise.source\"]: must be \"none\"")]
@@ -286,11 +334,6 @@ namespace Argus.Simulation.Host.Tests
                     JsonObject offGrid = CameraNode("cam.test");
                     offGrid["samplePeriodSeconds"] = 0.25;
                     devices.Add(offGrid);
-                    break;
-                case "controller-visible camera":
-                    JsonObject visible = CameraNode("cam.test");
-                    visible["controllerVisible"] = true;
-                    devices.Add(visible);
                     break;
                 case "fisheye":
                     devices.Add(CameraWith("distortion", "model", "kannala-brandt"));
@@ -387,12 +430,194 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(error.Message, Is.EqualTo("devices[0].source: is no longer a run-file field; the device's kind sets it (device-model §1)"));
         }
 
+        // CORE-9: the gateway settings are optional, and absent is the safe value: no heartbeat, and
+        // physical actuators inhibited.
         [Test]
-        public void HostExitsWithCode2BeforeConnecting()
+        public void GatewaySettingsAreOptionalAndAbsentMeansSafe()
+        {
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(P0Text, RunId);
+
+            Assert.That((configuration.HeartbeatTimeoutWallSeconds, configuration.PhysicalActuators.Enabled), Is.EqualTo((0.0, false)));
+        }
+
+        [Test]
+        public void GatewaySettingsLoadWhenGiven()
+        {
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = 2.5;
+            root["physicalActuators"] = Lifted();
+
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            Assert.That(configuration.HeartbeatTimeoutWallSeconds, Is.EqualTo(2.5));
+            Assert.That((configuration.PhysicalActuators.Enabled, configuration.PhysicalActuators.TestProcedure), Is.EqualTo((true, "bench-coil-1")));
+        }
+
+        [TestCase("timeout null", "heartbeatTimeoutWallSeconds: must be a number; omit it to turn the failsafe off")]
+        [TestCase("timeout negative", "heartbeatTimeoutWallSeconds: must be finite and >= 0")]
+        [TestCase("inhibit null", "physicalActuators: must be an object; omit it to keep the inhibit on")]
+        [TestCase("inhibit not an object", "physicalActuators: must be an object")]
+        [TestCase("procedure missing", "physicalActuators.testProcedure: is required")]
+        [TestCase("unknown inhibit key", "physicalActuators.armed: is not a known field")]
+        [TestCase("procedure blank", "physicalActuators.testProcedure: must not be blank")]
+        [TestCase("procedure while inhibited", "physicalActuators.enabled: is false, so the inhibit stays on; remove physicalActuators")]
+        [TestCase("blank procedure while inhibited", "physicalActuators.enabled: is false, so the inhibit stays on; remove physicalActuators")]
+        [TestCase("enabled without a heartbeat", "physicalActuators.enabled: needs heartbeatTimeoutWallSeconds in (0, 60] s")]
+        [TestCase("enabled with a long heartbeat", "physicalActuators.enabled: needs heartbeatTimeoutWallSeconds in (0, 60] s")]
+        public void InvalidGatewaySettingNamesTheField(string change, string expectedMessage)
+        {
+            JsonObject root = P0();
+            JsonObject lifted = Lifted();
+            switch (change)
+            {
+                case "timeout null":
+                    root["heartbeatTimeoutWallSeconds"] = null;
+                    break;
+                case "timeout negative":
+                    root["heartbeatTimeoutWallSeconds"] = -1.0;
+                    break;
+                case "inhibit null":
+                    root["physicalActuators"] = null;
+                    break;
+                case "inhibit not an object":
+                    root["physicalActuators"] = true;
+                    break;
+                case "procedure missing":
+                    lifted.Remove("testProcedure");
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "unknown inhibit key":
+                    lifted["armed"] = true;
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "procedure blank":
+                    lifted["testProcedure"] = " ";
+                    root["heartbeatTimeoutWallSeconds"] = 1.0;
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "procedure while inhibited":
+                    lifted["enabled"] = false;
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "blank procedure while inhibited":
+                    lifted["enabled"] = false;
+                    lifted["testProcedure"] = "";
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "enabled without a heartbeat":
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "enabled with a long heartbeat":
+                    root["heartbeatTimeoutWallSeconds"] = 61.0;
+                    root["physicalActuators"] = lifted;
+                    break;
+            }
+
+            RunConfigurationException error = Assert.Throws<RunConfigurationException>(
+                () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
+            Assert.That(error.Message, Does.StartWith(expectedMessage));
+        }
+
+        // HIL runs are paced by Basilisk (D2): a run that lifts the inhibit with --real-time-factor 0
+        // (the default) is bad input, refused before the host connects.
+        [Test]
+        public void PhysicalActuatorsInAnUnpacedRunExitWithCode2BeforeConnecting()
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"argus-hil-run-{Guid.NewGuid():N}.json");
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = 1.0;
+            root["physicalActuators"] = Lifted();
+            File.WriteAllText(path, root.ToJsonString());
+            TextWriter originalError = Console.Error;
+            StringWriter error = new StringWriter();
+            try
+            {
+                Console.SetError(error);
+                int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9" });
+
+                Assert.That(exitCode, Is.EqualTo(2));
+                Assert.That(error.ToString(), Does.Contain("physicalActuators: needs a paced run (--real-time-factor > 0)"));
+                Assert.That(error.ToString(), Does.Not.Contain("Unavailable"));
+            }
+            finally
+            {
+                Console.SetError(originalError);
+                File.Delete(path);
+            }
+        }
+
+        // A paced step must not outlast the heartbeat timeout, or a silent controller's last command
+        // would run for a whole step after the timeout (final review, finding 2).
+        [Test]
+        public void PhysicalActuatorsWithAStepLongerThanTheHeartbeatExitWithCode2()
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"argus-hil-slow-{Guid.NewGuid():N}.json");
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = 1.0;
+            root["physicalActuators"] = Lifted();
+            File.WriteAllText(path, root.ToJsonString());
+            TextWriter originalError = Console.Error;
+            StringWriter error = new StringWriter();
+            try
+            {
+                Console.SetError(error);
+                int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9", "--real-time-factor", "0.05" });
+
+                Assert.That(exitCode, Is.EqualTo(2));
+                Assert.That(error.ToString(), Does.Contain("physicalActuators: a paced step lasts 2 s of wall time"));
+            }
+            finally
+            {
+                Console.SetError(originalError);
+                File.Delete(path);
+            }
+        }
+
+        // The gateway handles a controller's calls between steps, so a healthy holder is heard about
+        // once per paced step: the timeout must cover two of them (final review 3).
+        [TestCase(0.2, 1.0, null)]
+        [TestCase(0.19, 1.0, "physicalActuators: a paced step lasts")]
+        [TestCase(0.0, 1.0, "physicalActuators: needs a paced run")]
+        public void APacedStepMustFitTwiceInTheHeartbeatTimeout(double realTimeFactor, double timeoutSeconds, string expected)
+        {
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = timeoutSeconds;
+            root["physicalActuators"] = Lifted();
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            string problem = Program.PhysicalActuatorProblem(configuration, realTimeFactor);
+
+            if (expected == null)
+            {
+                Assert.That(problem, Is.Null);
+            }
+            else
+            {
+                Assert.That(problem, Does.StartWith(expected));
+            }
+        }
+
+        // The nadir ground-truth camera may never be shown to a controller (D7), so a file that does
+        // is bad input too.
+        [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
+        [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
+        public void HostExitsWithCode2BeforeConnecting(string change, string expectedMessage)
         {
             string path = Path.Combine(Path.GetTempPath(), $"argus-bad-run-{Guid.NewGuid():N}.json");
             JsonObject root = P0();
-            root["initialOrbit"]["eccentricity"] = 1.5;
+            JsonArray devices = root["devices"].AsArray();
+            expectedMessage = expectedMessage.Replace("{new}", devices.Count.ToString());
+            if (change == "invalid orbit")
+            {
+                root["initialOrbit"]["eccentricity"] = 1.5;
+            }
+            else
+            {
+                JsonObject visibleNadir = NadirCameraNode("cam.nadir_gt");
+                visibleNadir["controllerVisible"] = true;
+                devices.Add(visibleNadir);
+            }
+
             File.WriteAllText(path, root.ToJsonString());
             TextWriter originalError = Console.Error;
             StringWriter error = new StringWriter();
@@ -403,7 +628,7 @@ namespace Argus.Simulation.Host.Tests
                 int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9" });
 
                 Assert.That(exitCode, Is.EqualTo(2));
-                Assert.That(error.ToString(), Does.Contain("initialOrbit: needs finite elements"));
+                Assert.That(error.ToString(), Does.Contain(expectedMessage));
             }
             finally
             {
@@ -558,8 +783,11 @@ namespace Argus.Simulation.Host.Tests
 
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
 
+        // A physicalActuators block that lifts the inhibit for a named procedure.
+        private static JsonObject Lifted() => new JsonObject { ["enabled"] = true, ["testProcedure"] = "bench-coil-1" };
+
         // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
-        // controller-visible: a camera frame carries truth (D7).
+        // controller-visible, like P0's body cameras: a run file opts a camera in (CORE-23).
         private static JsonObject CameraNode(string deviceId) => new JsonObject
         {
             ["deviceId"] = deviceId,
@@ -658,38 +886,37 @@ namespace Argus.Simulation.Host.Tests
                 RealTimeFactor = 0.0
             };
 
-        // The P0 run configuration as headless/Host compiled it in before runs/p0-default.json.
+        // The DATA-1 (#67) P0 values, written out so a change to runs/p0-default.json has to be deliberate.
         private static SimulationConfiguration CompiledP0Default(string runId)
         {
-            Vector3d x = new Vector3d(1.0, 0.0, 0.0);
-            Vector3d y = new Vector3d(0.0, 1.0, 0.0);
-            Vector3d z = new Vector3d(0.0, 0.0, 1.0);
             Vector3d zero = new Vector3d(0.0, 0.0, 0.0);
             Vector3d unitScale = new Vector3d(1.0, 1.0, 1.0);
-            Vector3d Negate(Vector3d v) => new Vector3d(-v.X, -v.Y, -v.Z);
-            SensorDefinition Definition(string sensorId, string modelName, string frameId, SensorMount mount) =>
-                new SensorDefinition(sensorId, modelName, frameId, 0.1, "basilisk", mount);
-            DeviceConfiguration Light(string sensorId, string frameId, Vector3d position, Vector3d sensorX, Vector3d sensorY, Vector3d sensorZ) =>
+            SensorDefinition Definition(string sensorId, string modelName, string frameId, double samplePeriodSeconds, SensorMount mount) =>
+                new SensorDefinition(sensorId, modelName, frameId, samplePeriodSeconds, "basilisk", mount, isControllerVisible: true);
+            DeviceConfiguration Light(string sensorId, string frameId, Vector3d position, Quaterniond deviceToBody) =>
                 LightSensorKind.Instance.Configure(
-                    Definition(sensorId, "placeholder-face-light-sensor", frameId, new SensorMount(position, Quaterniond.FromBasis(sensorX, sensorY, sensorZ))),
-                    new LightSensorProfile(Math.PI / 2.0, 1.0, 0.0, 0.0, 2000.0));
+                    Definition(sensorId, "ti-opt4003-q1-uson", frameId, 1.0, new SensorMount(position, deviceToBody)),
+                    new LightSensorProfile(Math.PI / 2.0, 1.0, 1.0, 0.0, 1460.0));
 
             DeviceConfiguration[] devices =
             {
                 ImuKind.Instance.Configure(
-                    Definition("imu.main", "placeholder-mems-imu", "imu_main", SensorMount.Identity),
+                    Definition("imu.main", "bosch-bmx160-gyro125dps-accel8g", "imu_main", 0.1, SensorMount.Identity),
                     new ImuProfile(
-                        new GyroscopeProfile(1.2e-4, 0.0, 0.0, zero, unitScale, 4.363, 1.33e-4),
-                        new AccelerometerProfile(1.8e-3, 0.0, 0.0, zero, unitScale, 19.61, 6.0e-4))),
+                        new GyroscopeProfile(1.2217e-4, 0.0, 0.0, zero, unitScale, 2.18166, 6.6514e-5),
+                        new AccelerometerProfile(1.7652e-3, 0.0, 0.0, zero, unitScale, 78.4532, 2.3942e-3))),
                 MagnetometerKind.Instance.Configure(
-                    Definition("mag.main", "placeholder-magnetometer", "mag_main", SensorMount.Identity),
-                    new MagnetometerProfile(0.0, zero, 1.0, 1.3e-3)),
-                Light("light.px", "light_px", new Vector3d(0.05, 0.0, 0.0), y, z, x),
-                Light("light.mx", "light_mx", new Vector3d(-0.05, 0.0, 0.0), Negate(y), z, Negate(x)),
-                Light("light.py", "light_py", new Vector3d(0.0, 0.05, 0.0), z, x, y),
-                Light("light.my", "light_my", new Vector3d(0.0, -0.05, 0.0), Negate(z), x, Negate(y)),
-                Light("light.pz", "light_pz", new Vector3d(0.0, 0.0, 0.05675), x, y, z),
-                Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.05675), x, Negate(y), Negate(z)),
+                    Definition("mag.main", "bosch-bmx160-bmm150-high-accuracy", "mag_main", 0.1, SensorMount.Identity),
+                    new MagnetometerProfile(3.0e-7, zero, 1.0, 1.3e-3)),
+                Light("light.px", "light_px", new Vector3d(0.05, 0.0, 0.0), new Quaterniond(0.5, 0.5, 0.5, 0.5)),
+                Light("light.mx", "light_mx", new Vector3d(-0.05, 0.0, 0.0), new Quaterniond(-0.5, 0.5, 0.5, -0.5)),
+                Light("light.py", "light_py", new Vector3d(0.0, 0.05, 0.0), new Quaterniond(0.5, 0.5, 0.5, -0.5)),
+                Light("light.my", "light_my", new Vector3d(0.0, -0.05, 0.0), new Quaterniond(-0.5, -0.5, 0.5, -0.5)),
+                Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.1135), new Quaterniond(1.0, 0.0, 0.0, 0.0)),
+                Light("light.zp_xp", "light_zp_xp", new Vector3d(0.01, 0.0, 0.1135), new Quaterniond(0.0, 0.3826834323650898, 0.0, 0.9238795325112867)),
+                Light("light.zp_ym", "light_zp_ym", new Vector3d(0.0, -0.01, 0.1135), new Quaterniond(0.3826834323650898, 0.0, 0.0, 0.9238795325112867)),
+                Light("light.zp_xm", "light_zp_xm", new Vector3d(-0.01, 0.0, 0.1135), new Quaterniond(0.0, -0.3826834323650898, 0.0, 0.9238795325112867)),
+                Light("light.zp_yp", "light_zp_yp", new Vector3d(0.0, 0.01, 0.1135), new Quaterniond(-0.3826834323650898, 0.0, 0.0, 0.9238795325112867)),
                 // An actuator has no period and publishes no frames (docs/device-model.md §1).
                 IdealBodyTorqueKind.Instance.Configure(
                     new SensorDefinition(
@@ -700,19 +927,19 @@ namespace Argus.Simulation.Host.Tests
 
             return new SimulationConfiguration(
                 runId,
-                new DateTimeOffset(2025, 1, 15, 0, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero),
                 0.1,
-                initialOrbit: new ClassicalOrbitElements(6_878_137.0, 0.0, 51.6, 0.0, 0.0, 0.0),
+                initialOrbit: new ClassicalOrbitElements(6_958_137.0, 0.0, 97.75, 234.06, 0.0, 0.0),
                 randomSeed: 1,
                 kernelSetId: "argus-2026-11-02",
                 spacecraft: new SpacecraftConfiguration(
-                    1.33,
+                    2.6,
                     new Matrix3d(
-                        new Vector3d(2.536e-3, 0.0, 0.0),
-                        new Vector3d(0.0, 2.536e-3, 0.0),
-                        new Vector3d(0.0, 0.0, 2.217e-3)),
+                        new Vector3d(1.906e-2, 0.0, 0.0),
+                        new Vector3d(0.0, 1.931e-2, 0.0),
+                        new Vector3d(0.0, 0.0, 8.24e-3)),
                     new Quaterniond(0.0, 0.0, 0.0, 1.0),
-                    zero),
+                    new Vector3d(0.1, -0.08, 0.12)),
                 devices: devices);
         }
     }

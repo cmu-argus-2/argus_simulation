@@ -8,7 +8,8 @@ namespace Argus.Simulation.Host
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine, recording
     // dataset v1 with Core RunRecorder when --record is given (D6), and streaming decimated states
     // and sensor frames to Unity through Streaming/StateStreamServer (CON-1).
-    // TODO(D7, G1): serve the gateway to HIL and external controllers through Gateway/GatewayServer.
+    // TODO(D7, G1): HOST-6 serves the gateway's controller interface (IControllerGateway, CORE-9) to HIL and
+    // external controllers through Gateway/GatewayServer.
     public static class Program
     {
         public static int Main(string[] args)
@@ -31,6 +32,13 @@ namespace Argus.Simulation.Host
             catch (RunConfigurationException exception)
             {
                 Console.Error.WriteLine($"Run configuration {options.RunConfigurationPath}: {exception.Message}");
+                return 2;
+            }
+
+            string physicalActuatorProblem = PhysicalActuatorProblem(configuration, options.RealTimeFactor);
+            if (physicalActuatorProblem != null)
+            {
+                Console.Error.WriteLine($"Run configuration {options.RunConfigurationPath}: {physicalActuatorProblem}");
                 return 2;
             }
 
@@ -66,6 +74,37 @@ namespace Argus.Simulation.Host
                 Console.Error.WriteLine(exception.Message);
                 return 1;
             }
+        }
+
+        // Why a run that lifts the physical-actuator inhibit can't run at this pace, or null (CORE-9).
+        // HIL runs are paced by Basilisk (D2): an unpaced run would step hardware as fast as the host
+        // can. The gateway handles a controller's calls between steps, so a healthy holder is heard
+        // about once per paced step, and the failsafe acts at step starts: the timeout must cover two
+        // steps, so a healthy holder is not lost by a step's own length (a pacing overrun can still
+        // stretch one) and a silent one's last command runs for at most the timeout plus one step.
+        internal static string PhysicalActuatorProblem(SimulationConfiguration configuration, double realTimeFactor)
+        {
+            if (!configuration.PhysicalActuators.Enabled)
+            {
+                return null;
+            }
+
+            if (realTimeFactor <= 0.0)
+            {
+                return "physicalActuators: needs a paced run (--real-time-factor > 0)";
+            }
+
+            double stepWallSeconds = configuration.FixedStepSeconds / realTimeFactor;
+            if (stepWallSeconds > configuration.HeartbeatTimeoutWallSeconds / 2.0)
+            {
+                return "physicalActuators: a paced step lasts " +
+                    $"{stepWallSeconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture)} s of wall time " +
+                    "(fixedStepSeconds / --real-time-factor), more than half of heartbeatTimeoutWallSeconds " +
+                    $"({configuration.HeartbeatTimeoutWallSeconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture)} s): " +
+                    "the gateway hears a controller once per step";
+            }
+
+            return null;
         }
 
         private static RunRecorder OpenRecorder(HostOptions options, SimulationConfiguration configuration)
@@ -151,6 +190,7 @@ namespace Argus.Simulation.Host
                 gateway.StateProduced += recorder.RecordState;
                 gateway.SensorOutputProduced += recorder.RecordSensorOutput;
                 gateway.CommandLogged += recorder.RecordCommand;
+                gateway.AuthorityLogged += recorder.RecordAuthority;
                 gateway.RunTerminated += recorder.RecordTermination;
             }
 
@@ -197,7 +237,10 @@ namespace Argus.Simulation.Host
                     }
 
                     cancellation.ThrowIfCancellationRequested();
-                    // TODO(G1): no controller is attached yet, so every command is zero.
+                    // TODO(G1): no controller attaches until the gateway server (HOST-6) exists, so every step
+                    // is idle. Once one can, publish observation k, give the holder a bounded window
+                    // for command k (paced: part of the step's period; unpaced: a stated wait), then
+                    // step: a command that arrives later is late and the step holds (CORE-9).
                     observation = gateway.Step();
                 }
             }

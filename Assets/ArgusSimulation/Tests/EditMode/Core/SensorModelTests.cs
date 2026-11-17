@@ -127,7 +127,7 @@ namespace Argus.Simulation.Tests
                     "imu_link",
                     samplePeriodSeconds,
                     "simulation",
-                    SensorMount.Identity))
+                    SensorMount.Identity, isControllerVisible: true))
             {
             }
 
@@ -149,7 +149,7 @@ namespace Argus.Simulation.Tests
                     "sensor_link",
                     1.0,
                     "physical",
-                    SensorMount.Identity))
+                    SensorMount.Identity, isControllerVisible: true))
             {
             }
 

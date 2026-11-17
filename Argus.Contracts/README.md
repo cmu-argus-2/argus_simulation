@@ -52,8 +52,10 @@ types directly.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the
-  exceptions are empty `BasiliskDeviceSample.output` (Unavailable) and the state-stream
-  presence rules below. DeviceValue maps use the keys/types declared by their kind
+  exceptions are empty `BasiliskDeviceSample.output` (Unavailable), the state-stream
+  presence rules below, and fields added to a frozen v1 message, which an older client cannot
+  send: an unset one reads as its default (`RunConfiguration.heartbeat_timeout_wall_s`: the
+  heartbeat timeout off; `physical_actuators`: the inhibit on; CORE-9). DeviceValue maps use the keys/types declared by their kind
   (`docs/device-model.md` §3). For scalars zero is a value; range checks reject
   meaningless zeros. A scalar whose zero would be a plausible wrong value is declared
   `optional` (for example `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).

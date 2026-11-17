@@ -109,7 +109,11 @@ States: EMPTY → READY (next sequence 0) → RUNNING, plus FAILED.
      definite; unit initial quaternion (within 1e-6); finite rate;
    - `kernel_set_id` matches `[a-z0-9][a-z0-9._-]{0,63}`; `fixed_step_ns > 0`;
      `real_time_factor` finite and ≥ 0; unique device IDs; each `sample_period_ns` a
-     positive multiple of `fixed_step_ns`; every message field set; a unit
+     positive multiple of `fixed_step_ns`; every message field set, except the gateway settings
+     (CORE-9), which the service validates and otherwise ignores, and which may be unset (added
+     after v1 froze; unset reads as the failsafe off and the inhibit on): `heartbeat_timeout_wall_s`
+     finite and ≥ 0, and `physical_actuators` with a non-blank `test_procedure` and a timeout in
+     (0, 60] when `enabled`, and an empty `test_procedure` when not; a unit
      `mount.device_to_body` and a finite `mount.position_body_m`;
    - each device's `kind` is registered (§9); unknown or empty is INVALID_ARGUMENT;
    - `parameters` holds exactly the kind's keys (§9), all required, each with its declared
@@ -470,12 +474,14 @@ scale × (true + noise + bias), then quantised (IMU only), then clipped.
 
 **IMU quantisation truncates toward zero.** `imuSensor`'s `setLSBs` keeps the whole number of
 LSBs toward zero, not the nearest, so every value within ±1 LSB reads 0: a dead band two LSBs
-wide. On a recorded P0 orbit, 27% of gyro samples and 8.5% of accelerometer samples are exactly
-0, as truncation predicts (rounding would give 14% and 4.2%). The noise comes out narrower than
-configured: σ 0.33 mrad/s instead of 0.38 for the gyro, and 5.45 mm/s² instead of 5.69 for the
-accelerometer. A small rate below one LSB reads 0. DATA-1 (#67) confirms whether the flight
-IMU rounds or truncates before the P0 resolutions are set; if it rounds, the service has to
-quantise itself instead of using `setLSBs`.
+wide. In a recorded 600 s run of the P0 file, 33% of accelerometer samples are exactly 0, as
+truncation predicts (33.2%; rounding would give 17.0%). The P0 gyro never reads 0 while the body
+turns at 10 °/s; the same file started at zero rate gives 14–15% gyro zeros (predicted 13.7%;
+rounding would give 6.9%). The noise comes out narrower than configured: σ 0.36 mrad/s instead
+of 0.386 for the gyro at zero rate, and 4.7 mm/s² instead of 5.58 for the accelerometer. A small
+rate below one LSB reads 0. Whether the flight IMU rounds or truncates is unconfirmed, and
+DATA-1 (#67) keeps `setLSBs`: the half-LSB shift is about 6.9 °/h at ±125 °/s, small next to the
+uncorrected zero-rate offset of up to ±3 °/s.
 
 Every module's required input messages must be linked, or `InitializeSimulation` raises
 `BasiliskError`: IMU (both modules) and CSS `scStateInMsg` / `stateInMsg` from
@@ -670,7 +676,7 @@ lag-1 autocorrelation are the same on both versions.
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof; an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, past the device's limits, or in Step(0) |
+| INVALID_ARGUMENT | Malformed or invalid fields; a `real_time_factor` that paces one step to over 3600 s; an unset message field or oneof (the gateway settings excepted, §2); an unknown or empty device kind; an unknown, missing, mistyped or non-finite parameter; a non-empty `initial_state`; a Step command for the wrong step, for a device that is not a configured actuator, past the device's limits, or in Step(0) |
 | NOT_FOUND | No manifest for `kernel_set_id` |
 | FAILED_PRECONDITION | Wrong lifecycle state, run ID or sequence; kernel missing, SHA-256 mismatch or failed load; a magnetometer or magnetic torquer with no `WMM2025.COF` in the kernel set; run FAILED |
 | OUT_OF_RANGE | Epoch or t_n outside kernel coverage or WMM validity |

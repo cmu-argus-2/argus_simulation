@@ -92,8 +92,9 @@ unpaced run may finish before a client connects.
 
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
-including ground-truth sensors, and every command the gateway logged, applied or rejected
-(`commands.jsonl`), from the gateway's events. It writes on its own thread, so a slow disk
+including ground-truth sensors, every command the gateway logged, applied, clamped, held,
+failsafe or rejected (`commands.jsonl`), and every authority change (`authority.jsonl`), from the
+gateway's events. It writes on its own thread, so a slow disk
 never delays a step, and `manifest.json` counts anything it had to drop.
 
 ## Run configuration files
@@ -134,16 +135,32 @@ file; the host gives each run its own.
   `noise.source` (`none`), `exposure_duration_s` and `extrinsics.*`. Each value is read as the
   type its kind declares. `initialState` holds the kind's initial-state keys: only
   `momentum_wheel` has one (`speed_rad_per_s`), and the field is optional for the other kinds. `controllerVisible` is `false` for a ground-truth sensor: the gateway
-  never returns its frames to a controller, though the recorder still receives them (D7). It
-  must be `false` for a camera, whose frames carry the true camera pose; a controller-safe camera
-  observation is CORE-23 (#125). It is always `false` for the nadir ground-truth camera. `runs/p0-default.json` includes the four body cameras
+  never returns its frames to a controller, though the recorder still receives them (D7). A
+  visible `camera` reaches a controller as a `CameraObservation`, with the pixels and exposure
+  timing but not the camera pose or the Sun (CORE-23). The host builds its cameras with no
+  renderer and serves no controller yet, so here a visible camera's frames are `Unavailable`
+  until a renderer exists (UNITY-4 #57, UNITY-10 #64) and the gateway is served (HOST-6 #30).
+  P0's cameras stay `false`, so a run file opts a camera in. It is always `false` for the nadir
+  ground-truth camera. `runs/p0-default.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
   a 0.5 ms exposure (CORE-6), and `torque.body`, an `ideal_body_torque` device that rejects
   anything past 1e-4 N·m per axis, as DATA-2 (#68) gives for the ideal torque, until DATA-2's six
   coils land in the file. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
-- **Validation:** every field is required and unknown fields are rejected, including
+- **Gateway settings** (CORE-9, #45), the only optional top-level fields. Absent, the inhibit stays
+  on, and the heartbeat failsafe is off, which is safe only while no controller attaches (HOST-6 is
+  to refuse a controller session on a run without a timeout): `heartbeatTimeoutWallSeconds`, the heartbeat timeout for the controller holding
+  actuator authority (absent or `0`: off; set it for any run a controller attaches to, or a
+  crashed controller's last command is held for the rest of the run), and `physicalActuators`, which lifts the
+  physical-actuator inhibit: `{"enabled": true, "testProcedure": "<the bench procedure>"}`, with
+  both keys required. Lifting it needs `heartbeatTimeoutWallSeconds` in (0, 60] s, so a silent
+  controller fails safe, and a paced run whose step (`fixedStepSeconds / --real-time-factor`) is no
+  longer than half the timeout, since the gateway hears a controller about once per paced step:
+  otherwise the host exits 2. An explicit `null` is refused: omit
+  the key instead. The inhibit is enforced by HIL-1 (#66); runs without hardware are
+  unaffected.
+- **Validation:** every other field is required and unknown fields are rejected, including
   parameters the kind does not declare. Each part is checked with its Core `IsValid` and
   each device by its kind, so the file accepts exactly what Core accepts and an error names
   the key (`devices[1].parameters["range_tesla"]: is required`). Every
@@ -151,16 +168,15 @@ file; the host gives each run its own.
   at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
   one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
   the camera that set it and the part that differs
-  (`devices[12].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
+  (`devices[16].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
-light-sensor noise are 0 until DATA-1 (#67) gives the sigmas; the service accepts both
-(`Argus.Basilisk/README.md` §9).
-TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
-light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
-and epoch.
+`runs/p0-default.json` holds the DATA-1 (#67) values. The IMU, magnetometer and light-sensor
+parts come from datasheets and flight code. The 2U body (mass, inertia, light-sensor positions),
+the epoch and the orbit are team estimates, not measured or launch-contract numbers; real
+numbers are a change to this file. The four body cameras keep Argus-2's mounts (z = −0.029 m),
+while the 2U body's ±Z faces are at ±0.1135 m, until the 2U camera layout is known (#133).
 
 ## Rules
 

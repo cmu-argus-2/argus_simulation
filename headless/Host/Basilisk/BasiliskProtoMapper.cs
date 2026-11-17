@@ -39,6 +39,14 @@ namespace Argus.Simulation.Host
                     InertiaBodyKgM2 = ToProto(spacecraft.InertiaBodyKilogramSquareMeters),
                     InitialBodyToJ2000 = ToProto(spacecraft.InitialBodyToJ2000),
                     InitialAngularVelocityBodyRadPerS = ToProto(spacecraft.InitialAngularVelocityBodyRadiansPerSecond)
+                },
+                // Gateway settings (CORE-9), always set by this host; the service also accepts an older
+                // host that leaves them unset (Argus.Contracts/README.md, Presence).
+                HeartbeatTimeoutWallS = configuration.HeartbeatTimeoutWallSeconds,
+                PhysicalActuators = new PbSim.PhysicalActuators
+                {
+                    Enabled = configuration.PhysicalActuators.Enabled,
+                    TestProcedure = configuration.PhysicalActuators.TestProcedure ?? ""
                 }
             };
 

@@ -24,7 +24,7 @@ namespace Argus.Simulation.Core
             DeviceValues idleValues,
             DeviceKey[] parameterKeys,
             DeviceKey[] initialStateKeys = null)
-            : base(name, DeviceRole.Actuator, isBackendModelled: true, mayBeControllerVisible: false, parameterKeys, initialStateKeys)
+            : base(name, DeviceRole.Actuator, isBackendModelled: true, controllerProjection: null, parameterKeys, initialStateKeys)
         {
             _commandKeys = new DeclaredKeys(commandKeys);
             IdleValues = idleValues;
