@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Argus.Simulation.Core;
@@ -123,6 +124,81 @@ namespace Argus.Simulation.Tests
             Assert.That(commands[0], Does.EndWith("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[-0.001,0.0005,0]}}}}"));
             string[] states = File.ReadAllLines(Path.Combine(run, "states.jsonl"));
             Assert.That(states[1], Does.Contain("\"torque_body_n_m\":[-0.001,0.0005,0]"));
+        }
+
+        // CORE-9: authority changes go to authority.jsonl, each command line names its controller, held
+        // and failsafe steps are recorded with what the engine ran, and the manifest records the
+        // run's heartbeat timeout and physical-actuator inhibit.
+        [Test]
+        public void AuthorityChangesAndHeldAndFailsafeStepsAreRecorded()
+        {
+            using (RunRecorder recorder = new RunRecorder(_root, "test"))
+            {
+                AnalyticSimulationEngine analytic = Analytic();
+                SimulationGateway gateway = RecordedGateway(recorder, new ApplyingEngine(analytic), analytic.Orbit);
+                gateway.Reset(0, TorqueScenario(heartbeatTimeoutWallSeconds: 30.0));
+                gateway.TryClaim("fsw", out _);
+                gateway.TrySubmit("fsw", Torque(0, 5e-4), out _);
+                gateway.Step();
+                gateway.Step();
+                gateway.TryClaim("agent", out _);
+                gateway.Revoke("fsw", "link session closed");
+                gateway.Step();
+                recorder.Close();
+            }
+
+            string run = Path.Combine(_root, "test-run_0");
+            string[] commands = File.ReadAllLines(Path.Combine(run, "commands.jsonl"));
+            Assert.That(commands.Select(line => Field(line, "outcome")), Is.EqualTo(new[] { "\"Applied\"", "\"Held\"", "\"Failsafe\"" }));
+            Assert.That(commands.Select(line => Field(line, "controller_id")), Is.EqualTo(new[] { "\"fsw\"", "\"fsw\"", "null" }));
+            Assert.That(commands[1], Does.Contain("\"requested\":{\"sequence\":1,\"apply_at_simulation_time_s\":0.5,\"devices\":{}}"));
+            Assert.That(commands[1], Does.EndWith("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[0.0005,0,0]}}}}"));
+            Assert.That(commands[2], Does.EndWith("\"devices\":{\"torque.body\":{\"torque_body_n_m\":[0,0,0]}}}}"));
+
+            string[] authority = File.ReadAllLines(Path.Combine(run, "authority.jsonl"));
+            Assert.That(authority.Select(line => Field(line, "change")), Is.EqualTo(new[] { "\"Claimed\"", "\"Refused\"", "\"Lost\"" }));
+            Assert.That(authority[1], Is.EqualTo(
+                "{\"run_id\":\"test-run\",\"sequence\":2,\"simulation_time_s\":1,\"controller_id\":\"agent\",\"change\":\"Refused\"," +
+                "\"reason\":\"Controller 'fsw' holds actuator authority.\"}"));
+            Assert.That(Field(authority[0], "reason"), Is.EqualTo("null"));
+            Assert.That(Field(authority[2], "reason"), Is.EqualTo("\"link session closed\""));
+
+            string manifest = File.ReadAllText(Path.Combine(run, "manifest.json"));
+            Assert.That(Balanced(manifest, "\"authority.jsonl\":", '{', '}'), Is.EqualTo("{\"lines\":3}"));
+            Assert.That(Field(manifest, "dropped_authority"), Is.EqualTo("0"));
+            Assert.That(Field(manifest, "heartbeat_timeout_wall_s"), Is.EqualTo("30"));
+            Assert.That(Balanced(manifest, "\"physical_actuators\":", '{', '}'), Is.EqualTo("{\"enabled\":false,\"test_procedure\":null}"));
+        }
+
+        // Refused claims share the refusals budget with rejected commands, so a flood of them under a
+        // stalled disk is counted as dropped and never crowds out a loss (CORE-9 design review).
+        [Test]
+        public void AFloodOfRefusedClaimsNeverCrowdsOutALoss()
+        {
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using Timer timeout = new Timer(_ => release.Set(), null, 5000, Timeout.Infinite);
+            using RunRecorder recorder = new RunRecorder(_root, "test", null, capacity: 4, () => release.Wait());
+            AnalyticSimulationEngine analytic = Analytic();
+            SimulationGateway gateway = RecordedGateway(recorder, new ApplyingEngine(analytic), analytic.Orbit);
+            gateway.Reset(0, TorqueScenario(heartbeatTimeoutWallSeconds: 0.0));
+            gateway.TryClaim("fsw", out _);
+            for (int i = 0; i < 10; i++)
+            {
+                gateway.TryClaim("agent", out _);
+            }
+
+            gateway.Revoke("fsw", "link session closed");
+            bool stillStalled = !release.IsSet;
+            release.Set();
+            recorder.Close();
+
+            Assert.That(stillStalled, Is.True, "the writer was released before the claims were made");
+            string run = Path.Combine(_root, "test-run_0");
+            string[] authority = File.ReadAllLines(Path.Combine(run, "authority.jsonl"));
+            long dropped = long.Parse(Field(File.ReadAllText(Path.Combine(run, "manifest.json")), "dropped_authority"), CultureInfo.InvariantCulture);
+            Assert.That(Field(authority[authority.Length - 1], "change"), Is.EqualTo("\"Lost\""));
+            Assert.That(authority.Count(line => Field(line, "change") == "\"Claimed\""), Is.EqualTo(1));
+            Assert.That((authority.Length + dropped, dropped), Is.EqualTo((12L, 6L)));
         }
 
         [Test]
@@ -355,9 +431,30 @@ namespace Argus.Simulation.Tests
             gateway.StateProduced += recorder.RecordState;
             gateway.SensorOutputProduced += recorder.RecordSensorOutput;
             gateway.CommandLogged += recorder.RecordCommand;
+            gateway.AuthorityLogged += recorder.RecordAuthority;
             gateway.RunTerminated += recorder.RecordTermination;
             return gateway;
         }
+
+        // One ideal body torque device (clamp at 1e-3 N m) at a 0.5 s step.
+        private static SimulationConfiguration TorqueScenario(double heartbeatTimeoutWallSeconds) =>
+            new SimulationConfiguration(
+                "test-run",
+                DateTimeOffset.UnixEpoch,
+                0.5,
+                devices: new[]
+                {
+                    IdealBodyTorqueKind.Instance.Configure(
+                        new SensorDefinition("torque.body", "test-actuator", "torque_body", 0.0, "basilisk", SensorMount.Identity, isControllerVisible: false),
+                        new IdealBodyTorqueProfile(new Vector3d(1e-3, 1e-3, 1e-3), ActuatorLimitPolicy.Clamp))
+                },
+                heartbeatTimeoutWallSeconds: heartbeatTimeoutWallSeconds);
+
+        private static DeviceCommandSet Torque(long sequence, double x) =>
+            new DeviceCommandSet(sequence, sequence * 0.5, new[]
+            {
+                new DeviceCommand("torque.body", new DeviceValues.Builder().Add("torque_body_n_m", new Vector3d(x, 0.0, 0.0)).Build())
+            });
 
         private static SimulationConfiguration Scenario(double fixedStepSeconds)
         {

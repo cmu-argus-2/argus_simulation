@@ -31,6 +31,22 @@ message RunConfiguration {
   reserved "sensors";
   // Backend-modelled devices only, in configuration order (CORE-18).
   repeated DeviceConfiguration devices = 9;
+  // Gateway settings (CORE-9), carried with the run so the configuration stays one message (G5); the
+  // Basilisk service validates them as Core does and otherwise ignores them. Both are always set. The
+  // heartbeat timeout for the controller holding actuator authority, in seconds of wall-clock time
+  // (the host's monotonic clock, not simulation time); 0 turns it off, so presence tells it from a
+  // missing value.
+  optional double heartbeat_timeout_wall_s = 10;
+  // The physical-actuator inhibit, for HIL-1 (#66) to enforce.
+  PhysicalActuators physical_actuators = 11;
+}
+
+// Inhibited unless enabled, and enabling names the test procedure that allows it. Enabled needs
+// heartbeat_timeout_wall_s in (0, 60] (Core SimulationConfiguration).
+message PhysicalActuators {
+  bool enabled = 1;
+  // Empty when not enabled.
+  string test_procedure = 2;
 }
 
 // Osculating, Earth-centred, at epoch_utc, J2000 axes. Basilisk: elem2rv(mu_earth, oe), angles

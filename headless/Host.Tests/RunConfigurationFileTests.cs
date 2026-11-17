@@ -387,6 +387,173 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(error.Message, Is.EqualTo("devices[0].source: is no longer a run-file field; the device's kind sets it (device-model §1)"));
         }
 
+        // CORE-9: the gateway settings are optional, and absent is the safe value: no heartbeat, and
+        // physical actuators inhibited.
+        [Test]
+        public void GatewaySettingsAreOptionalAndAbsentMeansSafe()
+        {
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(P0Text, RunId);
+
+            Assert.That((configuration.HeartbeatTimeoutWallSeconds, configuration.PhysicalActuators.Enabled), Is.EqualTo((0.0, false)));
+        }
+
+        [Test]
+        public void GatewaySettingsLoadWhenGiven()
+        {
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = 2.5;
+            root["physicalActuators"] = Lifted();
+
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            Assert.That(configuration.HeartbeatTimeoutWallSeconds, Is.EqualTo(2.5));
+            Assert.That((configuration.PhysicalActuators.Enabled, configuration.PhysicalActuators.TestProcedure), Is.EqualTo((true, "bench-coil-1")));
+        }
+
+        [TestCase("timeout null", "heartbeatTimeoutWallSeconds: is required")]
+        [TestCase("timeout negative", "heartbeatTimeoutWallSeconds: must be finite and >= 0")]
+        [TestCase("inhibit null", "physicalActuators: is required")]
+        [TestCase("inhibit not an object", "physicalActuators: must be an object")]
+        [TestCase("procedure missing", "physicalActuators.testProcedure: is required")]
+        [TestCase("unknown inhibit key", "physicalActuators.armed: is not a known field")]
+        [TestCase("procedure blank", "physicalActuators.testProcedure: must not be blank")]
+        [TestCase("procedure while inhibited", "physicalActuators.enabled: is false, so the inhibit stays on; remove physicalActuators")]
+        [TestCase("blank procedure while inhibited", "physicalActuators.enabled: is false, so the inhibit stays on; remove physicalActuators")]
+        [TestCase("enabled without a heartbeat", "physicalActuators.enabled: needs heartbeatTimeoutWallSeconds in (0, 60] s")]
+        [TestCase("enabled with a long heartbeat", "physicalActuators.enabled: needs heartbeatTimeoutWallSeconds in (0, 60] s")]
+        public void InvalidGatewaySettingNamesTheField(string change, string expectedMessage)
+        {
+            JsonObject root = P0();
+            JsonObject lifted = Lifted();
+            switch (change)
+            {
+                case "timeout null":
+                    root["heartbeatTimeoutWallSeconds"] = null;
+                    break;
+                case "timeout negative":
+                    root["heartbeatTimeoutWallSeconds"] = -1.0;
+                    break;
+                case "inhibit null":
+                    root["physicalActuators"] = null;
+                    break;
+                case "inhibit not an object":
+                    root["physicalActuators"] = true;
+                    break;
+                case "procedure missing":
+                    lifted.Remove("testProcedure");
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "unknown inhibit key":
+                    lifted["armed"] = true;
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "procedure blank":
+                    lifted["testProcedure"] = " ";
+                    root["heartbeatTimeoutWallSeconds"] = 1.0;
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "procedure while inhibited":
+                    lifted["enabled"] = false;
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "blank procedure while inhibited":
+                    lifted["enabled"] = false;
+                    lifted["testProcedure"] = "";
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "enabled without a heartbeat":
+                    root["physicalActuators"] = lifted;
+                    break;
+                case "enabled with a long heartbeat":
+                    root["heartbeatTimeoutWallSeconds"] = 61.0;
+                    root["physicalActuators"] = lifted;
+                    break;
+            }
+
+            RunConfigurationException error = Assert.Throws<RunConfigurationException>(
+                () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
+            Assert.That(error.Message, Does.StartWith(expectedMessage));
+        }
+
+        // HIL runs are paced by Basilisk (D2): a run that lifts the inhibit with --real-time-factor 0
+        // (the default) is bad input, refused before the host connects.
+        [Test]
+        public void PhysicalActuatorsInAnUnpacedRunExitWithCode2BeforeConnecting()
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"argus-hil-run-{Guid.NewGuid():N}.json");
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = 1.0;
+            root["physicalActuators"] = Lifted();
+            File.WriteAllText(path, root.ToJsonString());
+            TextWriter originalError = Console.Error;
+            StringWriter error = new StringWriter();
+            try
+            {
+                Console.SetError(error);
+                int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9" });
+
+                Assert.That(exitCode, Is.EqualTo(2));
+                Assert.That(error.ToString(), Does.Contain("physicalActuators: needs a paced run (--real-time-factor > 0)"));
+                Assert.That(error.ToString(), Does.Not.Contain("Unavailable"));
+            }
+            finally
+            {
+                Console.SetError(originalError);
+                File.Delete(path);
+            }
+        }
+
+        // A paced step must not outlast the heartbeat timeout, or a silent controller's last command
+        // would run for a whole step after the timeout (final review, finding 2).
+        [Test]
+        public void PhysicalActuatorsWithAStepLongerThanTheHeartbeatExitWithCode2()
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"argus-hil-slow-{Guid.NewGuid():N}.json");
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = 1.0;
+            root["physicalActuators"] = Lifted();
+            File.WriteAllText(path, root.ToJsonString());
+            TextWriter originalError = Console.Error;
+            StringWriter error = new StringWriter();
+            try
+            {
+                Console.SetError(error);
+                int exitCode = Program.Main(new[] { "--run-config", path, "--basilisk-endpoint", "127.0.0.1:9", "--real-time-factor", "0.05" });
+
+                Assert.That(exitCode, Is.EqualTo(2));
+                Assert.That(error.ToString(), Does.Contain("physicalActuators: a paced step lasts 2 s of wall time"));
+            }
+            finally
+            {
+                Console.SetError(originalError);
+                File.Delete(path);
+            }
+        }
+
+        // The gateway handles a controller's calls between steps, so a healthy holder is heard about
+        // once per paced step: the timeout must cover two of them (final review 3).
+        [TestCase(0.2, 1.0, null)]
+        [TestCase(0.19, 1.0, "physicalActuators: a paced step lasts")]
+        [TestCase(0.0, 1.0, "physicalActuators: needs a paced run")]
+        public void APacedStepMustFitTwiceInTheHeartbeatTimeout(double realTimeFactor, double timeoutSeconds, string expected)
+        {
+            JsonObject root = P0();
+            root["heartbeatTimeoutWallSeconds"] = timeoutSeconds;
+            root["physicalActuators"] = Lifted();
+            SimulationConfiguration configuration = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
+
+            string problem = Program.PhysicalActuatorProblem(configuration, realTimeFactor);
+
+            if (expected == null)
+            {
+                Assert.That(problem, Is.Null);
+            }
+            else
+            {
+                Assert.That(problem, Does.StartWith(expected));
+            }
+        }
+
         [Test]
         public void HostExitsWithCode2BeforeConnecting()
         {
@@ -557,6 +724,9 @@ namespace Argus.Simulation.Host.Tests
             RunConfigurationFile.Load(Path.Combine(ReferenceRunDirectory, name), RunId);
 
         private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
+
+        // A physicalActuators block that lifts the inhibit for a named procedure.
+        private static JsonObject Lifted() => new JsonObject { ["enabled"] = true, ["testProcedure"] = "bench-coil-1" };
 
         // An Argus-computed camera entry with the DATA-6 (#71) v0 profile on the +X mount. Not
         // controller-visible: a camera frame carries truth (D7).

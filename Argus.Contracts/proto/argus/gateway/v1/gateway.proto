@@ -1,7 +1,8 @@
 // PLACEHOLDER: no messages yet.
-// TODO(D7, G1): the controller link for HIL flight computers and external controllers: Reset(seed, scenario), Step(commands)
-// returning controller-visible observations (never truth), authority and heartbeat. Define it with
-// headless/Host GatewayServer and the SimulationGateway observation change.
+// TODO(D7, G1): CON-3, the controller link for HIL flight computers and external controllers. It carries
+// Core's IControllerGateway (CORE-9): claim, release, heartbeat, submit (owner-stepped runs) or step
+// (lockstep), controller-visible observations out (never truth) and the run's end. Define it with
+// headless/Host GatewayServer (HOST-6).
 syntax = "proto3";
 
 package argus.gateway.v1;

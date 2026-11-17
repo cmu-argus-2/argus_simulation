@@ -58,11 +58,12 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 | Responsibility | Main classes |
 |---|---|
 | Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource` |
+| Controller interface (CORE-9) | `IControllerGateway` (claim, release, heartbeat, submit or step), implemented by `SimulationGateway` |
 | Rendering interface | `IImageRenderer` |
-| Simulation contracts | `SimulationConfiguration`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
+| Simulation contracts | `SimulationConfiguration`, `PhysicalActuatorSetting`, `CommandRecord`, `AuthorityRecord`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |
 | Device model (D11) | `DeviceConfiguration`, `DeviceValue`, `DeviceValues`, `IDeviceKind`, `IBackendSensorKind`, `ICameraKind`, `DeviceKey`, `DeviceRole`, `DeviceKinds` (the registry), `DeviceSource` (a device's `basilisk` or `argus` label, from its kind); kinds `ImuKind`, `MagnetometerKind`, `LightSensorKind`, and `CameraKind` and `NadirGroundTruthCameraKind` (on `CameraProfileKind`), on the `DeviceKind<TProfile>` and `BackendSensorKind<TProfile, TMeasurement>` bases; actuators `IActuatorKind`, `ActuatorLimitPolicy`, `ActuatorGeometry`, and `IdealBodyTorqueKind`, `MomentumWheelKind`, `MagneticTorquerKind` and `ThrusterKind` with their profiles, on `ActuatorKind<TProfile>` (in `Core/Actuators`) |
 | Development dynamics | `AnalyticSimulationEngine`, `CircularOrbitModel`, `OrbitLookahead` |
-| Headless orchestration | `SimulationGateway` |
+| Headless orchestration | `SimulationGateway`, `StepDriver` |
 | Headless host (`headless/Host`) | `BasiliskEngine`, `BasiliskProtoMapper`, `HostOptions`, `RunConfigurationFile`, `RunConfigurationException`, `Program`; the state stream to Unity `StateStreamServer`, `StateStreamPublisher`, `StateStreamMapper` |
 | Basilisk mapping (internal) | `BasiliskTime`, `BasiliskSpacecraftState`, `BasiliskPlanetState`, `BasiliskSensorSample`, `BasiliskStepState`, `BasiliskStateMapper` |
 | Sensor contracts and runtime | `ISensor`, `SensorModel<TPayload>`, `SensorSlot`, `SensorManager`, `SensorFrame<TPayload>` |

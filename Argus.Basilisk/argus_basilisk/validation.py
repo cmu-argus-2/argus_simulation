@@ -27,6 +27,8 @@ KERNEL_SET_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 # headless/Host BasiliskEngine.MaximumPacedStepSeconds: ClockSynch sleeps fixed_step / factor of
 # wall time per step, so a tiny factor would hold one Step for hours (README §5).
 MAXIMUM_PACED_STEP_SECONDS = 3600.0
+# Core SimulationConfiguration.MaximumHeartbeatTimeoutWithPhysicalActuatorsWallSeconds (CORE-9).
+MAXIMUM_HEARTBEAT_TIMEOUT_WITH_PHYSICAL_ACTUATORS_WALL_S = 60.0
 
 # google.protobuf.Timestamp range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z.
 _TIMESTAMP_MIN_SECONDS = -62_135_596_800
@@ -124,6 +126,8 @@ def configure_run_problems(
             f"must match {KERNEL_SET_ID_PATTERN.pattern}",
             configuration.kernel_set_id,
         )
+
+    _check_gateway_settings(problems, configuration, path)
 
     if configuration.HasField("initial_orbit"):
         _check_orbit(problems, configuration.initial_orbit, f"{path}.initial_orbit")
@@ -371,6 +375,42 @@ def _check_real_time_factor(problems: _Problems, value: float, fixed_step_ns: in
         problems.invalid(path, "must be finite and >= 0", value)
     elif value > 0.0 and fixed_step_ns / _NANOSECONDS_PER_SECOND / value > MAXIMUM_PACED_STEP_SECONDS:
         problems.invalid(path, f"would pace each step to over {MAXIMUM_PACED_STEP_SECONDS:g} s", value)
+
+
+def _check_gateway_settings(problems: _Problems, configuration, path: str) -> None:
+    # The gateway's heartbeat timeout and physical-actuator inhibit (CORE-9). The service does not
+    # use them, but they are part of the run configuration, so it validates them as Core does.
+    timeout_path = f"{path}.heartbeat_timeout_wall_s"
+    if not configuration.HasField("heartbeat_timeout_wall_s"):
+        problems.unset(timeout_path)
+        timeout = None
+    else:
+        timeout = configuration.heartbeat_timeout_wall_s
+        if not math.isfinite(timeout) or timeout < 0.0:
+            problems.invalid(timeout_path, "must be finite and >= 0", timeout)
+            timeout = None
+
+    inhibit_path = f"{path}.physical_actuators"
+    if not configuration.HasField("physical_actuators"):
+        problems.unset(inhibit_path)
+        return
+    inhibit = configuration.physical_actuators
+    if inhibit.enabled:
+        if _is_blank_as_dotnet(inhibit.test_procedure):
+            problems.invalid(f"{inhibit_path}.test_procedure", "must not be blank when enabled", inhibit.test_procedure)
+        if timeout is not None and not 0.0 < timeout <= MAXIMUM_HEARTBEAT_TIMEOUT_WITH_PHYSICAL_ACTUATORS_WALL_S:
+            problems.invalid(
+                f"{inhibit_path}.enabled",
+                f"needs heartbeat_timeout_wall_s in (0, {MAXIMUM_HEARTBEAT_TIMEOUT_WITH_PHYSICAL_ACTUATORS_WALL_S:g}]",
+                timeout)
+    elif inhibit.test_procedure:
+        problems.invalid(f"{inhibit_path}.test_procedure", "must be empty when not enabled", inhibit.test_procedure)
+
+
+def _is_blank_as_dotnet(text: str) -> bool:
+    # Core's string.IsNullOrWhiteSpace, so host and service agree: Python's isspace() also counts the
+    # information separators U+001C-U+001F, which .NET does not.
+    return all(character.isspace() and character not in "\x1c\x1d\x1e\x1f" for character in text)
 
 
 def _check_orbit(problems: _Problems, orbit, path: str) -> None:

@@ -156,6 +156,9 @@ def p0_default_request():
         kernel_set_id="argus-2026-11-02",
     )
     configuration.epoch_utc.FromDatetime(datetime(2025, 1, 15, tzinfo=timezone.utc))
+    # Gateway settings (CORE-9), always set by BasiliskProtoMapper: no heartbeat, inhibited.
+    configuration.heartbeat_timeout_wall_s = 0.0
+    configuration.physical_actuators.SetInParent()
 
     orbit = configuration.initial_orbit
     orbit.semi_major_axis_m = 6_878_137.0
@@ -420,6 +423,53 @@ def test_bad_value_is_named():
     request = p0_default_request()
     request.configuration.initial_orbit.inclination_deg = 181.25
     assert only_problem(request).details.endswith("got 181.25")
+
+
+@pytest.mark.parametrize("field", ["heartbeat_timeout_wall_s", "physical_actuators"])
+def test_gateway_settings_must_be_set(field):
+    # CORE-9: the service ignores them, but an unset field is invalid, never defaulted
+    # (Argus.Contracts/README.md, Presence).
+    request = p0_default_request()
+    request.configuration.ClearField(field)
+    problem = only_problem(request)
+    assert problem.code == "INVALID_ARGUMENT"
+    assert problem.details == f"configuration.{field}: required field is not set"
+
+
+@pytest.mark.parametrize("timeout, enabled, procedure, expected", [
+    (-1.0, False, "", "configuration.heartbeat_timeout_wall_s: must be finite and >= 0, got -1.0"),
+    (math.inf, False, "", "configuration.heartbeat_timeout_wall_s: must be finite and >= 0, got inf"),
+    (1.0, True, " ", "configuration.physical_actuators.test_procedure: must not be blank when enabled, got ' '"),
+    # Blank as .NET reads it (string.IsNullOrWhiteSpace), so host and service agree: U+001F is not blank.
+    (1.0, True, "\u3000", "configuration.physical_actuators.test_procedure: must not be blank when enabled, got '\\u3000'"),
+    (1.0, False, "\x1f", "configuration.physical_actuators.test_procedure: must be empty when not enabled, got '\\x1f'"),
+    (1.0, False, "bench-coil-1", "configuration.physical_actuators.test_procedure: must be empty when not enabled, got 'bench-coil-1'"),
+    (0.0, True, "bench-coil-1", "configuration.physical_actuators.enabled: needs heartbeat_timeout_wall_s in (0, 60], got 0.0"),
+    (60.5, True, "bench-coil-1", "configuration.physical_actuators.enabled: needs heartbeat_timeout_wall_s in (0, 60], got 60.5"),
+])
+def test_gateway_settings_repeat_core(timeout, enabled, procedure, expected):
+    # The same rules as Core SimulationConfiguration.IsValid (README §2).
+    request = p0_default_request()
+    request.configuration.heartbeat_timeout_wall_s = timeout
+    request.configuration.physical_actuators.enabled = enabled
+    request.configuration.physical_actuators.test_procedure = procedure
+    assert only_problem(request).details == expected
+
+
+def test_a_control_character_procedure_is_not_blank_as_in_dotnet():
+    request = p0_default_request()
+    request.configuration.heartbeat_timeout_wall_s = 1.0
+    request.configuration.physical_actuators.enabled = True
+    request.configuration.physical_actuators.test_procedure = "\x1f"
+    assert problems_of(request) == []
+
+
+def test_lifted_inhibit_with_a_heartbeat_is_valid():
+    request = p0_default_request()
+    request.configuration.heartbeat_timeout_wall_s = 60.0
+    request.configuration.physical_actuators.enabled = True
+    request.configuration.physical_actuators.test_procedure = "bench-coil-1"
+    assert problems_of(request) == []
 
 
 def test_missing_configuration():
