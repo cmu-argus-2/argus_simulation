@@ -264,7 +264,17 @@ message DeviceCommandSet {
   Then each value is held to its device's limits by its kind, and the device's `limit_policy`
   decides (CORE-10, #46): `clamp` sends the value at its nearest limit and logs the command
   `Clamped`, with the requested and applied command and the reason; `reject` refuses the whole
-  command (`Rejected`), so the step doesn't run.
+  command (`Rejected`): nothing of it is passed on.
+- **Authority, held and failsafe steps (CORE-9, #45).** Only the controller holding actuator
+  authority commands actuators (`IControllerGateway`). In an owner-stepped run a step with no new
+  command from it repeats its last applied command, restamped to the step (`Held`), as coil
+  registers keep their value; every tenure starts from idle. After it misses its heartbeat, every
+  actuator gets its kind's idle values (`Failsafe`) until a controller claims; for a magnetic
+  torquer that is zero dipole, and brake and coast are the same in Basilisk. A rejected command
+  never runs. When it was the call that steps (the owner's `Step(command)`, or the holder's in a
+  lockstep run), the step does not run; a refused submission in an owner-stepped run leaves the
+  owner's next step as it would have been without it (idle, the holder's command, held or
+  failsafe).
 - **In Core**, `DeviceCommandSet` (which replaced `ActuatorCommandSet`) holds the sequence, the
   apply time and the `DeviceCommand`s, each a device ID and its values.
 - **`commands.jsonl`**: `requested` and `applied` keep `sequence` and
