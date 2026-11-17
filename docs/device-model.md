@@ -22,7 +22,7 @@ Common fields, the same for every kind:
 |---|---|---|
 | `deviceId` | `device_id` | Unique across all of the spacecraft's devices, sensors and actuators alike (ordinal). Commands, frames and recorded state address a device by it. |
 | `kind` | `kind` | A registered kind name in snake_case: `imu`, `magnetometer`, `light_sensor`, `camera` (CORE-18), and later `ideal_body_torque`, `momentum_wheel`, `magnetic_torquer`, `thruster`. |
-| `modelName` | Core only | The part, as a parameter set for its kind (`placeholder-mems-imu`, `arducam-imx708`). Recorded; not sent to the service. |
+| `modelName` | Core only | The part, as a parameter set for its kind (`bosch-bmx160-gyro125dps-accel8g`, `arducam-imx708`). Recorded; not sent to the service. |
 | `frameId` | Core only | The sensor frame's name in frames and datasets. |
 | `mount` | `mount` | `positionBodyMeters` (lever arm from the centre of mass) and `deviceToBody` (v_body = q v_device q*). It replaces `SensorMount`'s `sensorToBody`. An actuator's axis is a body-frame parameter, so its `deviceToBody` must be the identity; a thruster acts at its `positionBodyMeters`. |
 | `samplePeriodSeconds` | `sample_period_ns` | Sensors only: a positive whole number of fixed steps. Actuators have none: they take a command every step. |
@@ -123,51 +123,51 @@ A new kind needs no contract change: the schema does not check fields, the kind 
 
 ## 4. Profile and run file
 
-A spacecraft profile holds the body and its devices. Here is the P0 profile, abbreviated: the
-accelerometer, the magnetometer, the other five light sensors and the four body cameras (CORE-6)
-follow the same pattern.
+A spacecraft profile holds the body and its devices. Here is the P0 profile with the DATA-1 (#67) values,
+abbreviated: the accelerometer, the magnetometer, the other eight light sensors, the four body
+cameras (CORE-6) and the torque actuator follow the same pattern.
 
 ```json
 {
   "profileId": "argus-p0",
   "body": {
-    "massKilograms": 1.33,
-    "inertiaBodyKilogramSquareMeters": [[2.536e-3, 0, 0], [0, 2.536e-3, 0], [0, 0, 2.217e-3]]
+    "massKilograms": 2.6,
+    "inertiaBodyKilogramSquareMeters": [[1.906e-2, 0, 0], [0, 1.931e-2, 0], [0, 0, 8.24e-3]]
   },
   "devices": [
     {
       "deviceId": "imu.main",
       "kind": "imu",
-      "modelName": "placeholder-mems-imu",
+      "modelName": "bosch-bmx160-gyro125dps-accel8g",
       "frameId": "imu_main",
       "samplePeriodSeconds": 0.1,
       "mount": { "positionBodyMeters": [0, 0, 0], "deviceToBody": { "x": 0, "y": 0, "z": 0, "w": 1 } },
       "parameters": {
         "gyroscope": {
-          "noise_density_rad_per_s_per_sqrt_hz": 1.2e-4,
+          "noise_density_rad_per_s_per_sqrt_hz": 1.2217e-4,
           "bias_random_walk_rad_per_s_per_sqrt_s": 0,
           "bias_random_walk_bound_rad_per_s": 0,
           "constant_bias_sensor_rad_per_s": [0, 0, 0],
           "scale_factor_per_axis": [1, 1, 1],
-          "range_rad_per_s": 4.363,
-          "resolution_rad_per_s": 1.33e-4
+          "range_rad_per_s": 2.18166,
+          "resolution_rad_per_s": 6.6514e-5
         },
-        "accelerometer": { "noise_density_m_per_s2_per_sqrt_hz": 1.8e-3, "...": "..." }
+        "accelerometer": { "noise_density_m_per_s2_per_sqrt_hz": 1.7652e-3, "...": "..." }
       }
     },
     {
       "deviceId": "light.px",
       "kind": "light_sensor",
-      "modelName": "placeholder-face-light-sensor",
+      "modelName": "ti-opt4003-q1-uson",
       "frameId": "light_px",
-      "samplePeriodSeconds": 0.1,
+      "samplePeriodSeconds": 1.0,
       "mount": { "positionBodyMeters": [0.05, 0, 0], "deviceToBody": { "x": 0.5, "y": 0.5, "z": 0.5, "w": 0.5 } },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
         "scale_factor": 1,
-        "noise_std_w_per_m2": 0,
+        "noise_std_w_per_m2": 1,
         "bias_w_per_m2": 0,
-        "saturation_w_per_m2": 2000
+        "saturation_w_per_m2": 1460
       }
     }
   ]
@@ -180,14 +180,14 @@ itself:
 
 ```json
 {
-  "epochUtc": "2025-01-15T00:00:00Z",
+  "epochUtc": "2026-06-01T12:00:00Z",
   "fixedStepSeconds": 0.1,
   "randomSeed": 1,
   "kernelSetId": "argus-2026-11-02",
-  "initialOrbit": { "semiMajorAxisMeters": 6878137.0, "...": "..." },
+  "initialOrbit": { "semiMajorAxisMeters": 6958137.0, "raanDegrees": 234.06, "...": "..." },
   "initialAttitude": {
     "bodyToJ2000": { "x": 0, "y": 0, "z": 0, "w": 1 },
-    "angularVelocityBodyRadiansPerSecond": [0, 0, 0]
+    "angularVelocityBodyRadiansPerSecond": [0.1, -0.08, 0.12]
   },
   "spacecraftProfile": "../spacecraft/argus-p0.json"
 }
@@ -198,8 +198,8 @@ itself:
   devices) and sends the resolved devices to the service, which never reads files.
 - The dataset manifest records `profileId`, the path as written, and the resolved body and
   devices, so a dataset stands alone.
-- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 12 P0 devices: the 8 sensors
-  Basilisk models and the 4 body cameras) and a run file that names it (HOST-9).
+- `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 16 P0 devices: the 11 sensors
+  Basilisk models, the 4 body cameras and the ideal body torque) and a run file that names it (HOST-9).
 
 ## 5. Wire
 

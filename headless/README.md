@@ -168,16 +168,15 @@ file; the host gives each run its own.
   at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
   one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
   the camera that set it and the part that differs
-  (`devices[12].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
+  (`devices[16].parameters["profile_id"]: names another parameter set than cam.px: it differs in intrinsics`).
 - **Orbit:** the elements are osculating at the epoch in J2000 axes, so RAAN is measured
   from J2000 x, not from Greenwich as in the Unity analytic fixture.
 
-`runs/p0-default.json` is placeholder data, not confirmed hardware. Its magnetometer and
-light-sensor noise are 0 until DATA-1 (#67) gives the sigmas; the service accepts both
-(`Argus.Basilisk/README.md` §9).
-TODO(hardware): replace it with confirmed data from DATA-1 (#67): IMU, magnetometer and
-light-sensor parts, mounts and rates; spacecraft mass, inertia and initial attitude; orbit
-and epoch.
+`runs/p0-default.json` holds the DATA-1 (#67) values. The IMU, magnetometer and light-sensor
+parts come from datasheets and flight code. The 2U body (mass, inertia, light-sensor positions),
+the epoch and the orbit are team estimates, not measured or launch-contract numbers; real
+numbers are a change to this file. The four body cameras keep Argus-2's mounts (z = −0.029 m),
+while the 2U body's ±Z faces are at ±0.1135 m, until the 2U camera layout is known (#133).
 
 ## Rules
 
