@@ -86,27 +86,27 @@ def service():
 
 
 def configure_request():
-    """The P0 default without devices."""
+    """The test baseline (p0_default_request, not runs/p0-default.json) without devices."""
     request = p0_default_request()
     del request.configuration.devices[:]
     return request
 
 
 def imu_request():
-    """The P0 default with only its IMU."""
+    """The test baseline with only its IMU."""
     request = p0_default_request()
     del request.configuration.devices[1:]
     return request
 
 
 def light_sensor_request():
-    """The full P0 set: IMU, magnetometer, six light sensors (all noise-free) and the ideal body
-    torque actuator."""
+    """The whole test baseline: IMU, magnetometer, six face light sensors (all noise-free) and the
+    ideal body torque actuator. A fixed test set, not the DATA-1 P0 in runs/p0-default.json."""
     return p0_default_request()
 
 
 def magnetometer_request():
-    """The P0 default with its IMU and magnetometer; BSK-6 (#19) adds the light sensors."""
+    """The test baseline with its IMU and magnetometer; BSK-6 (#19) adds the light sensors."""
     request = p0_default_request()
     del request.configuration.devices[2:]
     return request
@@ -580,7 +580,7 @@ def test_epoch_outside_wmm2025_is_out_of_range_only_with_a_magnetometer(service)
     assert list(stub.ConfigureRun(without_magnetometer).configured_device_ids) == ["imu.main"]
 
 
-# magField_N (J2000, tesla) at Step(0) of magnetometer_request(): the P0 orbit at 2025-01-15T00:00Z
+# magField_N (J2000, tesla) at Step(0) of magnetometer_request(): the baseline orbit at 2025-01-15T00:00Z
 # with argus-2026-10-20. An independent WMM2025 synthesis from the same WMM2025.COF, with r_BN_N
 # rotated into ITRF93 by SPICE's J20002Pfix, agrees to 3e-11 nT (review of #101). A wrong epoch,
 # Earth frame or position would move it: one year of secular variation alone is about 36 nT.
@@ -708,8 +708,9 @@ assert not any("dataFetcher" in name for name in sys.modules), "dataFetcher was 
 # --- Light sensors and albedo (BSK-6) ------------------------------------------------------
 
 AU_M = astroConstants.AU * 1000.0
-P0_LIGHT_SENSOR_IDS = ["light.px", "light.mx", "light.py", "light.my", "light.pz", "light.mz"]
-# P0 true anomaly that starts the orbit in full umbra at the P0 epoch (shadow 0 from about 60 to 180 deg).
+# The test baseline's six face light sensors; the DATA-1 P0 has nine, with four tilted on +Z.
+BASELINE_LIGHT_SENSOR_IDS = ["light.px", "light.mx", "light.py", "light.my", "light.pz", "light.mz"]
+# The baseline true anomaly that starts the orbit in full umbra at the baseline epoch (shadow 0 from about 60 to 180 deg).
 UMBRA_TRUE_ANOMALY_DEG = 120.0
 
 
@@ -728,7 +729,7 @@ def expected_direct(response, boresight_body):
 
 
 def noisy_p0_request():
-    """The full P0 set with magnetometer noise (BSK-9) and light-sensor noise (BSK-13)."""
+    """The whole test baseline with magnetometer noise (BSK-9) and light-sensor noise (BSK-13)."""
     request = noisy_magnetometer_request()
     full = light_sensor_request()
     request.configuration.devices.extend(full.configuration.devices[2:])
@@ -765,7 +766,7 @@ def test_noisy_light_sensors_add_seeded_noise_to_the_noise_free_reading(service)
 def test_configure_run_accepts_the_full_p0_sensor_set(service):
     _, stub = service
     assert list(stub.ConfigureRun(light_sensor_request()).configured_device_ids) == [
-        "imu.main", "mag.main", *P0_LIGHT_SENSOR_IDS, "torque.body"]
+        "imu.main", "mag.main", *BASELINE_LIGHT_SENSOR_IDS, "torque.body"]
 
 
 @real_kernels
@@ -797,8 +798,8 @@ def test_noise_free_light_sensors_read_the_sun_plus_albedo(service):
         response = stub.Step(step_request(n))
         assert response.spacecraft_shadow_factor == 1.0
         readings = light_samples(response)
-        assert sorted(readings) == sorted(P0_LIGHT_SENSOR_IDS)
-        for index, sensor_id in enumerate(P0_LIGHT_SENSOR_IDS):
+        assert sorted(readings) == sorted(BASELINE_LIGHT_SENSOR_IDS)
+        for index, sensor_id in enumerate(BASELINE_LIGHT_SENSOR_IDS):
             albedo = servicer._run.scenario.readers[f"albedo.albOutMsgs[{index}]"]().albedoAtInstrument
             direct = expected_direct(response, boresights[sensor_id])
             assert readings[sensor_id] == pytest.approx(direct + 1361.0 * albedo, rel=1e-9, abs=1e-9)
@@ -815,7 +816,7 @@ def test_light_sensors_lose_the_direct_sun_in_umbra(service):
     response = stub.Step(step_request(0))
     assert response.spacecraft_shadow_factor == 0.0
     readings = light_samples(response)
-    for index, sensor_id in enumerate(P0_LIGHT_SENSOR_IDS):
+    for index, sensor_id in enumerate(BASELINE_LIGHT_SENSOR_IDS):
         albedo = servicer._run.scenario.readers[f"albedo.albOutMsgs[{index}]"]().albedoAtInstrument
         assert readings[sensor_id] == pytest.approx(1361.0 * albedo, rel=1e-9, abs=1e-9)
 
