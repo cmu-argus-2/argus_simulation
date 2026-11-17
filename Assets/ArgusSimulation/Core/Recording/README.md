@@ -258,6 +258,11 @@ reader exists. UNITY-9 (#63) retires the exporter once the reader has moved to d
 | `timestamp_utc`, `sequence`, `simulation_time_seconds` | `timestamp_utc`, `sequence`, `simulation_time_s` in `states.jsonl` at the camera frame's `state_sequence`. The exporter wrote the state's values, not the frame's. v1 writes `timestamp_utc` ending in `Z`, where the exporter wrote `+00:00`. |
 | `image_file` | `payload.image`, a path relative to the run directory (`null` when the frame has no pixels). The exporter wrote a bare file name. |
 | `camera_name` | `sensor_id`. The exporter's names are display names (`"FORWARD  +X"`, `"NADIR GT  NORTH-UP"`), not sensor IDs. Camera IDs come from the run configuration (CORE-6 #42, CORE-8 #44). |
-| `image_width_px`, `image_height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px` | `payload.intrinsics`: `width_px`, `height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px` |
+| `image_width_px`, `image_height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px` | `payload.intrinsics`: `width_px`, `height_px`, `fx_px`, `fy_px`, `cx_px`, `cy_px`. Metadata v3 supplies the exact pixel-centre principal point as `rendered_cx_px` / `rendered_cy_px`; use those, or subtract 0.5 from its legacy edge-origin `cx_px` / `cy_px`. |
 | `rotation_camera_to_body_unity_xyzw` | Per frame: conj(`body_to_ecef_xyzw`) ⊗ `payload.camera_to_ecef_xyzw`, using the state at `state_sequence`. For a body-fixed camera this equals `manifest.devices[].mount.device_to_body_xyzw`, up to sign and rounding, if the camera model computes `camera_to_ecef` as `body_to_ecef` ⊗ `sensor_to_body` (CORE-3, #38). The nadir ground-truth camera is not body-fixed. Both use the dataset's camera frame, not Unity's left-handed, y-up camera, so the values differ from the exporter's. |
 | `position_ecef_m`, `velocity_ecef_m_per_s`, `rotation_body_to_ecef_xyzw`, `angular_velocity_body_truth_rad_per_s` | `position_ecef_m`, `velocity_ecef_m_s`, `body_to_ecef_xyzw`, `angular_velocity_body_rad_s` in `states.jsonl` at the frame's `state_sequence`. Simulator truth, evaluation-only. |
+
+The temporary Unity navigation exporter uses metadata v3: legacy pose/rate fields remain host
+truth, while `rendered_*` and explicit camera ECEF fields preserve the actual displayed capture
+pose. It holds presentation only; the host stream continues. See
+[Unity cameras](../../Unity/Cameras/README.md) for configuration and pixel conventions.

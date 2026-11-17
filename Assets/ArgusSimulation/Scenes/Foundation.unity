@@ -422,6 +422,7 @@ GameObject:
   - component: {fileID: 529070129}
   - component: {fileID: 529070131}
   - component: {fileID: 529070130}
+  - component: {fileID: 339894093}
   m_Layer: 0
   m_Name: CubeSat Truth Pose
   m_TagString: Untagged
@@ -683,6 +684,7 @@ GameObject:
   - component: {fileID: 1401954356}
   - component: {fileID: 1401954355}
   - component: {fileID: 1401954354}
+  - component: {fileID: 411201597}
   m_Layer: 0
   m_Name: Simulation
   m_TagString: Untagged
@@ -1097,6 +1099,47 @@ MonoBehaviour:
   _updateInEditor: 1
   _logSelectionStats: 0
   _createPhysicsMeshes: 0
+--- !u!114 &339894093
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 529070128}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 11ce47bde8fb24bbf96472d360d12785, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.CubeSatCameraRig
+  runConfigurationFile: headless/Host/runs/p0-default.json
+  groundTruthVerticalFieldOfViewDegrees: 9
+  livePreviewEnabled: 1
+  imageWidthPixels: 768
+  imageHeightPixels: 432
+  nearClipMeters: 1
+  farClipMeters: 10000000
+--- !u!114 &411201597
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1401954353}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 86fdf3b81d5e4be297d9589a6d5eb5df, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Argus.Simulation.Unity::Argus.Simulation.Unity.UnityImageRenderer
+  cameraRig: {fileID: 339894093}
+  georeference: {fileID: 629085904}
+  sunlight: {fileID: 113444531}
+  rasterController: {fileID: 1530933733}
+  minimumLoadProgress: 100
+  stableFramesRequired: 10
+  postLoadSettleSeconds: 1
+  loadTimeoutSeconds: 60
+  maximumLoadSeconds: 1200
+  readinessProbeIntervalFrames: 2
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

@@ -31,6 +31,8 @@ namespace Argus.Simulation.Tests
             return state;
         }
 
+        public void Publish(SimulationState state) => StateProduced?.Invoke(state);
+
         public void ResetHistory() => HistoryReset?.Invoke();
     }
 }

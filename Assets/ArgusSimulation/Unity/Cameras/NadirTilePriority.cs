@@ -106,6 +106,10 @@ namespace Argus.Simulation.Unity
             _warmUp = StartCoroutine(WarmUp());
         }
 
+        // Captures may start during warm-up. Restore every live view immediately, then let the
+        // warm-up resume after the held pose is released.
+        internal void RestoreViewsForCapture() => RestoreDeferredViews();
+
         private IEnumerator WarmUp()
         {
             // The nadir camera needs a pose to load for, and the host may not be streaming yet:
@@ -132,8 +136,16 @@ namespace Argus.Simulation.Unity
 
             while (stableFrames < requiredStableFrames)
             {
+                if (_pose != null && _pose.IsHeld)
+                {
+                    RestoreDeferredViews();
+                    stableFrames = 0;
+                    while (_pose.IsHeld) yield return null;
+                    startedAt = Time.realtimeSinceStartup;
+                    DeferNonNadirViews();
+                }
                 // Guard against NaN while a tileset has not counted any tiles yet.
-                float progress = NavigationEpisodeExporter.MinimumEnabledTilesetProgress(tilesets);
+                float progress = UnityImageRenderer.MinimumEnabledTilesetProgress(tilesets);
                 WarmUpProgress = float.IsNaN(progress) ? 0f : progress;
                 stableFrames = WarmUpProgress >= minimumLoadProgress
                     ? stableFrames + 1
