@@ -148,7 +148,7 @@ def good_manifest(states=6001, sensors=6001):
         "configuration": {"fixed_step_s": 0.1, "kernel_set_id": "argus-2026-11-02"},
         "files": {"states.jsonl": {"lines": states}, "sensors.jsonl": {"lines": sensors}},
         "overflow": {"policy": "drop-newest", "capacity": 65536, "dropped_states": 0, "dropped_frames": 0,
-                     "dropped_commands": 0},
+                     "dropped_commands": 0, "dropped_authority": 0},
     }
 
 
@@ -161,6 +161,16 @@ def lines(states=6001, sensors=6001):
 
 def test_a_complete_matching_dataset_passes_the_gate():
     assert check.dataset_problems(good_manifest(), lines(), CASE) == []
+
+
+def test_a_dataset_from_before_the_authority_log_needs_no_authority_counter():
+    # CORE-9: a dataset written before authority.jsonl existed reads as if it were empty.
+    manifest = good_manifest()
+    manifest["overflow"].pop("dropped_authority")
+    assert check.dataset_problems(manifest, lines(), CASE) == []
+
+    manifest["files"]["authority.jsonl"] = {"lines": 0}
+    assert any("dropped_authority" in problem for problem in check.dataset_problems(manifest, lines(), CASE))
 
 
 @pytest.mark.parametrize("change, fragment", [
@@ -336,7 +346,7 @@ def write_dataset(directory, run, states, frames=()):
         "devices": [manifest_device(d) for d in run["spacecraftProfile"]["devices"]],
         "files": {"states.jsonl": {"lines": len(states)}, "sensors.jsonl": {"lines": len(frames)}},
         "overflow": {"policy": "drop-newest", "capacity": 65536, "dropped_states": 0, "dropped_frames": 0,
-                     "dropped_commands": 0},
+                     "dropped_commands": 0, "dropped_authority": 0},
     }
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "manifest.json").write_text(json.dumps(manifest))

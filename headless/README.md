@@ -92,8 +92,9 @@ unpaced run may finish before a client connects.
 
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
-including ground-truth sensors, and every command the gateway logged, applied or rejected
-(`commands.jsonl`), from the gateway's events. It writes on its own thread, so a slow disk
+including ground-truth sensors, every command the gateway logged, applied, clamped, held,
+failsafe or rejected (`commands.jsonl`), and every authority change (`authority.jsonl`), from the
+gateway's events. It writes on its own thread, so a slow disk
 never delays a step, and `manifest.json` counts anything it had to drop.
 
 ## Run configuration files
@@ -161,7 +162,19 @@ its own.
   coils land in the profile. The list may hold any subset of the devices,
   including none, so a staged run against a partly built service needs only a different
   profile.
-- **Validation:** every field is required and unknown fields are rejected, including
+- **Gateway settings** (CORE-9, #45), the only optional fields of the run file. Absent, the inhibit stays
+  on, and the heartbeat failsafe is off, which is safe only while no controller attaches (HOST-6 is
+  to refuse a controller session on a run without a timeout): `heartbeatTimeoutWallSeconds`, the heartbeat timeout for the controller holding
+  actuator authority (absent or `0`: off; set it for any run a controller attaches to, or a
+  crashed controller's last command is held for the rest of the run), and `physicalActuators`, which lifts the
+  physical-actuator inhibit: `{"enabled": true, "testProcedure": "<the bench procedure>"}`, with
+  both keys required. Lifting it needs `heartbeatTimeoutWallSeconds` in (0, 60] s, so a silent
+  controller fails safe, and a paced run whose step (`fixedStepSeconds / --real-time-factor`) is no
+  longer than half the timeout, since the gateway hears a controller about once per paced step:
+  otherwise the host exits 2. An explicit `null` is refused: omit
+  the key instead. The inhibit is enforced by HIL-1 (#66); runs without hardware are
+  unaffected.
+- **Validation:** every other field is required and unknown fields are rejected, including
   parameters the kind does not declare. Each part is checked with its Core `IsValid` and
   each device by its kind, so the file accepts exactly what Core accepts and an error names
   the key. An error in a profile file starts with the file's full path, and a duplicate device

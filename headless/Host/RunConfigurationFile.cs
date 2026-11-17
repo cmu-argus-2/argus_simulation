@@ -11,8 +11,12 @@ namespace Argus.Simulation.Host
     // Reads a run configuration file (G5) and the spacecraft profile it names (D11,
     // docs/device-model.md §4) into a Core SimulationConfiguration. Both files mirror Core property
     // names in camelCase, in SI units with the unit in each name; headless/README.md documents the
-    // format. Every field is required and unknown fields are rejected, so a typo never falls back to
-    // a default. The run ID is not in the file: each run gets its own.
+    // format. Every field is required, except two gateway settings of the run file (CORE-9):
+    // physicalActuators, whose absence is the safe value (inhibited), and heartbeatTimeoutWallSeconds,
+    // whose absence turns the failsafe off. That is safe only while no controller attaches: the run
+    // file can't lift the inhibit without a timeout, and HOST-6 is to refuse a controller session on a
+    // run without one. Unknown fields and explicit nulls are rejected, so a typo never falls back to a
+    // default. The run ID is not in the file: each run gets its own.
     public static class RunConfigurationFile
     {
         private const string EpochFormat = "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'";
@@ -80,13 +84,9 @@ namespace Argus.Simulation.Host
                 Fields(
                     root,
                     "",
-                    "epochUtc",
-                    "fixedStepSeconds",
-                    "randomSeed",
-                    "kernelSetId",
-                    "initialOrbit",
-                    "initialAttitude",
-                    "spacecraftProfile");
+                    new[] { "epochUtc", "fixedStepSeconds", "randomSeed", "kernelSetId", "initialOrbit", "initialAttitude", "spacecraftProfile" },
+                    Array.Empty<string>(),
+                    new[] { "heartbeatTimeoutWallSeconds", "physicalActuators" });
 
                 DateTimeOffset epochUtc = Epoch(root, "epochUtc");
                 double fixedStepSeconds = Number(root, "fixedStepSeconds", "");
@@ -132,6 +132,21 @@ namespace Argus.Simulation.Host
                     "initialAttitude",
                     "needs a unit quaternion and a finite rate");
 
+                double heartbeatTimeoutWallSeconds = 0.0;
+                if (root.TryGetProperty("heartbeatTimeoutWallSeconds", out JsonElement timeout))
+                {
+                    Check(timeout.ValueKind != JsonValueKind.Null, "heartbeatTimeoutWallSeconds", "must be a number; omit it to turn the failsafe off");
+                    heartbeatTimeoutWallSeconds = Number(root, "heartbeatTimeoutWallSeconds", "");
+                    Check(heartbeatTimeoutWallSeconds >= 0.0, "heartbeatTimeoutWallSeconds", "must be finite and >= 0");
+                }
+
+                PhysicalActuatorSetting physicalActuators = PhysicalActuatorSetting.Inhibited;
+                if (root.TryGetProperty("physicalActuators", out JsonElement inhibit))
+                {
+                    Check(inhibit.ValueKind != JsonValueKind.Null, "physicalActuators", "must be an object; omit it to keep the inhibit on");
+                    physicalActuators = PhysicalActuators(inhibit, "physicalActuators", heartbeatTimeoutWallSeconds);
+                }
+
                 SimulationConfiguration configuration = new SimulationConfiguration(
                     runId,
                     epochUtc,
@@ -140,7 +155,9 @@ namespace Argus.Simulation.Host
                     randomSeed: randomSeed,
                     kernelSetId: kernelSetId,
                     spacecraft: spacecraft,
-                    devices: profile.Devices);
+                    devices: profile.Devices,
+                    heartbeatTimeoutWallSeconds: heartbeatTimeoutWallSeconds,
+                    physicalActuators: physicalActuators);
                 Check(configuration.IsValid, "", "is not a valid run configuration");
                 return new LoadedRun(configuration, profile.ProfileId, profilePath, profileFile);
             }
@@ -221,6 +238,26 @@ namespace Argus.Simulation.Host
             public double MassKilograms { get; }
             public Matrix3d Inertia { get; }
             public DeviceConfiguration[] Devices { get; }
+        }
+
+        // Present only to lift the inhibit: enabled, a test procedure, and a heartbeat failsafe
+        // (CORE-9, SimulationConfiguration).
+        private static PhysicalActuatorSetting PhysicalActuators(JsonElement element, string path, double heartbeatTimeoutWallSeconds)
+        {
+            Fields(element, path, "enabled", "testProcedure");
+            bool enabled = Boolean(element, "enabled", path);
+            string testProcedure = Text(element, "testProcedure", path);
+            Check(
+                enabled,
+                Join(path, "enabled"),
+                "is false, so the inhibit stays on; remove physicalActuators instead of naming a procedure");
+            Check(!string.IsNullOrWhiteSpace(testProcedure), Join(path, "testProcedure"), "must not be blank");
+            double maximum = SimulationConfiguration.MaximumHeartbeatTimeoutWithPhysicalActuatorsWallSeconds;
+            Check(
+                heartbeatTimeoutWallSeconds > 0.0 && heartbeatTimeoutWallSeconds <= maximum,
+                Join(path, "enabled"),
+                $"needs heartbeatTimeoutWallSeconds in (0, {maximum.ToString(CultureInfo.InvariantCulture)}] s, so a silent controller fails safe");
+            return new PhysicalActuatorSetting(true, testProcedure);
         }
 
         private static ClassicalOrbitElements Orbit(JsonElement element, string path)

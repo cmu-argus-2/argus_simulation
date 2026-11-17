@@ -27,6 +27,8 @@ KERNEL_SET_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 # headless/Host BasiliskEngine.MaximumPacedStepSeconds: ClockSynch sleeps fixed_step / factor of
 # wall time per step, so a tiny factor would hold one Step for hours (README §5).
 MAXIMUM_PACED_STEP_SECONDS = 3600.0
+# Core SimulationConfiguration.MaximumHeartbeatTimeoutWithPhysicalActuatorsWallSeconds (CORE-9).
+MAXIMUM_HEARTBEAT_TIMEOUT_WITH_PHYSICAL_ACTUATORS_WALL_S = 60.0
 
 # google.protobuf.Timestamp range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z.
 _TIMESTAMP_MIN_SECONDS = -62_135_596_800
@@ -114,7 +116,7 @@ def configure_run_problems(
     _check_real_time_factor(problems, request.real_time_factor, configuration.fixed_step_ns, "real_time_factor")
 
     path = "configuration"
-    if not configuration.run_id.strip():
+    if _is_blank_as_dotnet(configuration.run_id):
         problems.invalid(f"{path}.run_id", "must not be blank", configuration.run_id)
     if configuration.fixed_step_ns == 0:
         problems.invalid(f"{path}.fixed_step_ns", "must be > 0", configuration.fixed_step_ns)
@@ -124,6 +126,8 @@ def configure_run_problems(
             f"must match {KERNEL_SET_ID_PATTERN.pattern}",
             configuration.kernel_set_id,
         )
+
+    _check_gateway_settings(problems, configuration, path)
 
     if configuration.HasField("initial_orbit"):
         _check_orbit(problems, configuration.initial_orbit, f"{path}.initial_orbit")
@@ -373,6 +377,39 @@ def _check_real_time_factor(problems: _Problems, value: float, fixed_step_ns: in
         problems.invalid(path, f"would pace each step to over {MAXIMUM_PACED_STEP_SECONDS:g} s", value)
 
 
+def _check_gateway_settings(problems: _Problems, configuration, path: str) -> None:
+    # The gateway's heartbeat timeout and physical-actuator inhibit (CORE-9). The service does not
+    # use them, but they are part of the run configuration, so it validates them as Core does. They
+    # were added to v1 after it froze, so either may be unset (a host built before them): unset reads
+    # as the default, the heartbeat timeout off and the inhibit on (Argus.Contracts/README.md, Presence).
+    timeout_path = f"{path}.heartbeat_timeout_wall_s"
+    timeout = configuration.heartbeat_timeout_wall_s if configuration.HasField("heartbeat_timeout_wall_s") else 0.0
+    if not math.isfinite(timeout) or timeout < 0.0:
+        problems.invalid(timeout_path, "must be finite and >= 0", timeout)
+        timeout = None
+
+    inhibit_path = f"{path}.physical_actuators"
+    if not configuration.HasField("physical_actuators"):
+        return
+    inhibit = configuration.physical_actuators
+    if inhibit.enabled:
+        if _is_blank_as_dotnet(inhibit.test_procedure):
+            problems.invalid(f"{inhibit_path}.test_procedure", "must not be blank when enabled", inhibit.test_procedure)
+        if timeout is not None and not 0.0 < timeout <= MAXIMUM_HEARTBEAT_TIMEOUT_WITH_PHYSICAL_ACTUATORS_WALL_S:
+            problems.invalid(
+                f"{inhibit_path}.enabled",
+                f"needs heartbeat_timeout_wall_s in (0, {MAXIMUM_HEARTBEAT_TIMEOUT_WITH_PHYSICAL_ACTUATORS_WALL_S:g}]",
+                timeout)
+    elif inhibit.test_procedure:
+        problems.invalid(f"{inhibit_path}.test_procedure", "must be empty when not enabled", inhibit.test_procedure)
+
+
+def _is_blank_as_dotnet(text: str) -> bool:
+    # Core's string.IsNullOrWhiteSpace, so host and service agree: Python's isspace() also counts the
+    # information separators U+001C-U+001F, which .NET does not.
+    return all(character.isspace() and character not in "\x1c\x1d\x1e\x1f" for character in text)
+
+
 def _check_orbit(problems: _Problems, orbit, path: str) -> None:
     names = (
         "semi_major_axis_m",
@@ -464,7 +501,7 @@ def _check_devices(problems: _Problems, configured, fixed_step_ns: int, path: st
         device_path = f"{path}[{index}]"
 
         device_id = device.device_id
-        if not device_id.strip():
+        if _is_blank_as_dotnet(device_id):
             problems.invalid(f"{device_path}.device_id", "must not be blank", device_id)
         if device_id in seen_ids:
             problems.invalid(f"{device_path}.device_id", f"duplicates {path}[{seen_ids[device_id]}]", device_id)

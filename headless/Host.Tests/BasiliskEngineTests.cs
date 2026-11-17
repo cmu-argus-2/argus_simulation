@@ -127,6 +127,34 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(rates[3].Z, Is.EqualTo(rates[2].Z).Within(1e-15));
         }
 
+        // CORE-9: this host always sends the gateway settings, even at their defaults; the service
+        // also accepts an older host that leaves them unset (Argus.Contracts/README.md, Presence).
+        [Test]
+        public void TheGatewaySettingsAlwaysReachTheRunConfigurationMessage()
+        {
+            SimulationConfiguration p0 = P0WithCamera();
+            SimulationConfiguration lifted = new SimulationConfiguration(
+                p0.RunId,
+                p0.EpochUtc,
+                p0.FixedStepSeconds,
+                p0.InitialOrbit,
+                p0.RandomSeed,
+                p0.KernelSetId,
+                p0.Spacecraft,
+                p0.Devices,
+                2.5,
+                new PhysicalActuatorSetting(true, "bench-coil-1"));
+
+            PbSim.RunConfiguration inhibited = BasiliskProtoMapper.ToProto(p0, 100_000_000);
+            PbSim.RunConfiguration enabled = BasiliskProtoMapper.ToProto(lifted, 100_000_000);
+
+            Assert.That((inhibited.HasHeartbeatTimeoutWallS, inhibited.HeartbeatTimeoutWallS), Is.EqualTo((true, 0.0)));
+            Assert.That(inhibited.PhysicalActuators, Is.Not.Null);
+            Assert.That((inhibited.PhysicalActuators.Enabled, inhibited.PhysicalActuators.TestProcedure), Is.EqualTo((false, "")));
+            Assert.That(enabled.HeartbeatTimeoutWallS, Is.EqualTo(2.5));
+            Assert.That((enabled.PhysicalActuators.Enabled, enabled.PhysicalActuators.TestProcedure), Is.EqualTo((true, "bench-coil-1")));
+        }
+
         // The P0 run file with an Argus-computed camera second in its device list.
         private static SimulationConfiguration P0WithCamera()
         {

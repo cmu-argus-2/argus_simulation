@@ -1,6 +1,6 @@
 # Core/Recording — run recorder
 
-**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1, with `commands.jsonl` from the gateway's command log (CORE-7, #43) and the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
+**Diagram block:** Run recorder · **Assembly:** `Argus.Simulation.Core` · **Status:** v0 on main (CORE-5, #41): `RunRecorder` writes dataset v1, with `commands.jsonl` from the gateway's command log (CORE-7, #43), `authority.jsonl` from its authority log (CORE-9, #45) and the manifest's `cameras` (CORE-6, #42); `headless/Host --record <dir>` feeds it
 
 The run recorder is the single export route (decision D6 in
 [target-architecture.md](../../../../docs/target-architecture.md)). It is a passive,
@@ -10,18 +10,20 @@ write-only archive. It never feeds data back into the run and never blocks the s
 
 - **API:** `IRunRecorder` (`Core/Abstractions/`): `BeginRun` on every gateway `Reset`
   (`SimulationGateway.RunStarted`), then `RecordState` (`StateProduced`), `RecordSensorOutput`
-  (`SensorOutputProduced`), `RecordCommand` (`CommandLogged`) and `RecordTermination`
-  (`RunTerminated`), and `Close` at the end. `headless/Host` subscribes exactly these five
-  events.
+  (`SensorOutputProduced`), `RecordCommand` (`CommandLogged`), `RecordAuthority`
+  (`AuthorityLogged`, CORE-9) and `RecordTermination` (`RunTerminated`), and `Close` at the end.
+  `headless/Host` subscribes exactly these six events.
 - **Off the step loop:** the calls only queue. One writer thread formats the JSON, encodes PNGs
   (`PngEncoder`, no Unity) and writes the files, so a stalled disk never delays
   `SimulationGateway.Step` (`RunRecorderTests`).
-- **Overflow policy `drop-newest`:** the queue holds at most `capacity` states, sensor output
-  sets and `Applied` or `Clamped` command records (65 536 by default), and separately at most
-  `capacity` `Rejected` records, so a stalled disk drops steps before it drops the only record
-  of a refused command. When a budget is full, the newest item is dropped, and the manifest's
-  `overflow` entry counts it: `policy`, `capacity`, `dropped_states`, `dropped_frames` (sensor
-  frames) and `dropped_commands`. Nothing is dropped silently. `BeginRun` and
+- **Overflow policy `drop-newest`:** the queue has three budgets of at most `capacity` items each
+  (65 536 by default): steps (states, sensor output sets, and `Applied`, `Clamped`, `Held` and
+  `Failsafe` command records); refusals (`Rejected` command records and `Refused` claims), so a
+  stalled disk drops steps before it drops the only record of a refusal; and the other authority
+  changes (`Claimed`, `Released`, `Lost`), so a flood of refused claims never crowds out a loss
+  (CORE-9). When a budget is full, the newest item is dropped, and the manifest's `overflow` entry
+  counts it: `policy`, `capacity`, `dropped_states`, `dropped_frames` (sensor frames),
+  `dropped_commands` and `dropped_authority`. Nothing is dropped silently. `BeginRun` and
   `RecordTermination` are never dropped.
 - **Failures:** a write error, an unknown payload type or a `Jpeg` frame stops writing. The
   manifest then stays `"complete": false`, and `Close` throws. Core has no JPEG decoder, so a
@@ -38,12 +40,12 @@ write-only archive. It never feeds data back into the run and never blocks the s
 - Every `SensorOutputSet` from `SensorManager`, including ground-truth sensors and camera
   `ImageFrame`s (the P0 body cameras, CORE-6). Camera frames carry their capture time;
   late frames follow the late-frame policy (gap G3, decided in CORE-3 #38: see Join keys).
-- The gateway's command log: requested, applied and rejected commands.
+- The gateway's command log: requested, applied, clamped, held, failsafe and rejected commands, and its authority log (CORE-9).
 
 ## Dataset v1
 
 Fixed by DATA-4 (#69), confirmed with the navigation owner (Krushna Thakkar, 26 Oct). CORE-5 (#41)
-writes it, and CORE-7 (#43) added `commands.jsonl`.
+writes it, CORE-7 (#43) added `commands.jsonl`, and CORE-9 (#45) added `authority.jsonl`.
 
 ```text
 <run_id>_<segment>/
@@ -51,6 +53,7 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 ├── states.jsonl         # one line per SimulationState
 ├── sensors.jsonl        # one line per sensor frame
 ├── commands.jsonl       # one line per gateway command record (CORE-7)
+├── authority.jsonl      # one line per gateway authority change (CORE-9)
 └── images/<sensorId>/<sequence>.png
 ```
 
@@ -58,7 +61,7 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 
 | item | rule |
 |---|---|
-| Schema version | `manifest.json` carries `"schema_version": "argus-dataset/1"`. The value is exactly `argus-dataset/<major>`, with no minor version. A reader rejects a major version it does not know. Readers ignore keys they do not know and skip `sensors.jsonl` lines whose `payload_type` they do not know. Adding a field or a payload type keeps version 1. Renaming or removing a field, or changing its type, unit, meaning or nullability, makes version 2. |
+| Schema version | `manifest.json` carries `"schema_version": "argus-dataset/1"`. The value is exactly `argus-dataset/<major>`, with no minor version. A reader rejects a major version it does not know. Readers ignore keys they do not know and skip `sensors.jsonl` lines whose `payload_type` they do not know. Adding a field, a payload type, a command `outcome` value or a file keeps version 1 (CORE-9 widened this rule from fields and payload types; the dataset owner, DATA-4 #69, is asked to agree) (`Held`, `Failsafe` and `authority.jsonl` were added by CORE-9, #45); a dataset written before a file existed reads as if it were empty. Readers decide whether the engine ran a command from `applied`, not from the `outcome` name. Renaming or removing a field, or changing its type, unit, meaning or nullability, makes version 2. |
 | Encoding | UTF-8 without a byte-order mark. One JSON object per line in the `.jsonl` files, each ending in `\n` on every OS. Every JSONL line carries `run_id`. |
 | Keys | Every key in these tables is always written. A value that does not exist is `null`, never an omitted key. Readers treat a missing key as `null`. |
 | Enums | Strings spelled exactly as the C# member, for example `Valid`, `Itrf93`, `Imu`, `Rgb8`. Other fixed strings are listed in their field's row. |
@@ -85,11 +88,11 @@ writes it, and CORE-7 (#43) added `commands.jsonl`.
 | `writer` | object | recorder | `process` (`headless-host` or `unity`), `argus_simulation_commit` (the full 40-character hash, or `null` when unknown, for example in a Unity player build), `recorder_version` (string). |
 | `dynamics_backend` | object | `SimulationState.DynamicsBackend`, `BasiliskEngine.BasiliskVersion` | `name` (the `DynamicsBackend` string) and `version` (`BasiliskVersion` in Basilisk runs, `null` in analytic runs). |
 | `earth_fixed_frame` | string | `SpacecraftState.EarthFixedFrame` | `Itrf93` or `AnalyticEarthFixed`. |
-| `configuration` | object | `SimulationConfiguration` (G5); `AnalyticSimulationEngine` for `analytic_orbit` | `epoch_utc`, `fixed_step_s`, `random_seed`, `kernel_set_id` (or `null`), `initial_orbit` (classical elements in J2000, or `null`), `spacecraft` (`mass_kg`, `inertia_body_kg_m2` as a 3×3 matrix, `initial_body_to_j2000_xyzw`, `initial_angular_velocity_body_rad_s`; or `null`), `spacecraft_profile`, and `analytic_orbit`. `spacecraft_profile` names the spacecraft profile the body and devices came from ([device-model.md](../../../../docs/device-model.md) §4): `profile_id`, and `path` as the run file wrote it, which is relative to the run file's folder unless absolute (`null` when the run file gives the profile inline; the dataset does not record the run file's own path); the resolved values are `spacecraft` and `devices`, so the dataset stands alone. It is `null` for a run configured in code, with no profile file. Added by HOST-9 (#113); v1 is additive only, so the schema stays at version 1. `fixed_step_s` and `random_seed` are the values the run actually uses. Analytic runs have no `initial_orbit` or `spacecraft`, because `AnalyticSimulationEngine` takes its orbit from its constructor; it exposes that orbit as `AnalyticSimulationEngine.Orbit`. `analytic_orbit` (`altitude_m`, `inclination_deg`, `raan_deg`, `phase_deg`) is that orbit at the start of the run. Its angles are measured in the analytic fixture's own inertial frame, not J2000, so they cannot be compared with `initial_orbit`. Only Core's analytic fixture writes it (D9). `analytic_orbit` is `null` in Basilisk runs. |
+| `configuration` | object | `SimulationConfiguration` (G5); `AnalyticSimulationEngine` for `analytic_orbit` | `epoch_utc`, `fixed_step_s`, `random_seed`, `kernel_set_id` (or `null`), `heartbeat_timeout_wall_s` (the gateway's heartbeat timeout; 0 is off; CORE-9), `physical_actuators` (`enabled`, and `test_procedure` or `null`: the physical-actuator inhibit, CORE-9), `initial_orbit` (classical elements in J2000, or `null`), `spacecraft` (`mass_kg`, `inertia_body_kg_m2` as a 3×3 matrix, `initial_body_to_j2000_xyzw`, `initial_angular_velocity_body_rad_s`; or `null`), `spacecraft_profile`, and `analytic_orbit`. `spacecraft_profile` names the spacecraft profile the body and devices came from ([device-model.md](../../../../docs/device-model.md) §4): `profile_id`, and `path` as the run file wrote it, which is relative to the run file's folder unless absolute (`null` when the run file gives the profile inline; the dataset does not record the run file's own path); the resolved values are `spacecraft` and `devices`, so the dataset stands alone. It is `null` for a run configured in code, with no profile file. Added by HOST-9 (#113); v1 is additive only, so the schema stays at version 1. `fixed_step_s` and `random_seed` are the values the run actually uses. Analytic runs have no `initial_orbit` or `spacecraft`, because `AnalyticSimulationEngine` takes its orbit from its constructor; it exposes that orbit as `AnalyticSimulationEngine.Orbit`. `analytic_orbit` (`altitude_m`, `inclination_deg`, `raan_deg`, `phase_deg`) is that orbit at the start of the run. Its angles are measured in the analytic fixture's own inertial frame, not J2000, so they cannot be compared with `initial_orbit`. Only Core's analytic fixture writes it (D9). `analytic_orbit` is `null` in Basilisk runs. |
 | `devices` | array | `SensorManager.Sensors[].Definition`, plus `DeviceConfiguration` where one exists (D11, CORE-19 #111) | Every sensor that publishes frames: `device_id` (the `sensor_id` of its `sensors.jsonl` frames), `model_name`, `frame_id`, `sample_period_s`, `source` (for a configured device, its kind's modeller: `basilisk` or `argus`, D10, CORE-22; a sensor with no `DeviceConfiguration` keeps its model's own, `simulation` for the ideal body-rate sensor), `mount` (`position_body_m`, `device_to_body_xyzw`), `controller_visible` (bool: whether the gateway shows the sensor's frames to a controller, each through its kind's controller projection, so a camera's without the pose (CORE-23); `SensorDefinition.IsControllerVisible`), then `kind` (its registered name, such as `light_sensor`), `parameters` and `initial_state`. `parameters` maps each of the kind's keys, in ordinal order, to its value: a number, `[x, y, z]`, a quaternion `{"x", "y", "z", "w"}`, three rows, a bool or a string ([device-model.md](../../../../docs/device-model.md) §3). Quaternions therefore come in two forms in the manifest: a named field such as `mount.device_to_body_xyzw` is a `[x, y, z, w]` array whose suffix gives the order, as everywhere in the dataset, while a parameter or state value is an object, because its key carries no order. After the sensors, the list also holds the configured devices that publish no frames: the actuators (CON-2 #34), with `sample_period_s` `0` and `controller_visible` `false`. The keys are the run file's and the wire's, with dotted groups flattened (`gyroscope.range_rad_per_s`). `initial_state` is `{}` until a kind has state. `kind`, `parameters` and `initial_state` are `null` for a sensor with no `DeviceConfiguration`, such as the ideal body-rate sensor `imu.body_rate`. Renamed from `sensors`, with `sensor_id` and `sensor_to_body_xyzw`, and with the per-kind `profile` replaced by `parameters`, before HOST-5 (#29) froze v1, so the schema stays at version 1. |
 | `cameras` | array | the devices whose kind is an `ICameraKind` (CORE-6) | Every camera that publishes frames, in `devices` order: `sensor_id` and `profile_id`. The camera's values are its `devices` entry's `parameters`, under the camera kind's keys (`intrinsics.*` with `source` and `calibrated`, `distortion.*` with `model`, `k1`, `k2`, `p1`, `p2`, `k3` in OpenCV's order and `source`, `noise.source`, `exposure_duration_s`, `extrinsics.*`; `Core/Sensors/Camera/README.md`), so each value has one spelling in the manifest. `profile_id` names the part's parameter set (the intrinsics, distortion and noise): cameras that share one share those values, and a calibration gets a new one with `intrinsics.calibrated` `true`. Readers must reject a `distortion.model` they do not know. Narrowed from DATA-4's list, which no dataset ever wrote, before HOST-5 (#29) froze v1, so the schema stays at version 1. |
-| `files` | object | recorder | `{}` until close. Then one entry per JSONL file, keyed by its path, for example `{"states.jsonl": {"lines": 1200}, "sensors.jsonl": {"lines": 5400}, "commands.jsonl": {"lines": 1199}}`. Images and the manifest are not listed. |
-| `overflow` | object | recorder (CORE-5) | `policy` (`drop-newest`), `capacity`, `dropped_states`, `dropped_frames` and `dropped_commands` (added by CORE-7 before any v1 dataset was written, so the schema stays at version 1); see RunRecorder v0 above. Nothing is dropped silently. |
+| `files` | object | recorder | `{}` until close. Then one entry per JSONL file, keyed by its path, for example `{"states.jsonl": {"lines": 1200}, "sensors.jsonl": {"lines": 5400}, "commands.jsonl": {"lines": 1199}, "authority.jsonl": {"lines": 0}}`. Images and the manifest are not listed. |
+| `overflow` | object | recorder (CORE-5) | `policy` (`drop-newest`), `capacity`, `dropped_states`, `dropped_frames`, `dropped_commands` (added by CORE-7 before any v1 dataset was written, so the schema stays at version 1) and `dropped_authority` (CORE-9); see RunRecorder v0 above. Nothing is dropped silently. |
 
 ### `states.jsonl`: one line per `SimulationState`
 
@@ -115,7 +118,7 @@ one that meets this rule was still withheld by the gateway.
 | `velocity_ecef_m_s` | [3] | `VelocityEcefMetersPerSecond`, relative to the Earth-fixed frame |
 | `body_to_ecef_xyzw` | [4] | `BodyToEcef` |
 | `angular_velocity_body_rad_s` | [3] | `AngularVelocityBodyRadiansPerSecond`: the body rate relative to inertial, in body axes. In analytic runs (`AnalyticEarthFixed`) it is the fixture's (0, n, 0) instead until CORE-2 (PR #83) lands, a known issue (`CircularOrbitModel` TODO; `target-architecture.md`). |
-| `producing_command` | object or `null` | `AppliedCommands` (a `DeviceCommandSet`): `sequence`, `apply_at_simulation_time_s` and `devices`, which maps each commanded actuator's device ID to its values in the manifest's value forms (`{}` while no actuator exists). The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0. The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `outcome` is not `Rejected`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
+| `producing_command` | object or `null` | `AppliedCommands` (a `DeviceCommandSet`): `sequence`, `apply_at_simulation_time_s` and `devices`, which maps each commanded actuator's device ID to its values in the manifest's value forms (`{}` while no actuator exists). The command that produced this state: command k-1, applied over [t_k-1, t_k) (DATA-5 #70, CORE-4 #40). `null` at t_0. The command chosen from state k is the next line's `producing_command`, or the `commands.jsonl` line with the same `sequence` whose `applied` is not `null`. Renamed from DATA-4's `applied_command` (command k) before any v1 dataset was written, so the schema stays at version 1. |
 | `environment` | object or `null` | `EnvironmentState`: `sun_position_itrf93_m`, `j2000_to_itrf93_xyzw`, `earth_angular_velocity_itrf93_rad_s`, `spacecraft_shadow_factor` (Basilisk's illumination factor: 1 is fully sunlit, 0 is umbra). `null` in analytic runs (D9). |
 
 Backend sensor measurements (`SensorMeasurements`) are not repeated here. They appear in
@@ -160,9 +163,17 @@ state as `devices` with the first stateful actuator, the momentum wheel. These f
 (#29) froze v1, so the schema stays at version 1.
 
 `SimulationGateway.CommandLogged` raises a `CommandRecord` (`Core/Contracts/CommandRecord.cs`) for
-every command `Step` receives once a run has started, before the engine runs it or `Step` throws:
+every command a step or a submission (`TrySubmit`) receives once a run has started, and for every held
+or failsafe step, before the engine runs it or `Step` throws:
 an invalid value, the wrong sequence or time, or a step after the run ended is `Rejected` with its
-reason. `Applied` means the gateway accepted the command for the engine. `Clamped` means it
+reason. A command from a controller without actuator authority, or a controller's command that is
+late, early or a duplicate, is `Rejected` too, and so is an accepted command that never reached its
+step (a release, a loss, a re-claim, or the run's end; its reason starts "Discarded"). `Applied` means the
+gateway accepted the command for the engine. `Held` means no command arrived for the step from the
+controller holding authority, so the engine ran its tenure's last applied command again,
+restamped to the step, or every actuator's idle values before the tenure's first command (its
+reason says "holding idle"); `Failsafe` means that controller was lost, so the engine ran every actuator's idle values
+(CORE-9, #45). Both have an empty `requested` set, since nothing was sent for the step. `Clamped` means it
 accepted the command with a value past its device's limits held at that limit, per the device's
 `limit_policy` (CORE-10, #46): `requested` is the command as sent, `applied` what the engine was
 given, and `reason` names each clamped value; a `reject` policy logs `Rejected` instead. For
@@ -175,14 +186,38 @@ is created in every run directory, so it is empty when no command was received.
 | `run_id` | string | `CommandRecord.RunId` |
 | `sequence` | int | `CommandRecord.Sequence`: the gateway's next step k when the command arrived, whatever the command claimed, so every line joins to state k; after the run ended, the termination's `last_sequence` |
 | `simulation_time_s` | number | `CommandRecord.SimulationTimeSeconds`: t_k |
-| `outcome` | string | `Applied`, `Clamped` or `Rejected` |
-| `reason` | string or `null` | why a command was clamped or rejected; `null` when `Applied` |
+| `outcome` | string | `Applied`, `Clamped`, `Held`, `Failsafe` or `Rejected` |
+| `controller_id` | string or `null` | `CommandRecord.ControllerId`: the controller that sent the command, or for `Held` the controller holding authority; `null` for the gateway owner's own commands, for `Failsafe`, and for a command whose controller ID was unusable (its `reason` says so) (CORE-9) |
+| `reason` | string or `null` | why a command was clamped, held, failsafe or rejected; `null` when `Applied` |
 | `requested` | object | the requested `DeviceCommandSet` as the controller sent it, with the same fields as `producing_command` above; its own `sequence` and `apply_at_simulation_time_s` may differ from the line's when it was rejected |
 | `applied` | object or `null` | the `DeviceCommandSet` the engine ran over [t_k, t_k+1), which state k+1 carries as `producing_command`; `null` when rejected |
 
 In file order `sequence` never decreases. Several lines may share one, since every command
-rejected for a step is logged against it, but at most one line per `sequence` is `Applied` or
-`Clamped`.
+rejected for a step is logged against it, but at most one line per `sequence` has a non-null
+`applied`.
+
+### `authority.jsonl`: one line per gateway authority change (CORE-9)
+
+`SimulationGateway.AuthorityLogged` raises an `AuthorityRecord` (`Core/Contracts/AuthorityRecord.cs`)
+for every claim, refused claim, release and loss of actuator authority once a run has started. The
+file is created in every run directory, so it is empty when no controller attached. In file order
+`sequence` never decreases. A tenure that ends with its run (a stop, a finish, a terminal step or a
+reset) is closed by a `Released` line whose reason says how the run ended, written before the run's
+own end. A re-claim by the holder starts a new tenure without closing the old one, and a line the
+recorder had to drop is counted in `dropped_authority`. If logging a claim fails, the run ends there
+(the manifest's `termination` names the failure), and a `Claimed` line already written for it has no
+`Released`. What it leaves out: a refused heartbeat or release, and a
+claim with an unusable ID or with no run running, are returned to the caller only (heartbeats are
+frequent, and an unusable ID cannot be recorded).
+
+| field | type | source |
+|---|---|---|
+| `run_id` | string | `AuthorityRecord.RunId` |
+| `sequence` | int | the gateway's next step k when authority changed |
+| `simulation_time_s` | number | t_k |
+| `controller_id` | string | the controller that claimed, was refused, released or lost authority |
+| `change` | string | `Claimed`, `Refused`, `Released` or `Lost` |
+| `reason` | string or `null` | why a claim was refused (it names the holder) or authority lost (a missed heartbeat, with the silence and the timeout, or the owner's revoke reason), or how the run ended for a `Released` the run's end made; `null` for `Claimed` and for a release by the holder |
 
 ### `images/<sensorId>/<sequence>.png`
 
@@ -206,7 +241,7 @@ rejected for a step is logged against it, but at most one line per `sequence` is
 A reader rejects a dataset in which:
 - in `states.jsonl` or one sensor's frames, a `sequence` repeats or decreases in file order (see
   Join keys); in `commands.jsonl`, a `sequence` decreases, or more than one line with the same
-  `sequence` is `Applied` or `Clamped`;
+  `sequence` has a non-null `applied`; in `authority.jsonl`, a `sequence` decreases;
 - a number is `null` where its row does not allow `null`, in `states.jsonl` or in a `Valid` frame's
   payload;
 - a PNG's size differs from its frame's `intrinsics` (`width_px` × `height_px`).
