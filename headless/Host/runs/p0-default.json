@@ -176,7 +176,7 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.01, 0.0, 0.1135],
-        "deviceToBody": { "x": 0.0, "y": 0.3826834, "z": 0.0, "w": 0.9238795 }
+        "deviceToBody": { "x": 0.0, "y": 0.3826834323650898, "z": 0.0, "w": 0.9238795325112867 }
       },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
@@ -195,7 +195,7 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, -0.01, 0.1135],
-        "deviceToBody": { "x": 0.3826834, "y": 0.0, "z": 0.0, "w": 0.9238795 }
+        "deviceToBody": { "x": 0.3826834323650898, "y": 0.0, "z": 0.0, "w": 0.9238795325112867 }
       },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
@@ -214,7 +214,7 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [-0.01, 0.0, 0.1135],
-        "deviceToBody": { "x": 0.0, "y": -0.3826834, "z": 0.0, "w": 0.9238795 }
+        "deviceToBody": { "x": 0.0, "y": -0.3826834323650898, "z": 0.0, "w": 0.9238795325112867 }
       },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
@@ -233,7 +233,7 @@
       "controllerVisible": true,
       "mount": {
         "positionBodyMeters": [0.0, 0.01, 0.1135],
-        "deviceToBody": { "x": -0.3826834, "y": 0.0, "z": 0.0, "w": 0.9238795 }
+        "deviceToBody": { "x": -0.3826834323650898, "y": 0.0, "z": 0.0, "w": 0.9238795325112867 }
       },
       "parameters": {
         "field_of_view_half_angle_rad": 1.5707963267948966,
@@ -266,24 +266,10 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": {
-          "model": "brown-conrady-5",
-          "k1": 0.0,
-          "k2": 0.0,
-          "p1": 0.0,
-          "p2": 0.0,
-          "k3": 0.0,
-          "source": "none"
-        },
-        "noise": {
-          "source": "none"
-        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
         "exposure_duration_s": 0.0005,
-        "extrinsics": {
-          "source": "argus-2-config",
-          "origin": "assumed-com",
-          "orientation_verified": false
-        }
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
       }
     },
     {
@@ -309,24 +295,10 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": {
-          "model": "brown-conrady-5",
-          "k1": 0.0,
-          "k2": 0.0,
-          "p1": 0.0,
-          "p2": 0.0,
-          "k3": 0.0,
-          "source": "none"
-        },
-        "noise": {
-          "source": "none"
-        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
         "exposure_duration_s": 0.0005,
-        "extrinsics": {
-          "source": "argus-2-config",
-          "origin": "assumed-com",
-          "orientation_verified": false
-        }
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
       }
     },
     {
@@ -352,24 +324,10 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": {
-          "model": "brown-conrady-5",
-          "k1": 0.0,
-          "k2": 0.0,
-          "p1": 0.0,
-          "p2": 0.0,
-          "k3": 0.0,
-          "source": "none"
-        },
-        "noise": {
-          "source": "none"
-        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
         "exposure_duration_s": 0.0005,
-        "extrinsics": {
-          "source": "argus-2-config",
-          "origin": "assumed-com",
-          "orientation_verified": false
-        }
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
       }
     },
     {
@@ -395,24 +353,10 @@
           "source": "spec-estimate",
           "calibrated": false
         },
-        "distortion": {
-          "model": "brown-conrady-5",
-          "k1": 0.0,
-          "k2": 0.0,
-          "p1": 0.0,
-          "p2": 0.0,
-          "k3": 0.0,
-          "source": "none"
-        },
-        "noise": {
-          "source": "none"
-        },
+        "distortion": { "model": "brown-conrady-5", "k1": 0.0, "k2": 0.0, "p1": 0.0, "p2": 0.0, "k3": 0.0, "source": "none" },
+        "noise": { "source": "none" },
         "exposure_duration_s": 0.0005,
-        "extrinsics": {
-          "source": "argus-2-config",
-          "origin": "assumed-com",
-          "orientation_verified": false
-        }
+        "extrinsics": { "source": "argus-2-config", "origin": "assumed-com", "orientation_verified": false }
       }
     },
     {

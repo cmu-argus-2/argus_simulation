@@ -100,6 +100,35 @@ namespace Argus.Simulation.Host.Tests
             AssertClose(definition.Mount.PositionBodyMeters, new Vector3d(tx, ty, tz), "position");
         }
 
+        // DATA-1 (#67): one light sensor on each of the ±X, ±Y and −Z faces, and four on +Z tilted 45°
+        // toward ±X and ±Y. Each normal is stated here, apart from the file's quaternions, so a mount
+        // copied wrongly into both the file and CompiledP0Default still fails.
+        private const double Diagonal = 0.7071067811865476;
+
+        [TestCase("light.px", 1.0, 0.0, 0.0)]
+        [TestCase("light.mx", -1.0, 0.0, 0.0)]
+        [TestCase("light.py", 0.0, 1.0, 0.0)]
+        [TestCase("light.my", 0.0, -1.0, 0.0)]
+        [TestCase("light.mz", 0.0, 0.0, -1.0)]
+        [TestCase("light.zp_xp", Diagonal, 0.0, Diagonal)]
+        [TestCase("light.zp_ym", 0.0, -Diagonal, Diagonal)]
+        [TestCase("light.zp_xm", -Diagonal, 0.0, Diagonal)]
+        [TestCase("light.zp_yp", 0.0, Diagonal, Diagonal)]
+        public void P0FileLightSensorsFaceTheirIntendedNormals(string deviceId, double nx, double ny, double nz)
+        {
+            SimulationConfiguration p0 = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, RunId);
+            string[] lights = p0.Devices.Where(device => device.Kind == LightSensorKind.KindName).Select(device => device.Definition.SensorId).ToArray();
+            Assert.That(lights, Is.EquivalentTo(new[]
+            {
+                "light.px", "light.mx", "light.py", "light.my", "light.mz",
+                "light.zp_xp", "light.zp_ym", "light.zp_xm", "light.zp_yp"
+            }));
+
+            // A light sensor's boresight is its device +z axis (Argus.Basilisk/argus_basilisk/devices/light_sensor.py).
+            Quaterniond deviceToBody = p0.Devices.Single(device => device.Definition.SensorId == deviceId).Definition.Mount.SensorToBody;
+            AssertClose(deviceToBody.Rotate(new Vector3d(0, 0, 1)), new Vector3d(nx, ny, nz), deviceId + " normal");
+        }
+
         [TestCase(0)]
         [TestCase(1)]
         public void FileWithASubsetOfTheDevicesLoads(int deviceCount)
@@ -714,10 +743,10 @@ namespace Argus.Simulation.Host.Tests
                 Light("light.py", "light_py", new Vector3d(0.0, 0.05, 0.0), new Quaterniond(0.5, 0.5, 0.5, -0.5)),
                 Light("light.my", "light_my", new Vector3d(0.0, -0.05, 0.0), new Quaterniond(-0.5, -0.5, 0.5, -0.5)),
                 Light("light.mz", "light_mz", new Vector3d(0.0, 0.0, -0.1135), new Quaterniond(1.0, 0.0, 0.0, 0.0)),
-                Light("light.zp_xp", "light_zp_xp", new Vector3d(0.01, 0.0, 0.1135), new Quaterniond(0.0, 0.3826834, 0.0, 0.9238795)),
-                Light("light.zp_ym", "light_zp_ym", new Vector3d(0.0, -0.01, 0.1135), new Quaterniond(0.3826834, 0.0, 0.0, 0.9238795)),
-                Light("light.zp_xm", "light_zp_xm", new Vector3d(-0.01, 0.0, 0.1135), new Quaterniond(0.0, -0.3826834, 0.0, 0.9238795)),
-                Light("light.zp_yp", "light_zp_yp", new Vector3d(0.0, 0.01, 0.1135), new Quaterniond(-0.3826834, 0.0, 0.0, 0.9238795)),
+                Light("light.zp_xp", "light_zp_xp", new Vector3d(0.01, 0.0, 0.1135), new Quaterniond(0.0, 0.3826834323650898, 0.0, 0.9238795325112867)),
+                Light("light.zp_ym", "light_zp_ym", new Vector3d(0.0, -0.01, 0.1135), new Quaterniond(0.3826834323650898, 0.0, 0.0, 0.9238795325112867)),
+                Light("light.zp_xm", "light_zp_xm", new Vector3d(-0.01, 0.0, 0.1135), new Quaterniond(0.0, -0.3826834323650898, 0.0, 0.9238795325112867)),
+                Light("light.zp_yp", "light_zp_yp", new Vector3d(0.0, 0.01, 0.1135), new Quaterniond(-0.3826834323650898, 0.0, 0.0, 0.9238795325112867)),
                 // An actuator has no period and publishes no frames (docs/device-model.md §1).
                 IdealBodyTorqueKind.Instance.Configure(
                     new SensorDefinition(
