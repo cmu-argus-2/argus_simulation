@@ -1,6 +1,6 @@
 # Argus.Contracts: cross-process schemas
 
-**Status:** Basilisk and state-stream schemas defined; gateway and renderer schemas planned
+**Status:** Basilisk, state-stream and controller-gateway schemas defined; renderer schema planned
 
 `headless/Host` serves the state stream (HOST-3, `Streaming/StateStreamServer.cs`); the Unity
 client is UNITY-5.
@@ -22,7 +22,7 @@ proto/argus/
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
 ├── stream/v1/state_stream.proto      # Host → Unity state stream (CON-1)
-├── gateway/v1/gateway.proto          # Placeholder: HIL and controller link (D7, G1)
+├── gateway/v1/gateway.proto          # Controller link for HIL and external controllers (CON-3)
 └── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
 
@@ -91,6 +91,7 @@ protoc -I Argus.Contracts/proto -I "$(brew --prefix)/include" --descriptor_set_o
 |---|---|---|---|---|---|---|
 | Basilisk | `Argus.Basilisk` | `headless/Host` (`BasiliskEngine`) | `ARGUS_BASILISK_ENDPOINT` | `127.0.0.1:50051` | insecure h2c, loopback only in v1 | Not applicable |
 | State stream | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
+| Controller gateway | `headless/Host` (HOST-6) | HIL adapters (HIL-1), external controllers | `ARGUS_GATEWAY_ENDPOINT` | `127.0.0.1:50053` | native gRPC, h2c, loopback only in v1; one bidirectional stream per controller | One observation per step, never decimated |
 
 For every endpoint, precedence is command-line flag, then environment, then default.
 Basilisk uses `--basilisk-endpoint` > `ARGUS_BASILISK_ENDPOINT` > `127.0.0.1:50051`.
@@ -100,13 +101,13 @@ default above. Stream rate uses `--stream-rate-hz`, then `ARGUS_STREAM_RATE_HZ`,
 loopback stream endpoint. Both endpoint settings take bare `host:port`
 (bracket IPv6 addresses, e.g. `[::1]:50052`), with no URI scheme or path. The stream
 client adds `http://` when constructing its channel URI; the server parses host/port.
+The gateway endpoint uses `--gateway-endpoint`, then `ARGUS_GATEWAY_ENDPOINT`, then
+`127.0.0.1:50053`, in the same bare `host:port` form; HOST-6 accepts only a loopback address.
 
 ## Deferred
 
 Added with the PR that first needs them:
 
-- the gateway link for HIL flight computers and other external controllers (observations
-  out, commands in);
 - the runtime state-stream Unity client (UNITY-5); the schema is below and `headless/Host`
   serves it (HOST-3);
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
@@ -225,3 +226,71 @@ Applied commands list every configured actuator, including idle values, at most 
 the list is empty when the run configures no actuator. Per-device state is deferred to the
 first stateful actuator, the momentum wheel (`docs/device-model.md` §8).
 HOST-3 should alias generated names as `PbSim` / `PbStream` to avoid Core name collisions.
+
+## Controller gateway (CON-3)
+
+`ControllerGatewayService.Connect` carries Core's `IControllerGateway` (CORE-9) to HIL
+adapters (HIL-1) and external controllers: claim, release, heartbeat, the command for a
+step, and, in lockstep runs, the step itself and a Reset. Observations go out as Core
+publishes them (`ObservationPublished`), with each run's end (`RunEnded`). `headless/Host`
+serves it (HOST-6).
+
+### Decisions
+
+- **Shape: one bounded bidirectional stream per controller session**, not unary calls
+  (system-architecture §12). The stream is the session. The server assigns its controller ID
+  and revokes its authority when it ends, so a controller that disconnects or crashes fails
+  safe without a separate session API. In runs the host steps (paced and HIL), observations
+  arrive on the host's clock, and a stream delivers them without polling. One ordered stream
+  also fixes the order of observations and call results.
+- **Endpoint:** `--gateway-endpoint` > `ARGUS_GATEWAY_ENDPOINT` > `127.0.0.1:50053`,
+  cleartext h2c on loopback only in v1, as the other links. HIL-1's adapters run on the host
+  machine and bridge to the flight computer's own buses.
+- **Reset:** a link sends only a seed. The scenario is the host's run file (G5), so a link
+  cannot change the spacecraft, the heartbeat timeout or the physical-actuator setting. Only the
+  authority holder of a lockstep run may reset; the host owns the runs it steps.
+- **Camera images inline:** a controller-visible camera's pixels travel in the observation
+  as raw RGB8 (`CameraObservation.pixels_rgb8`). P0's IMX708 at 4608 x 2592 is about 34 MiB, so
+  both ends raise gRPC's 4 MiB message limit to fit the largest controller-visible camera.
+  P0's cameras are not controller-visible, so P0 sessions stay small. Shared memory
+  (system-architecture §12) can be added beside it if images become the bottleneck.
+
+### Session rules
+
+- The server's first message is `SessionStarted`: the controller ID it assigned (clients never
+  choose one), the host's `StepDriver`, and the run's heartbeat timeout. If a run is running,
+  the run's latest observation follows, so a controller that joins mid-run knows step k.
+- The server handles a session's calls one at a time, in order, and answers each with one
+  `CallResult` echoing its `request_id`. An observation or `RunEnded` that a call causes is
+  sent before that call's result: a lockstep `StepCommand` gets observation k+1, then its
+  result; a `ResetRun` gets the old run's `RunEnded`, observation 0, then its result.
+- Every session gets every observation, holder or not. Observations are never decimated or
+  dropped. The server keeps at most 16 unsent messages per session; a session that falls
+  further behind is ended with `RESOURCE_EXHAUSTED`, which revokes its authority (failsafe).
+  HTTP/2 flow control bounds the calls a client can queue.
+- Every accepted call is a heartbeat; a refused call is not (CORE-9). A holder silent past the
+  heartbeat timeout loses authority, and every actuator runs idle until a controller claims
+  again. Every command the server receives, malformed or refused, reaches the command log.
+- A terminal observation carries its status (`BACKEND_FAILED`, `STOPPED`) and no frames, never
+  its termination reason, which can carry backend failure text (D7). Refusal text is the
+  gateway's own and is sent.
+- A run ends with `RunEnded`; the session stays open for the next run. A Reset clears
+  authority, so a controller claims again before stepping the new run. When the host stops,
+  it ends every session with OK.
+
+### Commands and observations
+
+- A command for step k is computed from observation k and names it: `sequence` = k and
+  `apply_at_simulation_time_s` = t_k, exactly observation k's `simulation_time_s`; it acts over
+  [t_k, t_k+1) (DATA-5, #70). Late, early, duplicate and unauthorised commands are refused
+  and logged, never applied (CORE-9). An actuator a command leaves out runs idle.
+- `SubmitCommand` is for runs the host steps (`STEP_DRIVER_HOST`); a step with no command
+  holds the tenure's last applied one (`Held`). `StepCommand` is for lockstep runs
+  (`STEP_DRIVER_CONTROLLER`). The other one is refused.
+- Observation frames reuse `argus.sim.v1.SensorFrame` with the state stream's presence and
+  device-model rules, except a camera: its `payload` is always empty and `camera` carries
+  the `CameraObservation` for every status, with pixels only when `VALID`. No truth crosses this
+  link: no `SimulationState`, no camera pose or Sun, no ground-truth sensor (D7), and no
+  `argus.basilisk.v1` type.
+- Generated C# aliases the package as `PbGateway`, beside `PbSim`, because `Observation`,
+  `StepDriver` and `CameraObservation` collide with Core.

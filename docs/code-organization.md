@@ -47,7 +47,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 │   ├── Streaming/                # StateStreamServer, StateStreamPublisher, StateStreamMapper (argus/stream/v1)
 │   └── runs/                     # Run configuration files (p0-default.json: placeholder data; reference/: HOST-8's frozen cases)
 └── Host.Tests/                   # Host tests (NUnit)
-Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1; stream, gateway, render (placeholders)
+Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1, stream/v1, gateway/v1; render (placeholder)
 Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)
 Argus.Hardware/                   # Flight-computer adapters (README placeholder)
 Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (download_gibs_pack.py)
@@ -123,7 +123,7 @@ Core/Sensors/
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
-Argus.Contracts/proto/argus/{gateway,render}/v1/         # TODO(D7, G1), TODO(D5, G3)
+Argus.Contracts/proto/argus/render/v1/                   # TODO(D5, G3)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
 
