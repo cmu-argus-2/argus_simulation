@@ -4,7 +4,9 @@ Frozen run files for `Argus.Basilisk/scripts/check_reference_runs.py`, which che
 independent references. Their values don't follow P0 or DATA-1 updates: change a value only by adding a new case.
 Run-file format changes, such as HOST-9's profile split or the removal of a device `source`, are applied here too.
 Each case gives its spacecraft profile inline (`spacecraftProfile` is the profile, not a path), so a case stays one
-frozen file and changing one case's body never changes another's. `RunConfigurationFileTests` parses every file.
+frozen file and changing one case's body never changes another's. `RunConfigurationFileTests` parses every file and
+checks that its profile is inline, and `check_reference_runs.py`, which reads the body and devices from the case file
+itself, refuses a case whose `spacecraftProfile` is a path.
 
 Common to all files:
 - **Epoch:** 2026-06-01T12:00:00Z.

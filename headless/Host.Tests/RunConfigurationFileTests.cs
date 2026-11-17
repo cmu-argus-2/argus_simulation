@@ -540,7 +540,7 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
-        [TestCase("device id", "spacecraft profile argus-p0: devices[0].deviceId: 'IMU.Main' cannot be recorded")]
+        [TestCase("device id", "spacecraftProfile.devices[0].deviceId: 'IMU.Main' cannot be recorded")]
         [TestCase("record root", "--record: Cannot write datasets under")]
         public void RecordingThatCannotWorkExitsWithCode2BeforeConnecting(string problem, string expectedMessage)
         {
@@ -604,6 +604,9 @@ namespace Argus.Simulation.Host.Tests
                 Assert.That(run.EpochUtc, Is.EqualTo(new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero)), name);
                 Assert.That(run.KernelSetId, Is.EqualTo("argus-2026-11-02"), name);
                 Assert.That(run.InitialOrbit.HasValue && run.Spacecraft.HasValue, Is.True, name);
+                // The checker reads the body and devices from the run file itself.
+                JsonNode file = JsonNode.Parse(File.ReadAllText(Path.Combine(ReferenceRunDirectory, name)));
+                Assert.That(file["spacecraftProfile"], Is.InstanceOf<JsonObject>(), $"{name} must give its spacecraftProfile inline");
             }
         }
 

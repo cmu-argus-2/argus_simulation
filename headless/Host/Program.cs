@@ -77,9 +77,12 @@ namespace Argus.Simulation.Host
                 string deviceId = configuration.Devices[index].Definition.SensorId;
                 if (!RunRecorder.IsPathSafeId(deviceId))
                 {
+                    // Named as the parser names a device: by its profile file, or inside the run file.
+                    string device = run.ProfileFile == null
+                        ? $"spacecraftProfile.devices[{index}]"
+                        : $"spacecraft profile {run.ProfileFile}: devices[{index}]";
                     Console.Error.WriteLine(
-                        $"Run configuration {options.RunConfigurationPath}: spacecraft profile {run.ProfileId}: " +
-                        $"devices[{index}].deviceId: '{deviceId}' cannot be " +
+                        $"Run configuration {options.RunConfigurationPath}: {device}.deviceId: '{deviceId}' cannot be " +
                         "recorded; --record needs [a-z0-9][a-z0-9._-]*, not ending in '.' (Core/Recording/README.md)");
                     return null;
                 }

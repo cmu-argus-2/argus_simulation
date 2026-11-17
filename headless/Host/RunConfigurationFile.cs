@@ -21,11 +21,12 @@ namespace Argus.Simulation.Host
         // The run file and its profile, resolved.
         public sealed class LoadedRun
         {
-            internal LoadedRun(SimulationConfiguration configuration, string profileId, string profilePath)
+            internal LoadedRun(SimulationConfiguration configuration, string profileId, string profilePath, string profileFile)
             {
                 Configuration = configuration;
                 ProfileId = profileId;
                 ProfilePath = profilePath;
+                ProfileFile = profileFile;
             }
 
             public SimulationConfiguration Configuration { get; }
@@ -35,6 +36,10 @@ namespace Argus.Simulation.Host
 
             // spacecraftProfile as the run file wrote it, or null for a profile given inline.
             public string ProfilePath { get; }
+
+            // The profile file's full path, which error messages name, or null for a profile given
+            // inline.
+            public string ProfileFile { get; }
         }
 
         public static SimulationConfiguration Load(string path, string runId) => Read(path, runId).Configuration;
@@ -104,13 +109,15 @@ namespace Argus.Simulation.Host
                 // profile itself, which keeps a frozen reference case in one file.
                 JsonElement profileField = Field(root, "spacecraftProfile", "");
                 string profilePath = null;
+                string profileFile = null;
                 SpacecraftProfile profile;
                 if (profileField.ValueKind == JsonValueKind.String)
                 {
                     profilePath = profileField.GetString();
                     Check(profilePath.Trim().Length > 0, "spacecraftProfile", "must not be blank");
                     Check(runDirectory != null, "spacecraftProfile", "is a path, which only a run file read from disk can resolve");
-                    profile = ReadProfileFile(Path.Combine(runDirectory, profilePath), runId, epochUtc, fixedStepSeconds);
+                    profileFile = Path.GetFullPath(Path.Combine(runDirectory, profilePath));
+                    profile = ReadProfileFile(profileFile, runId, epochUtc, fixedStepSeconds);
                 }
                 else
                 {
@@ -135,7 +142,7 @@ namespace Argus.Simulation.Host
                     spacecraft: spacecraft,
                     devices: profile.Devices);
                 Check(configuration.IsValid, "", "is not a valid run configuration");
-                return new LoadedRun(configuration, profile.ProfileId, profilePath);
+                return new LoadedRun(configuration, profile.ProfileId, profilePath, profileFile);
             }
         }
 
@@ -151,7 +158,7 @@ namespace Argus.Simulation.Host
             }
         }
 
-        // A profile file; its errors name the file, as the run file found it.
+        // A profile file; its errors name the file by its full path.
         private static SpacecraftProfile ReadProfileFile(string path, string runId, DateTimeOffset epochUtc, double fixedStepSeconds)
         {
             string text;

@@ -828,6 +828,17 @@ class SpiceEphemeris:
         return np.asarray(self._sp.spkpos("SUN", et, "J2000", "NONE", "EARTH")[0]) * 1e3
 
 
+def load_reference_run(case) -> dict:
+    """A case's run file. The checker reads the body and devices from the run file itself, so a case gives its
+    spacecraft profile inline (runs/reference/README.md), never as a path to a profile file."""
+    path = REFERENCE_RUNS / case.run_file
+    run = json.loads(path.read_text())
+    if not isinstance(run.get("spacecraftProfile"), dict):
+        raise ValueError(f"{path.name}: spacecraftProfile must be the profile object itself, not "
+                         f"{run.get('spacecraftProfile')!r}: a reference case gives its profile inline (runs/reference/README.md)")
+    return run
+
+
 def main_r4(argv) -> int:
     parser = argparse.ArgumentParser(prog="check_reference_runs.py r4",
                                      description="R4: the analytic fixture's starting parameters, or its deviation.")
@@ -836,7 +847,7 @@ def main_r4(argv) -> int:
     parser.add_argument("--json", type=Path)
     args = parser.parse_args(argv)
     case = CASES[R4_CASE]
-    problems = recording_problems(case, json.loads((REFERENCE_RUNS / case.run_file).read_text()), args.dataset)
+    problems = recording_problems(case, load_reference_run(case), args.dataset)
     if problems:
         for problem in problems:
             print("FAIL", problem)
@@ -872,7 +883,7 @@ def main(argv=None) -> int:
     parser.add_argument("--json", type=Path, help="also write the metrics and problems as JSON")
     args = parser.parse_args(argv)
     case = CASES[args.case]
-    run = json.loads((REFERENCE_RUNS / case.run_file).read_text())
+    run = load_reference_run(case)
     report = check_dataset(case, run, args.dataset, SpiceEphemeris(run["kernelSetId"], args.data_dir))
     for key, value in report.metrics.items():
         print(f"{key:28s} {value if isinstance(value, list) else f'{value:.3e}'}")

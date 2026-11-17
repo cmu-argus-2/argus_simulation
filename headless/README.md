@@ -164,10 +164,11 @@ its own.
 - **Validation:** every field is required and unknown fields are rejected, including
   parameters the kind does not declare. Each part is checked with its Core `IsValid` and
   each device by its kind, so the file accepts exactly what Core accepts and an error names
-  the key. An error in a profile file starts with the file, as the run file found it, and a
-  duplicate device ID or an unknown kind also names the device
-  (`spacecraft profile runs/../spacecraft/argus-p0.json: devices[1].deviceId: 'imu.main' is
-  already devices[0]'s ID`); one in an inline profile starts with `spacecraftProfile.`. Every
+  the key. An error in a profile file starts with the file's full path, and a duplicate device
+  ID or an unknown kind also names the device (`spacecraft profile
+  /path/to/headless/Host/spacecraft/argus-p0.json: devices[1].deviceId: 'imu.main' is already
+  devices[0]'s ID`); one in an inline profile starts with `spacecraftProfile.`. A device ID that
+  `--record` cannot use as a directory name is reported the same way. Every
   `samplePeriodSeconds` must be a whole multiple of `fixedStepSeconds`, since sensors sample only
   at steps. A camera's `exposure_duration_s` must not exceed its `samplePeriodSeconds`, since
   one camera can't start an exposure before the last one ends. Cameras that share a `profile_id` must share its parameter set; the error names
