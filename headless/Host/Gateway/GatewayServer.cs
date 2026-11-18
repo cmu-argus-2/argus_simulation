@@ -9,8 +9,8 @@ namespace Argus.Simulation.Host
     // TrySubmit or Step(controllerId, …), ones the gateway refuses included, so it reaches the command
     // log (CommandLogged) and the recorder (D6); a wire command that doesn't decode gets a refused
     // CallResult naming the field and is not logged (CON-3). Its rules: the server assigns each link
-    // session its own controller ID (clients never choose one) and never reuses one while the gateway
-    // lives; every session end calls Revoke; link calls are forwarded onto the host loop's thread,
+    // session its own controller ID (clients never choose one) and never reuses one while the host
+    // runs; every session end calls Revoke; link calls are forwarded onto the host loop's thread,
     // never from inside a gateway event; in an owner-stepped run the loop gives the holder a bounded
     // window for command k before each step (paced: part of the step's period; unpaced: a stated wait)
     // and calls CheckHeartbeat while it waits; a lockstep run waits a bounded time for a claim after a

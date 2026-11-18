@@ -252,27 +252,39 @@ serves it (HOST-6).
 - **Camera images inline:** a controller-visible camera's pixels travel in the observation
   as raw RGB8 (`CameraObservation.pixels_rgb8`). `SessionStarted.max_message_bytes` tells the
   client the largest message it will receive: 4 MiB (gRPC's default) with no controller-visible
-  camera, otherwise the largest such camera's width x height x 3 plus 1 MiB. P0's IMX708 at
-  4608 x 2592 gives 36,880,384 bytes (about 35.2 MiB). The client sets its receive limit to that
-  value; its own messages stay within the default 4 MiB. P0's cameras are not
+  camera, otherwise the sum of every such camera's width x height x 3 plus 1 MiB, since one
+  observation can carry a frame from each. One IMX708 at 4608 x 2592 gives 36,880,384 bytes
+  (about 35.2 MiB); all four of P0's give 144,375,808 bytes (about 137.7 MiB). The client sets
+  its receive limit to that value; its own messages stay within the default 4 MiB. P0's cameras are not
   controller-visible, so P0 sessions stay at 4 MiB. Shared memory (system-architecture §12)
   can be added beside it if images become the bottleneck.
 
 ### Session rules
 
 - The server's first message is `SessionStarted`: the controller ID it assigned (clients never
-  choose one), the host's `StepDriver`, and the run's heartbeat timeout. If a run is running,
-  the run's latest observation follows, so a controller that joins mid-run knows step k.
+  choose one), the host's `StepDriver`, the run's heartbeat timeout, `max_message_bytes`, the
+  command window in a run the host steps, the physical-actuator inhibit (unset reads as
+  inhibited) and the spacecraft profile's ID (HOST-9). If a run is running, the run's latest
+  observation follows, so a controller that joins mid-run knows step k.
+- In a run the host steps, the host refuses every session with `FAILED_PRECONDITION` at
+  connect, before `SessionStarted`, when the run's heartbeat timeout is 0 or shorter than two
+  steps: a hung controller would keep its last command, or a healthy one would be lost
+  (CORE-9). A lockstep run may leave the timeout off, since its run stops with its controller.
+- Unity never claims authority (D2); how the server recognises Unity's session is UNITY-11's
+  (#65), with its dashboard commands.
 - The server handles a session's calls one at a time, in order, and answers each with one
   `CallResult` echoing its `request_id`. An observation or `RunEnded` that a call causes is
   sent before that call's result: a lockstep `StepCommand` gets observation k+1, then its
-  result; a `ResetRun` gets the old run's `RunEnded`, observation 0, then its result.
+  result, and an accepted step whose backend fails still gets an accepted result, after the
+  terminal observation and `RunEnded`. A `ResetRun` gets the old run's `RunEnded`, observation
+  0, then its result; a run that ended has no holder, so a link only resets a running run.
 - Every session gets every observation, holder or not. Observations are never decimated or
   dropped. The server keeps at most 16 unsent messages per session, and at most
   4 x `max_message_bytes` of them, whichever comes first; a session that falls further behind
   is ended with `RESOURCE_EXHAUSTED`, which revokes its authority (failsafe). The worst case is
-  16 MiB per session with no controller-visible camera, and about 141 MiB with one IMX708
-  (4 x 35.2 MiB); the host holds that for each session it serves. HTTP/2 flow control bounds
+  16 MiB per session with no controller-visible camera, about 141 MiB with one IMX708
+  (4 x 35.2 MiB) and about 551 MiB with all four of P0's (4 x 137.7 MiB); the host holds that for
+  each session it serves. HTTP/2 flow control bounds
   the calls a client can queue.
 - Every accepted call is a heartbeat; a refused call is not (CORE-9). A holder silent past the
   heartbeat timeout loses authority, and every actuator runs idle until a controller claims
@@ -284,9 +296,10 @@ serves it (HOST-6).
 - A terminal observation carries its status (`BACKEND_FAILED`, `STOPPED`) and no frames, never
   its termination reason, which can carry backend failure text (D7). Refusal text is the
   gateway's own and is sent.
-- A run ends with `RunEnded`; the session stays open for the next run. A Reset clears
-  authority, so a controller claims again before stepping the new run. When the host stops,
-  it ends every session with OK.
+- A run ends with `RunEnded`. After a `ResetRun` the session goes on with the new run. A
+  Reset clears authority, so a controller claims again before stepping the new run. A run that
+  ends without being replaced has no holder left to reset it, so no session can start another:
+  the host stops then, and ends every session with OK.
 
 ### Commands and observations
 
@@ -294,6 +307,9 @@ serves it (HOST-6).
   `apply_at_simulation_time_s` = t_k, exactly observation k's `simulation_time_s`; it acts over
   [t_k, t_k+1) (DATA-5, #70). Late, early, duplicate and unauthorised commands are refused
   and logged, never applied (CORE-9). An actuator a command leaves out runs idle.
+- In a run the host steps, command k counts only if it is accepted before the host starts step
+  k. After publishing observation k the host waits at most `SessionStarted.command_window_wall_s`
+  for it and steps as soon as it is accepted; one that arrives later is late, and step k holds.
 - `SubmitCommand` is for runs the host steps (`STEP_DRIVER_HOST`); a step with no command
   holds the tenure's last applied one (`Held`). `StepCommand` is for lockstep runs
   (`STEP_DRIVER_CONTROLLER`). The other one is refused.
