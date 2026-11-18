@@ -279,8 +279,14 @@ namespace Argus.Simulation.Host.Tests
             SimulationConfiguration p0 = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, "p0");
             Assert.That(GatewayMapper.MaxMessageBytes(p0), Is.EqualTo(4L * 1024 * 1024), "P0's cameras aren't controller-visible");
 
-            JsonObject file = JsonNode.Parse(File.ReadAllText(HostOptions.DefaultRunConfigurationPath)).AsObject();
-            foreach (JsonNode device in file["devices"].AsArray())
+            // The devices live in the spacecraft profile the run file names (HOST-9): copy both,
+            // keeping the run file's relative path to the profile, with every camera visible.
+            string runFile = HostOptions.DefaultRunConfigurationPath;
+            JsonObject run = JsonNode.Parse(File.ReadAllText(runFile)).AsObject();
+            string profilePath = (string)run["spacecraftProfile"];
+            string profileFile = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runFile), profilePath));
+            JsonObject profile = JsonNode.Parse(File.ReadAllText(profileFile)).AsObject();
+            foreach (JsonNode device in profile["devices"].AsArray())
             {
                 if ((string)device["kind"] == CameraKind.KindName)
                 {
@@ -288,16 +294,21 @@ namespace Argus.Simulation.Host.Tests
                 }
             }
 
-            string path = Path.Combine(Path.GetTempPath(), $"gateway-cameras-{Guid.NewGuid():N}.json");
-            File.WriteAllText(path, file.ToJsonString());
+            string root = Path.Combine(Path.GetTempPath(), $"gateway-cameras-{Guid.NewGuid():N}");
+            string copiedRun = Path.Combine(root, "runs", "run.json");
+            string copiedProfile = Path.GetFullPath(Path.Combine(root, "runs", profilePath));
+            Directory.CreateDirectory(Path.GetDirectoryName(copiedRun));
+            Directory.CreateDirectory(Path.GetDirectoryName(copiedProfile));
+            File.WriteAllText(copiedRun, run.ToJsonString());
+            File.WriteAllText(copiedProfile, profile.ToJsonString());
             try
             {
-                SimulationConfiguration visible = RunConfigurationFile.Load(path, "visible");
+                SimulationConfiguration visible = RunConfigurationFile.Load(copiedRun, "visible");
                 Assert.That(GatewayMapper.MaxMessageBytes(visible), Is.EqualTo(4L * 4608 * 2592 * 3 + 1024 * 1024));
             }
             finally
             {
-                File.Delete(path);
+                Directory.Delete(root, recursive: true);
             }
         }
 

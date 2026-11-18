@@ -276,7 +276,7 @@ def simulate(run, ephemeris, steps, step_s, *, mu_earth=MU_EARTH, mu_sun=MU_SUN,
         frame, frame_dot = ephemeris.frame(et)
         q_frame = check.quat_from_dcm(frame)
         q = attitude(k, t, q_frame) if attitude else q_frame
-        omega = run["spacecraft"]["initialAngularVelocityBodyRadiansPerSecond"]
+        omega = run["initialAttitude"]["angularVelocityBodyRadiansPerSecond"]
         states.append({
             "sequence": k, "simulation_time_s": t, "timestamp_utc": utc_stamp(run["epochUtc"], t),
             "position_ecef_m": list(frame @ r), "velocity_ecef_m_s": list(frame @ v + frame_dot @ r),
@@ -325,8 +325,8 @@ def manifest_device(device):
 
 
 def write_dataset(directory, run, states, frames=()):
-    sc = run["spacecraft"]
-    q = sc["initialBodyToJ2000"]
+    sc, attitude = run["spacecraftProfile"]["body"], run["initialAttitude"]
+    q = attitude["bodyToJ2000"]
     manifest = {
         "schema_version": "argus-dataset/1", "complete": True, "termination": None, "earth_fixed_frame": "Itrf93",
         "dynamics_backend": {"name": "basilisk", "version": "2.12.2"},
@@ -341,9 +341,9 @@ def write_dataset(directory, run, states, frames=()):
                               "true_anomaly_deg": run["initialOrbit"]["trueAnomalyDegrees"]},
             "spacecraft": {"mass_kg": sc["massKilograms"], "inertia_body_kg_m2": sc["inertiaBodyKilogramSquareMeters"],
                            "initial_body_to_j2000_xyzw": [q["x"], q["y"], q["z"], q["w"]],
-                           "initial_angular_velocity_body_rad_s": sc["initialAngularVelocityBodyRadiansPerSecond"]},
+                           "initial_angular_velocity_body_rad_s": attitude["angularVelocityBodyRadiansPerSecond"]},
         },
-        "devices": [manifest_device(d) for d in run["devices"]],
+        "devices": [manifest_device(d) for d in run["spacecraftProfile"]["devices"]],
         "files": {"states.jsonl": {"lines": len(states)}, "sensors.jsonl": {"lines": len(frames)}},
         "overflow": {"policy": "drop-newest", "capacity": 65536, "dropped_states": 0, "dropped_frames": 0,
                      "dropped_commands": 0, "dropped_authority": 0},
@@ -419,9 +419,9 @@ def spin_case():
 
 
 def spin_attitude(run, bug=None):
-    sc = run["spacecraft"]
-    q0 = np.array([sc["initialBodyToJ2000"][k] for k in "xyzw"])
-    omega = np.asarray(sc["initialAngularVelocityBodyRadiansPerSecond"])
+    attitude = run["initialAttitude"]
+    q0 = np.array([attitude["bodyToJ2000"][k] for k in "xyzw"])
+    omega = np.asarray(attitude["angularVelocityBodyRadiansPerSecond"])
     rate, axis = np.linalg.norm(omega), omega / np.linalg.norm(omega)
 
     def attitude(k, t, q_frame):
@@ -437,7 +437,7 @@ def spin_attitude(run, bug=None):
 
 
 def imu_model(run, transpose=False):
-    device = run["devices"][0]
+    device = run["spacecraftProfile"]["devices"][0]
     m = device["mount"]["deviceToBody"]
     q_mount = np.array([m["x"], m["y"], m["z"], m["w"]])
     lever = np.asarray(device["mount"]["positionBodyMeters"])
@@ -475,10 +475,10 @@ def test_an_imu_mount_read_the_wrong_way_fails(tmp_path, spin_case):
 
 def tumble_attitude(run, ephemeris, inertia=None):
     """The rigid body integrated at 10 ms (the checker's reference uses 5 ms), as a stand-in for Basilisk's output."""
-    sc = run["spacecraft"]
-    I = np.asarray(inertia if inertia is not None else sc["inertiaBodyKilogramSquareMeters"])
-    q0 = np.array([sc["initialBodyToJ2000"][k] for k in "xyzw"])
-    body = check.propagate_rigid_body(q0, np.asarray(sc["initialAngularVelocityBodyRadiansPerSecond"]), I, 0.1, 600, 10)
+    attitude = run["initialAttitude"]
+    I = np.asarray(inertia if inertia is not None else run["spacecraftProfile"]["body"]["inertiaBodyKilogramSquareMeters"])
+    q0 = np.array([attitude["bodyToJ2000"][k] for k in "xyzw"])
+    body = check.propagate_rigid_body(q0, np.asarray(attitude["angularVelocityBodyRadiansPerSecond"]), I, 0.1, 600, 10)
     omegas = [w for _, w in body]
 
     def attitude(k, t, q_frame):
@@ -503,7 +503,7 @@ def test_a_matching_tumble_recording_passes(tmp_path):
 
 def test_a_tumble_with_the_wrong_inertia_fails(tmp_path):
     run, case = reference_run("r3-tumble"), TUMBLE_60_S
-    wrong = np.diag(np.diag(np.asarray(run["spacecraft"]["inertiaBodyKilogramSquareMeters"])))  # products dropped
+    wrong = np.diag(np.diag(np.asarray(run["spacecraftProfile"]["body"]["inertiaBodyKilogramSquareMeters"])))  # products dropped
     attitude, omegas = tumble_attitude(run, FakeEphemeris(), inertia=wrong)
     states, _ = simulate(run, FakeEphemeris(), 600, 0.1, attitude=attitude)
     for state, omega in zip(states, omegas):
@@ -741,7 +741,7 @@ def test_the_drift_case_judges_its_starting_attitude(tmp_path, bug, passes):
 
 def test_a_device_kind_the_case_does_not_compare_is_an_error(tmp_path, orbit_case):
     run, case = orbit_case
-    run["devices"] = reference_run("r2-spin")["devices"]  # an IMU in an orbit case would go unchecked
+    run["spacecraftProfile"]["devices"] = reference_run("r2-spin")["spacecraftProfile"]["devices"]  # an IMU in an orbit case would go unchecked
     states, _ = simulate(run, FakeEphemeris(), 7200, 1.0)
     with pytest.raises(ValueError, match="imu"):
         check.check_dataset(case, run, write_dataset(tmp_path / "dev", run, states), FakeEphemeris())

@@ -134,7 +134,7 @@ namespace Argus.Simulation.Host.Tests
         public void FileWithASubsetOfTheDevicesLoads(int deviceCount)
         {
             JsonObject root = P0();
-            JsonArray devices = root["devices"].AsArray();
+            JsonArray devices = Devices(root);
             while (devices.Count > deviceCount)
             {
                 devices.RemoveAt(devices.Count - 1);
@@ -153,10 +153,10 @@ namespace Argus.Simulation.Host.Tests
         public void ArgusComputedCameraLoadsButIsNotSentToBasilisk()
         {
             JsonObject root = P0();
-            root["devices"].AsArray().Insert(1, CameraNode("cam.test"));
+            Devices(root).Insert(1, CameraNode("cam.test"));
 
             SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
-            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
+            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0().ToJsonString(), RunId);
 
             Assert.That(withCamera.IsValid, Is.True);
             Assert.That(withCamera.Devices.Count, Is.EqualTo(p0.Devices.Count + 1));
@@ -187,7 +187,7 @@ namespace Argus.Simulation.Host.Tests
             JsonObject root = P0();
             JsonObject visible = CameraNode("cam.test");
             visible["controllerVisible"] = true;
-            root["devices"].AsArray().Add(visible);
+            Devices(root).Add(visible);
 
             SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
 
@@ -205,10 +205,10 @@ namespace Argus.Simulation.Host.Tests
         public void NadirGroundTruthCameraLoadsButIsNotSentToBasilisk()
         {
             JsonObject root = P0();
-            root["devices"].AsArray().Add(NadirCameraNode("cam.nadir_gt"));
+            Devices(root).Add(NadirCameraNode("cam.nadir_gt"));
 
             SimulationConfiguration withCamera = RunConfigurationFile.Parse(root.ToJsonString(), RunId);
-            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0Text, RunId);
+            SimulationConfiguration p0 = RunConfigurationFile.Parse(P0().ToJsonString(), RunId);
 
             Assert.That(withCamera.IsValid, Is.True);
             DeviceConfiguration camera = withCamera.Devices[withCamera.Devices.Count - 1];
@@ -224,40 +224,40 @@ namespace Argus.Simulation.Host.Tests
         }
 
         [TestCase("missing field", "initialOrbit.eccentricity: is required")]
-        [TestCase("unknown field", "spacecraft.massKg: is not a known field")]
+        [TestCase("unknown field", "spacecraftProfile.body.massKg: is not a known field")]
         [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
-        [TestCase("invalid profile", "devices[0].parameters[\"gyroscope.*\"]: is not a valid gyroscope profile (see GyroscopeProfile.IsValid)")]
-        [TestCase("repeated parameter", "devices[0].parameters.gyroscope.range_rad_per_s: repeats devices[0].parameters[\"gyroscope.range_rad_per_s\"]")]
-        [TestCase("unknown initial state", "devices[1].initialState.speed_rad_per_s: is not a magnetometer initial-state key")]
-        [TestCase("duplicate device ID", "devices[1].deviceId: duplicates another device's ID")]
-        [TestCase("unknown kind", "devices[2].kind: 'sun_sensor' is not a registered device kind")]
-        [TestCase("unknown parameter", "devices[1].parameters.gain: is not a magnetometer parameter")]
-        [TestCase("missing parameter", "devices[1].parameters[\"range_tesla\"]: is required")]
-        [TestCase("wrong parameter type", "devices[2].parameters.scale_factor: must be a finite number")]
-        [TestCase("wrong type", "devices[0].mount.positionBodyMeters: must be an array of 3 numbers")]
+        [TestCase("invalid profile", "spacecraftProfile.devices[0].parameters[\"gyroscope.*\"]: is not a valid gyroscope profile (see GyroscopeProfile.IsValid)")]
+        [TestCase("repeated parameter", "spacecraftProfile.devices[0].parameters.gyroscope.range_rad_per_s: repeats spacecraftProfile.devices[0].parameters[\"gyroscope.range_rad_per_s\"]")]
+        [TestCase("unknown initial state", "spacecraftProfile.devices[1].initialState.speed_rad_per_s: is not a magnetometer initial-state key")]
+        [TestCase("duplicate device ID", "spacecraftProfile.devices[1].deviceId: 'imu.main' is already spacecraftProfile.devices[0]'s ID")]
+        [TestCase("unknown kind", "spacecraftProfile.devices[2].kind: 'sun_sensor' of light.px is not a registered device kind")]
+        [TestCase("unknown parameter", "spacecraftProfile.devices[1].parameters.gain: is not a magnetometer parameter")]
+        [TestCase("missing parameter", "spacecraftProfile.devices[1].parameters[\"range_tesla\"]: is required")]
+        [TestCase("wrong parameter type", "spacecraftProfile.devices[2].parameters.scale_factor: must be a finite number")]
+        [TestCase("wrong type", "spacecraftProfile.devices[0].mount.positionBodyMeters: must be an array of 3 numbers")]
         [TestCase("epoch without zone", "epochUtc: must be a UTC time")]
         [TestCase("invalid kernel set", "kernelSetId: must match")]
-        [TestCase("invalid camera intrinsics", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
-        [TestCase("exposure longer than the period", "devices[{new}].parameters[\"exposure_duration_s\"]: must not exceed samplePeriodSeconds (1.5 s > 1 s)")]
-        [TestCase("invalid intrinsics and a long exposure", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
-        [TestCase("fractional pixel count", "devices[{new}].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
-        [TestCase("period off the step grid", "devices[{new}].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
-        [TestCase("fisheye", "devices[{new}].parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
-        [TestCase("non-zero distortion", "devices[{new}].parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion")]
-        [TestCase("noise model", "devices[{new}].parameters[\"noise.source\"]: must be \"none\"")]
-        [TestCase("uppercase profile ID", "devices[{new}].parameters[\"profile_id\"]: must match")]
-        [TestCase("blank label", "devices[{new}].parameters[\"extrinsics.origin\"]: must not be blank")]
-        [TestCase("calibrated not a flag", "devices[{new}].parameters.intrinsics.calibrated: must be true or false")]
-        [TestCase("profile ID reused, other intrinsics", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
-        [TestCase("profile ID reused, other distortion source", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in distortion")]
-        [TestCase("coefficients as an array", "devices[{new}].parameters.distortion.coefficients: is not a camera parameter")]
-        [TestCase("invalid nadir camera intrinsics", "devices[{new}].parameters[\"intrinsics.focal_length_y_px\"]: must be > 0")]
-        [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
-        [TestCase("nadir camera with the body cameras' profile ID", "devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
+        [TestCase("invalid camera intrinsics", "spacecraftProfile.devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
+        [TestCase("exposure longer than the period", "spacecraftProfile.devices[{new}].parameters[\"exposure_duration_s\"]: must not exceed samplePeriodSeconds (1.5 s > 1 s)")]
+        [TestCase("invalid intrinsics and a long exposure", "spacecraftProfile.devices[{new}].parameters[\"intrinsics.width_px\"]: must be > 0")]
+        [TestCase("fractional pixel count", "spacecraftProfile.devices[{new}].parameters[\"intrinsics.width_px\"]: must be a whole number of pixels")]
+        [TestCase("period off the step grid", "spacecraftProfile.devices[{new}].samplePeriodSeconds: must be a whole multiple of fixedStepSeconds")]
+        [TestCase("fisheye", "spacecraftProfile.devices[{new}].parameters[\"distortion.model\"]: must be \"brown-conrady-5\"")]
+        [TestCase("non-zero distortion", "spacecraftProfile.devices[{new}].parameters[\"distortion.*\"]: must be all zero until a renderer applies distortion")]
+        [TestCase("noise model", "spacecraftProfile.devices[{new}].parameters[\"noise.source\"]: must be \"none\"")]
+        [TestCase("uppercase profile ID", "spacecraftProfile.devices[{new}].parameters[\"profile_id\"]: must match")]
+        [TestCase("blank label", "spacecraftProfile.devices[{new}].parameters[\"extrinsics.origin\"]: must not be blank")]
+        [TestCase("calibrated not a flag", "spacecraftProfile.devices[{new}].parameters.intrinsics.calibrated: must be true or false")]
+        [TestCase("profile ID reused, other intrinsics", "spacecraftProfile.devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
+        [TestCase("profile ID reused, other distortion source", "spacecraftProfile.devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in distortion")]
+        [TestCase("coefficients as an array", "spacecraftProfile.devices[{new}].parameters.distortion.coefficients: is not a camera parameter")]
+        [TestCase("invalid nadir camera intrinsics", "spacecraftProfile.devices[{new}].parameters[\"intrinsics.focal_length_y_px\"]: must be > 0")]
+        [TestCase("controller-visible nadir camera", "spacecraftProfile.devices[{new}].controllerVisible: must be false")]
+        [TestCase("nadir camera with the body cameras' profile ID", "spacecraftProfile.devices[{new}].parameters[\"profile_id\"]: names another parameter set than cam.px: it differs in intrinsics")]
         public void InvalidFileNamesTheField(string change, string expectedMessage)
         {
             JsonObject root = P0();
-            JsonArray devices = root["devices"].AsArray();
+            JsonArray devices = Devices(root);
             // A camera case appends a test camera after P0's devices.
             expectedMessage = expectedMessage.Replace("{new}", devices.Count.ToString());
             switch (change)
@@ -266,7 +266,7 @@ namespace Argus.Simulation.Host.Tests
                     root["initialOrbit"].AsObject().Remove("eccentricity");
                     break;
                 case "unknown field":
-                    root["spacecraft"]["massKg"] = 1.33;
+                    root["spacecraftProfile"]["body"]["massKg"] = 1.33;
                     break;
                 case "invalid orbit":
                     root["initialOrbit"]["eccentricity"] = 1.5;
@@ -404,7 +404,7 @@ namespace Argus.Simulation.Host.Tests
         public void ADevicesSourceComesFromItsKind()
         {
             JsonObject root = P0();
-            foreach (JsonNode device in root["devices"].AsArray())
+            foreach (JsonNode device in Devices(root))
             {
                 Assert.That(device.AsObject().ContainsKey("source"), Is.False, "p0-default.json still sets a device's source");
             }
@@ -423,11 +423,11 @@ namespace Argus.Simulation.Host.Tests
         public void SourceIsNoLongerARunFileField()
         {
             JsonObject root = P0();
-            root["devices"][0]["source"] = "basilisk";
+            Devices(root)[0]["source"] = "basilisk";
 
             RunConfigurationException error = Assert.Throws<RunConfigurationException>(
                 () => RunConfigurationFile.Parse(root.ToJsonString(), RunId));
-            Assert.That(error.Message, Is.EqualTo("devices[0].source: is no longer a run-file field; the device's kind sets it (device-model §1)"));
+            Assert.That(error.Message, Is.EqualTo("spacecraftProfile.devices[0].source: is no longer a run-file field; the device's kind sets it (device-model §1)"));
         }
 
         // CORE-9: the gateway settings are optional, and absent is the safe value: no heartbeat, and
@@ -435,7 +435,7 @@ namespace Argus.Simulation.Host.Tests
         [Test]
         public void GatewaySettingsAreOptionalAndAbsentMeansSafe()
         {
-            SimulationConfiguration configuration = RunConfigurationFile.Parse(P0Text, RunId);
+            SimulationConfiguration configuration = RunConfigurationFile.Load(HostOptions.DefaultRunConfigurationPath, RunId);
 
             Assert.That((configuration.HeartbeatTimeoutWallSeconds, configuration.PhysicalActuators.Enabled), Is.EqualTo((0.0, false)));
         }
@@ -600,12 +600,12 @@ namespace Argus.Simulation.Host.Tests
         // The nadir ground-truth camera may never be shown to a controller (D7), so a file that does
         // is bad input too.
         [TestCase("invalid orbit", "initialOrbit: needs finite elements")]
-        [TestCase("controller-visible nadir camera", "devices[{new}].controllerVisible: must be false")]
+        [TestCase("controller-visible nadir camera", "spacecraftProfile.devices[{new}].controllerVisible: must be false")]
         public void HostExitsWithCode2BeforeConnecting(string change, string expectedMessage)
         {
             string path = Path.Combine(Path.GetTempPath(), $"argus-bad-run-{Guid.NewGuid():N}.json");
             JsonObject root = P0();
-            JsonArray devices = root["devices"].AsArray();
+            JsonArray devices = Devices(root);
             expectedMessage = expectedMessage.Replace("{new}", devices.Count.ToString());
             if (change == "invalid orbit")
             {
@@ -637,7 +637,77 @@ namespace Argus.Simulation.Host.Tests
             }
         }
 
-        [TestCase("device id", "devices[0].deviceId: 'IMU.Main' cannot be recorded")]
+        // HOST-9 (#113): P0 split into its run file and spacecraft/argus-p0.json records the same run
+        // as the single file, the profile inline, apart from the manifest naming the profile's path.
+        [Test]
+        public void SplitP0RecordsTheSameRunAsTheSingleFile()
+        {
+            RunConfigurationFile.LoadedRun split = RunConfigurationFile.Read(HostOptions.DefaultRunConfigurationPath, RunId);
+            SimulationConfiguration single = RunConfigurationFile.Parse(P0().ToJsonString(), RunId);
+
+            Assert.That((split.ProfileId, split.ProfilePath), Is.EqualTo(("argus-p0", "../spacecraft/argus-p0.json")));
+            JsonObject splitManifest = Manifest(split.Configuration, split.ProfileId, split.ProfilePath);
+            JsonObject singleManifest = Manifest(single, "argus-p0", null);
+            Assert.That(
+                splitManifest["configuration"]["spacecraft_profile"].ToJsonString(),
+                Is.EqualTo("{\"profile_id\":\"argus-p0\",\"path\":\"../spacecraft/argus-p0.json\"}"));
+            Assert.That(splitManifest["configuration"]["spacecraft"], Is.Not.Null);
+            Assert.That(splitManifest["devices"].AsArray().Count, Is.EqualTo(16));
+            foreach (JsonObject manifest in new[] { splitManifest, singleManifest })
+            {
+                manifest["configuration"].AsObject().Remove("spacecraft_profile");
+                manifest.Remove("created_utc");
+            }
+
+            Assert.That(splitManifest.ToJsonString(), Is.EqualTo(singleManifest.ToJsonString()));
+        }
+
+        // A profile the host cannot use exits before connecting, naming the profile file and the device.
+        [TestCase("missing profile", "spacecraftProfile: cannot read the spacecraft profile {profile}")]
+        [TestCase("duplicate device ID", "spacecraft profile {profile}: devices[1].deviceId: 'imu.main' is already devices[0]'s ID")]
+        [TestCase("unknown kind", "spacecraft profile {profile}: devices[2].kind: 'sun_sensor' of light.px is not a registered device kind")]
+        public void UnusableSpacecraftProfileExitsWithCode2BeforeConnecting(string problem, string expectedMessage)
+        {
+            string directory = Path.Combine(Path.GetTempPath(), $"argus-profile-{Guid.NewGuid():N}");
+            string runPath = Path.Combine(directory, "run.json");
+            string profile = Path.Combine(directory, "team-craft.json");
+            JsonObject run = JsonNode.Parse(P0Text).AsObject();
+            run["spacecraftProfile"] = "team-craft.json";
+            JsonObject root = P0();
+            if (problem == "duplicate device ID")
+            {
+                Devices(root)[1]["deviceId"] = "imu.main";
+            }
+            else if (problem == "unknown kind")
+            {
+                Devices(root)[2]["kind"] = "sun_sensor";
+            }
+
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(runPath, run.ToJsonString());
+            if (problem != "missing profile")
+            {
+                File.WriteAllText(profile, root["spacecraftProfile"].ToJsonString());
+            }
+
+            TextWriter originalError = Console.Error;
+            StringWriter error = new StringWriter();
+            try
+            {
+                Console.SetError(error);
+                int exitCode = Program.Main(new[] { "--run-config", runPath, "--basilisk-endpoint", "127.0.0.1:9" });
+
+                Assert.That(exitCode, Is.EqualTo(2));
+                Assert.That(error.ToString(), Does.StartWith($"Run configuration {runPath}: {expectedMessage.Replace("{profile}", profile)}"));
+            }
+            finally
+            {
+                Console.SetError(originalError);
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [TestCase("device id", "spacecraftProfile.devices[0].deviceId: 'IMU.Main' cannot be recorded")]
         [TestCase("record root", "--record: Cannot write datasets under")]
         public void RecordingThatCannotWorkExitsWithCode2BeforeConnecting(string problem, string expectedMessage)
         {
@@ -648,7 +718,7 @@ namespace Argus.Simulation.Host.Tests
             if (problem == "device id")
             {
                 // Valid for the run file, which only needs a non-blank ID, but not a directory name.
-                root["devices"][0]["deviceId"] = "IMU.Main";
+                Devices(root)[0]["deviceId"] = "IMU.Main";
             }
             else
             {
@@ -701,6 +771,9 @@ namespace Argus.Simulation.Host.Tests
                 Assert.That(run.EpochUtc, Is.EqualTo(new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero)), name);
                 Assert.That(run.KernelSetId, Is.EqualTo("argus-2026-11-02"), name);
                 Assert.That(run.InitialOrbit.HasValue && run.Spacecraft.HasValue, Is.True, name);
+                // The checker reads the body and devices from the run file itself.
+                JsonNode file = JsonNode.Parse(File.ReadAllText(Path.Combine(ReferenceRunDirectory, name)));
+                Assert.That(file["spacecraftProfile"], Is.InstanceOf<JsonObject>(), $"{name} must give its spacecraftProfile inline");
             }
         }
 
@@ -781,7 +854,17 @@ namespace Argus.Simulation.Host.Tests
         private static SimulationConfiguration Reference(string name) =>
             RunConfigurationFile.Load(Path.Combine(ReferenceRunDirectory, name), RunId);
 
-        private static JsonObject P0() => JsonNode.Parse(P0Text).AsObject();
+        private static readonly string P0ProfilePath = Path.Combine(AppContext.BaseDirectory, "spacecraft", "argus-p0.json");
+
+        // P0's run file with its profile inline, so a test can change either and parse one text.
+        private static JsonObject P0()
+        {
+            JsonObject root = JsonNode.Parse(P0Text).AsObject();
+            root["spacecraftProfile"] = JsonNode.Parse(File.ReadAllText(P0ProfilePath));
+            return root;
+        }
+
+        private static JsonArray Devices(JsonObject root) => root["spacecraftProfile"]["devices"].AsArray();
 
         // A physicalActuators block that lifts the inhibit for a named procedure.
         private static JsonObject Lifted() => new JsonObject { ["enabled"] = true, ["testProcedure"] = "bench-coil-1" };
@@ -876,6 +959,30 @@ namespace Argus.Simulation.Host.Tests
             JsonObject camera = CameraNode("cam.test");
             camera["parameters"][group][key] = value;
             return camera;
+        }
+
+        // The manifest RunRecorder writes for a run of these devices that records nothing else.
+        private static JsonObject Manifest(SimulationConfiguration run, string profileId, string profilePath)
+        {
+            string root = Path.Combine(Path.GetTempPath(), $"argus-manifest-{Guid.NewGuid():N}");
+            try
+            {
+                using (RunRecorder recorder = new RunRecorder(root, "test"))
+                {
+                    SensorDefinition[] sensors = run.Devices
+                        .Where(device => device.KindDefinition.Role == DeviceRole.Sensor)
+                        .Select(device => device.Definition)
+                        .ToArray();
+                    recorder.BeginRun(run, sensors, spacecraftProfileId: profileId, spacecraftProfilePath: profilePath);
+                    recorder.Close();
+                }
+
+                return JsonNode.Parse(File.ReadAllText(Path.Combine(Directory.GetDirectories(root).Single(), "manifest.json"))).AsObject();
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
         }
 
         // What BasiliskEngine.Initialize sends with a real-time factor of 0.

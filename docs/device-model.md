@@ -6,8 +6,8 @@ in `Core/Contracts`, the kinds in `Core/Sensors`, `argus.sim.v1/devices.proto` a
 per-step device state, which comes with the first stateful actuator, the momentum wheel. The
 actuator kinds of §2 are registered on both sides (CON-2, #34), and the service builds the
 `ideal_body_torque` and `magnetic_torquer` effectors (BSK-8, #21). Still to build: the
-`momentum_wheel` and `thruster` effectors, which P0 doesn't carry (DATA-2, #68; BSK-17, #152), and the profile
-files (HOST-9, #113; until then the devices live in the run file's `devices`).
+`momentum_wheel` and `thruster` effectors, which P0 doesn't carry (DATA-2, #68; BSK-17, #152). The profile and
+run file of §4 are built (HOST-9, #113): `headless/Host/RunConfigurationFile.cs`, `headless/Host/spacecraft/`.
 
 A spacecraft is a body plus a list of configured devices ([target-architecture.md](target-architecture.md)
 D11). Every sensor and actuator is a device: an instance of a generic kind, registered by name. A
@@ -176,7 +176,7 @@ cameras (CORE-6) and the torque actuator follow the same pattern.
 
 The run file keeps what varies per run: the epoch, the fixed step, the seed, the kernel set, the
 initial orbit and the initial attitude and rate. It names its profile by a path relative to
-itself:
+itself (or an absolute one):
 
 ```json
 {
@@ -197,9 +197,16 @@ itself:
 - Only the host reads profiles. It resolves the profile into `SimulationConfiguration` (body and
   devices) and sends the resolved devices to the service, which never reads files.
 - The dataset manifest records `profileId`, the path as written, and the resolved body and
-  devices, so a dataset stands alone.
+  devices, so a dataset stands alone: `configuration.spacecraft_profile` (`profile_id`, `path`)
+  beside `configuration.spacecraft` and `devices`.
 - `runs/p0-default.json` splits into `spacecraft/argus-p0.json` (the 16 P0 devices: the 11 sensors
-  Basilisk models, the 4 body cameras and the ideal body torque) and a run file that names it (HOST-9).
+  Basilisk models, the 4 body cameras and the `torque.body` actuator) and a run file that names it
+  (HOST-9).
+- `spacecraftProfile` may also be the profile object itself. HOST-8's frozen reference cases
+  (`runs/reference/`) give theirs inline, so each case stays one file and no two cases share a
+  body that one edit could change.
+- A missing profile, a duplicate device ID or an unknown kind is refused before the host connects
+  to the service, and the message names the profile file and the device.
 
 ## 5. Wire
 
@@ -338,6 +345,6 @@ v1 is now additive only, and the rest are additions.
 |---|---|---|
 | `DeviceConfiguration`, `DeviceValue`, `RunConfiguration.devices`, `BasiliskDeviceSample`, `configured_device_ids`; the manifest's `devices` | yes | CORE-19 (#111), merged before HOST-5 |
 | `DeviceCommandSet` in `StepRequest`; `devices` in `commands.jsonl` and `producing_command` | yes | CORE-20 (#112), merged before HOST-5 |
-| Profile and run file split | no (a host format) | HOST-9 (#113), any time |
+| Profile and run file split; the manifest's `configuration.spacecraft_profile` | no (a host format; a new manifest field) | HOST-9 (#113), built |
 | Per-step device state: `StepResponse.device_states`, `SimulationState`, `devices` in `states.jsonl` | no (new fields) | with the first stateful actuator, the momentum wheel (BSK-17, #152) |
 | New kinds | no (registry only) | the actuator kinds in CON-2 (#34); later kinds any time |

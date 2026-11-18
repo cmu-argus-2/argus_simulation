@@ -45,7 +45,8 @@ headless/                         # dotnet build of Core and the EditMode tests 
 │   ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
 │   ├── Gateway/                  # GatewayServer, GatewayMapper (argus/gateway/v1)
 │   ├── Streaming/                # StateStreamServer, StateStreamPublisher, StateStreamMapper (argus/stream/v1)
-│   └── runs/                     # Run configuration files (p0-default.json: the DATA-1 P0 run; reference/: HOST-8's frozen cases)
+│   ├── runs/                     # Run configuration files (p0-default.json: the DATA-1 P0 run; reference/: HOST-8's frozen cases)
+│   └── spacecraft/               # Spacecraft profiles: body and devices (argus-p0.json, which p0-default.json flies)
 └── Host.Tests/                   # Host tests (NUnit)
 Argus.Contracts/proto/argus/      # Protobuf v1: sim/v1 (shared), basilisk/v1, stream/v1, gateway/v1; render (placeholder)
 Argus.Basilisk/                   # Basilisk service + brief (argus_basilisk/, kernel_sets/, scripts/)
@@ -57,7 +58,7 @@ Argus.Imagery/                    # Optional offline NASA GIBS imagery pack (dow
 
 | Responsibility | Main classes |
 |---|---|
-| Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource` |
+| Engine and state-source interfaces | `ISimulationEngine`, `ISimulationStateSource`, `ISensorOutputSource` |
 | Controller interface (CORE-9) | `IControllerGateway` (claim, release, heartbeat, submit or step), implemented by `SimulationGateway` |
 | Rendering interface | `IImageRenderer` |
 | Simulation contracts | `SimulationConfiguration`, `PhysicalActuatorSetting`, `CommandRecord`, `AuthorityRecord`, `SimulationStepInput`, `SimulationState`, `DeviceCommandSet`, `DeviceCommand`, `SpacecraftState`, `ReferenceFrame`, `EnvironmentState`, `ClassicalOrbitElements`, `SpacecraftConfiguration` |

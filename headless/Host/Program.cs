@@ -26,11 +26,12 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
-            // A bad run file is bad input, rejected before the host connects to the service.
-            SimulationConfiguration configuration;
+            // A bad run file or spacecraft profile is bad input, rejected before the host connects
+            // to the service.
+            RunConfigurationFile.LoadedRun run;
             try
             {
-                configuration = RunConfigurationFile.Load(
+                run = RunConfigurationFile.Read(
                     options.RunConfigurationPath,
                     "host-" + Guid.NewGuid().ToString("N"));
             }
@@ -40,7 +41,7 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
-            string physicalActuatorProblem = PhysicalActuatorProblem(configuration, options.RealTimeFactor);
+            string physicalActuatorProblem = PhysicalActuatorProblem(run.Configuration, options.RealTimeFactor);
             if (physicalActuatorProblem != null)
             {
                 Console.Error.WriteLine($"Run configuration {options.RunConfigurationPath}: {physicalActuatorProblem}");
@@ -49,7 +50,7 @@ namespace Argus.Simulation.Host
 
             // A recording that cannot work is also bad input, rejected before connecting: an ID the
             // recorder cannot turn into a directory name, or a root it cannot write.
-            using RunRecorder recorder = options.RecordDirectory == null ? null : OpenRecorder(options, configuration);
+            using RunRecorder recorder = options.RecordDirectory == null ? null : OpenRecorder(options, run);
             if (options.RecordDirectory != null && recorder == null)
             {
                 return 2;
@@ -64,7 +65,7 @@ namespace Argus.Simulation.Host
 
             try
             {
-                Run(options, configuration, recorder, cancellation.Token);
+                Run(options, run, recorder, cancellation.Token);
                 return 0;
             }
             catch (Exception exception) when (cancellation.IsCancellationRequested)
@@ -218,15 +219,20 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static RunRecorder OpenRecorder(HostOptions options, SimulationConfiguration configuration)
+        private static RunRecorder OpenRecorder(HostOptions options, RunConfigurationFile.LoadedRun run)
         {
+            SimulationConfiguration configuration = run.Configuration;
             for (int index = 0; index < configuration.Devices.Count; index++)
             {
                 string deviceId = configuration.Devices[index].Definition.SensorId;
                 if (!RunRecorder.IsPathSafeId(deviceId))
                 {
+                    // Named as the parser names a device: by its profile file, or inside the run file.
+                    string device = run.ProfileFile == null
+                        ? $"spacecraftProfile.devices[{index}]"
+                        : $"spacecraft profile {run.ProfileFile}: devices[{index}]";
                     Console.Error.WriteLine(
-                        $"Run configuration {options.RunConfigurationPath}: devices[{index}].deviceId: '{deviceId}' cannot be " +
+                        $"Run configuration {options.RunConfigurationPath}: {device}.deviceId: '{deviceId}' cannot be " +
                         "recorded; --record needs [a-z0-9][a-z0-9._-]*, not ending in '.' (Core/Recording/README.md)");
                     return null;
                 }
@@ -243,19 +249,20 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static void Run(HostOptions options, SimulationConfiguration configuration, RunRecorder recorder, CancellationToken cancellation)
+        private static void Run(HostOptions options, RunConfigurationFile.LoadedRun run, RunRecorder recorder, CancellationToken cancellation)
         {
             // Both bound before the service is configured, so a busy port fails the run before it starts.
             StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamPeriod)
                 .GetAwaiter().GetResult();
             GatewayDispatcher dispatcher = new GatewayDispatcher();
+            SimulationConfiguration configuration = run.Configuration;
             GatewayHub hub = new GatewayHub(dispatcher, configuration, options.StepDriver, SessionRefusal(configuration, options));
             GatewayServer gatewayServer = null;
             bool ranToEnd = false;
             try
             {
                 gatewayServer = GatewayServer.StartAsync(options.GatewayEndpoint, hub).GetAwaiter().GetResult();
-                Run(options, configuration, recorder, stream, gatewayServer, cancellation);
+                Run(options, run, recorder, stream, gatewayServer, cancellation);
                 ranToEnd = true;
             }
             finally
@@ -283,12 +290,13 @@ namespace Argus.Simulation.Host
 
         private static void Run(
             HostOptions options,
-            SimulationConfiguration configuration,
+            RunConfigurationFile.LoadedRun run,
             RunRecorder recorder,
             StateStreamServer stream,
             GatewayServer gatewayServer,
             CancellationToken cancellation)
         {
+            SimulationConfiguration configuration = run.Configuration;
             using BasiliskEngine engine = new BasiliskEngine(options.BasiliskAddress, options.RealTimeFactor, cancellation);
             GatewayHub hub = gatewayServer.Hub;
             // A link call's heartbeat is timed by when it arrived, not when the loop ran it (CORE-9).
@@ -307,14 +315,15 @@ namespace Argus.Simulation.Host
 
             // The stream only replaces its latest pair on this thread, so a slow client never delays
             // a step.
-            gateway.RunStarted += (run, sensors) => stream.Publisher.BeginGeneration(run);
+            gateway.RunStarted += (started, sensors) => stream.Publisher.BeginGeneration(started);
             gateway.StateProduced += stream.Publisher.PublishState;
             gateway.SensorOutputProduced += stream.Publisher.PublishSensorOutput;
 
             // The recorder only queues on this thread, so a slow disk never delays a step.
             if (recorder != null)
             {
-                gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, engine.BasiliskVersion);
+                gateway.RunStarted += (started, sensors) => recorder.BeginRun(
+                    started, sensors, engine.BasiliskVersion, spacecraftProfileId: run.ProfileId, spacecraftProfilePath: run.ProfilePath);
                 gateway.StateProduced += recorder.RecordState;
                 gateway.SensorOutputProduced += recorder.RecordSensorOutput;
                 gateway.CommandLogged += recorder.RecordCommand;

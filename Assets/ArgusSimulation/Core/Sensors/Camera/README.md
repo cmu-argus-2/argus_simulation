@@ -21,7 +21,7 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   the host or Unity; `headless/Host` has none yet, so its camera frames are `Unavailable`. A
   camera frame carries the true camera pose and Sun, so a controller sees a visible camera
   only through `CameraControllerProjection` (below, D7). The four body cameras stay
-  non-visible in P0; a run file opts a camera in. `runs/p0-default.json` configures them as
+  non-visible in P0; a run file opts a camera in. `spacecraft/argus-p0.json`, the P0 profile, configures them as
   `cam.px`, `cam.py`, `cam.mx` and `cam.my` (flight's cam1–cam4, ids 0–3) with the DATA-6
   profile and mounts, sampled every 15 s, flight's capture interval. Their exposure is 0.5 ms,
   the driver's minimum: a v0 estimate for sunlit Earth, where flight uses auto exposure
@@ -39,7 +39,7 @@ Cameras are Core sensor models; Unity only renders (decision D5 in
   ellipsoid gradient at the spacecraft instead; at 500 km the two differ by about 0.01
   degrees. It is ground truth, so it is never controller-visible (D7): its kind has no
   controller projection, and its frames reach the recorder, never a gateway observation.
-  `runs/p0-default.json` does not include it.
+  `spacecraft/argus-p0.json` does not include it.
 - `CameraControllerProjection` (CORE-23): `CameraKind`'s controller projection
   (`IDeviceKind.ControllerProjection`). The gateway applies it to each frame of a visible
   camera, so a controller gets a `SensorFrame<CameraObservation>` (`Core/Imaging/CameraObservation.cs`)
