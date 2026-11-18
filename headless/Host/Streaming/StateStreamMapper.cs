@@ -121,24 +121,7 @@ namespace Argus.Simulation.Host
         // A cached frame keeps its envelope unchanged; only Valid and Stale frames carry a payload.
         private static PbSim.SensorFrame ToProto(ISensorFrame frame, IBackendSensorKind kind)
         {
-            if (!frame.HasValidEnvelope)
-            {
-                throw new InvalidOperationException($"Frame {frame.Sequence} of sensor '{frame.SensorId}' has an invalid envelope.");
-            }
-
-            PbSim.SensorFrame message = new PbSim.SensorFrame
-            {
-                RunId = frame.RunId,
-                SensorId = frame.SensorId,
-                FrameId = frame.FrameId,
-                Sequence = frame.Sequence,
-                SimulationTimeS = frame.SimulationTimeSeconds,
-                TimestampUtc = Timestamp.FromDateTimeOffset(frame.TimestampUtc),
-                Status = ToProto(frame.Status),
-                Source = frame.Source,
-                CaptureStateSequence = frame.StateSequence,
-                Kind = kind.Name
-            };
+            PbSim.SensorFrame message = SimProtoMapper.ToProtoEnvelope(frame, kind.Name);
             if (frame.Status == SensorFrameStatus.Valid || frame.Status == SensorFrameStatus.Stale)
             {
                 AddFinite(message.Payload, kind.WriteOutput(frame.UntypedPayload), $"sensor_output frame '{frame.SensorId}'");
@@ -165,16 +148,6 @@ namespace Argus.Simulation.Host
             ReferenceFrame.AnalyticEarthFixed => PbSim.ReferenceFrame.AnalyticEarthFixed,
             ReferenceFrame.Itrf93 => PbSim.ReferenceFrame.Itrf93,
             _ => throw new ArgumentException($"Reference frame {frame} has no wire form.", nameof(frame))
-        };
-
-        // Core Valid is 0, but the wire's 0 is UNSPECIFIED, so every status maps explicitly.
-        private static PbSim.SensorFrameStatus ToProto(SensorFrameStatus status) => status switch
-        {
-            SensorFrameStatus.Valid => PbSim.SensorFrameStatus.Valid,
-            SensorFrameStatus.Unavailable => PbSim.SensorFrameStatus.Unavailable,
-            SensorFrameStatus.Stale => PbSim.SensorFrameStatus.Stale,
-            SensorFrameStatus.Invalid => PbSim.SensorFrameStatus.Invalid,
-            _ => throw new ArgumentException($"Sensor frame status {status} has no wire form.", nameof(status))
         };
     }
 }

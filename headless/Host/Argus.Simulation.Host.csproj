@@ -24,15 +24,15 @@
     <PackageReference Include="Grpc.Tools" Version="2.84.0" PrivateAssets="All" />
   </ItemGroup>
 
-  <!-- Every link is a client except argus/stream/v1, which the host serves to Unity (HOST-3). The
-       Basilisk protos stay client-only. -->
+  <!-- Every link is a client except the two the host serves: argus/stream/v1 to Unity (HOST-3) and
+       argus/gateway/v1 to controllers (HOST-6). The Basilisk protos stay client-only. -->
   <ItemGroup>
     <Protobuf Include="$(ArgusContractsDir)proto/argus/**/*.proto"
-              Exclude="$(ArgusContractsDir)proto/argus/stream/v1/*.proto"
+              Exclude="$(ArgusContractsDir)proto/argus/stream/v1/*.proto;$(ArgusContractsDir)proto/argus/gateway/v1/*.proto"
               ProtoRoot="$(ArgusContractsDir)proto"
               GrpcServices="Client"
               Access="Internal" />
-    <Protobuf Include="$(ArgusContractsDir)proto/argus/stream/v1/*.proto"
+    <Protobuf Include="$(ArgusContractsDir)proto/argus/stream/v1/*.proto;$(ArgusContractsDir)proto/argus/gateway/v1/*.proto"
               ProtoRoot="$(ArgusContractsDir)proto"
               GrpcServices="Server"
               Access="Internal" />

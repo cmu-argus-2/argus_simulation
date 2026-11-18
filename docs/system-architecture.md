@@ -375,9 +375,9 @@ folders, is [code-organization.md](code-organization.md).
 
 - [x] Define versioned Protobuf schemas for the Basilisk link, the state stream and the
       controller gateway (the renderer schema remains).
-- [ ] Run the core in a standalone headless process (`headless/Host` runs the gateway,
-      `BasiliskEngine` and the P0 sensors; the recorder, gateway server and Unity state
-      stream remain, target-architecture G2).
+- [x] Run the core in a standalone headless process (`headless/Host` runs the gateway,
+      `BasiliskEngine`, the P0 sensors and the recorder, and serves the Unity state stream and
+      the controller gateway, target-architecture G2).
 - [ ] Add the Unity state-stream client and requested-frame renderer adapter.
 - [ ] Add run recording and replay.
 

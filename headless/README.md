@@ -90,6 +90,27 @@ loop only replaces that latest pair, so a slow or stalled client never delays a 
 receives fewer pairs. A port already in use exits 1 before the host configures the service. An
 unpaced run may finish before a client connects.
 
+The host serves the controller gateway too (`argus/gateway/v1`, CON-3, HOST-6;
+`Argus.Contracts/README.md` "Controller gateway"), so HIL adapters (HIL-1) and external
+controllers can drive the run. It listens on `--gateway-endpoint`, then `ARGUS_GATEWAY_ENDPOINT`,
+then `127.0.0.1:50053`, a loopback `host:port` only. Each controller opens one bidirectional
+stream; the host assigns its controller ID, sends it every observation, and revokes its authority
+when the stream ends. Calls run on the host loop's thread between steps (`Gateway/GatewayServer`),
+and each is timed by when it arrived, so a long step never counts as a controller's silence.
+
+- **`--step-driver host`** (default): the host steps. When a controller holds authority, the host
+  waits up to `--command-window-ms` (default 50 ms of wall time, at most half a paced step) for its
+  command k before each step, and steps as soon as it arrives; without one the step holds the
+  last command (`Held`). With no holder the host steps without waiting. The host refuses every
+  controller session (`FAILED_PRECONDITION`) on a run whose `heartbeatTimeoutWallSeconds` is 0, or
+  shorter than two steps (a paced step, or the command window), since a hung controller would
+  otherwise keep its last command or a healthy one would be lost.
+- **`--step-driver controller`** (lockstep): the controller holding authority steps the run with
+  `StepCommand`, and only it may reset the run with a new seed (`ResetRun`; the scenario stays this
+  run file). The run counts `--duration-s` from its last Reset, and the host exits when the run
+  reaches it, fails or is stopped: a run that ended has no holder left to reset it. A run whose
+  holder lost authority waits 60 s of wall time for a new claim, then stops (exit 1).
+
 `--record <dir>` writes the run as dataset v1 (`Assets/ArgusSimulation/Core/Recording/README.md`)
 into `<dir>/<run_id>_0`. The Core `RunRecorder` receives every state and every sensor frame,
 including ground-truth sensors, every command the gateway logged, applied, clamped, held,
@@ -138,8 +159,8 @@ file; the host gives each run its own.
   never returns its frames to a controller, though the recorder still receives them (D7). A
   visible `camera` reaches a controller as a `CameraObservation`, with the pixels and exposure
   timing but not the camera pose or the Sun (CORE-23). The host builds its cameras with no
-  renderer and serves no controller yet, so here a visible camera's frames are `Unavailable`
-  until a renderer exists (UNITY-4 #57, UNITY-10 #64) and the gateway is served (HOST-6 #30).
+  renderer, so here a visible camera's frames reach controllers `Unavailable` until a renderer
+  exists (UNITY-4 #57, UNITY-10 #64).
   P0's cameras stay `false`, so a run file opts a camera in. It is always `false` for the nadir
   ground-truth camera. `runs/p0-default.json` includes the four body cameras
   (`cam.px`, `cam.py`, `cam.mx`, `cam.my`) with the DATA-6 profile and mounts, every 15 s, with
@@ -149,8 +170,8 @@ file; the host gives each run its own.
   including none, so a staged run against a partly built service needs only a different
   file. HOST-9 (#113) moves the body and devices to a spacecraft profile.
 - **Gateway settings** (CORE-9, #45), the only optional top-level fields. Absent, the inhibit stays
-  on, and the heartbeat failsafe is off, which is safe only while no controller attaches (HOST-6 is
-  to refuse a controller session on a run without a timeout): `heartbeatTimeoutWallSeconds`, the heartbeat timeout for the controller holding
+  on, and the heartbeat failsafe is off, so a run the host steps serves no controller (HOST-6
+  refuses the session); a lockstep run may leave it off: `heartbeatTimeoutWallSeconds`, the heartbeat timeout for the controller holding
   actuator authority (absent or `0`: off; set it for any run a controller attaches to, or a
   crashed controller's last command is held for the rest of the run), and `physicalActuators`, which lifts the
   physical-actuator inhibit: `{"enabled": true, "testProcedure": "<the bench procedure>"}`, with

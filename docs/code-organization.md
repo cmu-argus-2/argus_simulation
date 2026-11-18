@@ -43,7 +43,7 @@ headless/                         # dotnet build of Core and the EditMode tests 
 ├── Core/, Tests/                 # csproj files that compile Core and Tests/EditMode
 ├── Host/                         # Headless host: BasiliskEngine gRPC client, run configuration files
 │   ├── Basilisk/                 # BasiliskEngine, BasiliskProtoMapper
-│   ├── Gateway/                  # GatewayServer (placeholder)
+│   ├── Gateway/                  # GatewayServer, GatewayMapper (argus/gateway/v1)
 │   ├── Streaming/                # StateStreamServer, StateStreamPublisher, StateStreamMapper (argus/stream/v1)
 │   └── runs/                     # Run configuration files (p0-default.json: the DATA-1 P0 run; reference/: HOST-8's frozen cases)
 └── Host.Tests/                   # Host tests (NUnit)
@@ -122,7 +122,6 @@ Core/Sensors/
 └── RadioLinkSensor.cs, RadiationSensor.cs
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
-headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/render/v1/                   # TODO(D5, G3)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
 ```
