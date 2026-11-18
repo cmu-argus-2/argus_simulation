@@ -22,6 +22,7 @@ namespace Argus.Simulation.Host.Tests
     internal sealed class GatewayServerTests
     {
         private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
+        private const string TestProfileId = "test-profile";
 
         // Acceptance (#30): a client resets and steps a lockstep run, then gets identical
         // observations after a second Reset with the same seed.
@@ -33,6 +34,10 @@ namespace Argus.Simulation.Host.Tests
             Assert.That(controller.Session.StepDriver, Is.EqualTo(PbGateway.StepDriver.Controller));
             Assert.That(controller.Session.MaxMessageBytes, Is.EqualTo((ulong)GatewayMapper.DefaultMaxMessageBytes));
             Assert.That(controller.Session.HasHeartbeatTimeoutWallS, Is.True);
+            Assert.That(controller.Session.HasCommandWindowWallS, Is.False, "a lockstep run has no command window");
+            Assert.That(controller.Session.PhysicalActuators, Is.Not.Null, "always sent");
+            Assert.That(controller.Session.PhysicalActuators.Enabled, Is.False);
+            Assert.That(controller.Session.SpacecraftProfileId, Is.EqualTo(TestProfileId));
             PbGateway.Observation zero = (await controller.NextAsync()).Observation;
             Assert.That((zero.Sequence, zero.Status), Is.EqualTo((0L, PbGateway.ObservationStatus.Ok)), "the running run's latest observation");
 
@@ -171,10 +176,18 @@ namespace Argus.Simulation.Host.Tests
                 g.Finish();
                 return true;
             });
+            // Read while the host stops, as a controller does: the web host resets a connection
+            // the client keeps open once its stop timeout passes, dropping what wasn't read yet.
+            Task<(PbGateway.ConnectResponse.MessageOneofCase, bool)> reading = Task.Run(async () =>
+            {
+                PbGateway.ConnectResponse last = await controller.NextAsync();
+                return (last.MessageCase, await controller.EndedAsync());
+            });
             await served.DisposeAsync();
 
-            Assert.That((await controller.NextAsync()).MessageCase, Is.EqualTo(PbGateway.ConnectResponse.MessageOneofCase.RunEnded));
-            Assert.That(await controller.EndedAsync(), Is.True);
+            (PbGateway.ConnectResponse.MessageOneofCase last, bool ended) = await reading;
+            Assert.That(last, Is.EqualTo(PbGateway.ConnectResponse.MessageOneofCase.RunEnded));
+            Assert.That(ended, Is.True);
         }
 
         // In a run the host steps, the holder submits command k and the host's step applies it; a
@@ -186,6 +199,7 @@ namespace Argus.Simulation.Host.Tests
             await using Controller controller = await Controller.ConnectAsync(served, host: served);
             PbGateway.Observation zero = (await controller.NextAsync()).Observation;
             Assert.That(controller.Session.StepDriver, Is.EqualTo(PbGateway.StepDriver.Host));
+            Assert.That(controller.Session.CommandWindowWallS, Is.EqualTo(0.05), "--command-window-ms's default");
 
             await served.HostCallAsync(controller, Claim());
             PbGateway.ConnectRequest submit = new PbGateway.ConnectRequest
@@ -449,7 +463,13 @@ namespace Argus.Simulation.Host.Tests
                 SimulationConfiguration configuration = Configuration(heartbeatTimeoutSeconds);
                 HostOptions options = Options("--step-driver", driver == StepDriver.Controller ? "controller" : "host");
                 GatewayDispatcher dispatcher = new GatewayDispatcher();
-                GatewayHub hub = new GatewayHub(dispatcher, configuration, driver, Program.SessionRefusal(configuration, options));
+                GatewayHub hub = new GatewayHub(
+                    dispatcher,
+                    configuration,
+                    driver,
+                    Program.SessionRefusal(configuration, options),
+                    driver == StepDriver.Host ? Program.CommandWindow(configuration, options) : (TimeSpan?)null,
+                    TestProfileId);
                 GatewayServer server = await GatewayServer.StartAsync(new IPEndPoint(IPAddress.Loopback, 0), hub);
                 SimulationGateway gateway = new SimulationGateway(
                     new AnalyticSimulationEngine(500_000.0, 51.6, 0.0, 0.0), stepDriver: driver, clock: dispatcher.GatewayClock);

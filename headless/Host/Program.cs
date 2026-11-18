@@ -256,7 +256,13 @@ namespace Argus.Simulation.Host
                 .GetAwaiter().GetResult();
             GatewayDispatcher dispatcher = new GatewayDispatcher();
             SimulationConfiguration configuration = run.Configuration;
-            GatewayHub hub = new GatewayHub(dispatcher, configuration, options.StepDriver, SessionRefusal(configuration, options));
+            GatewayHub hub = new GatewayHub(
+                dispatcher,
+                configuration,
+                options.StepDriver,
+                SessionRefusal(configuration, options),
+                options.StepDriver == StepDriver.Host ? CommandWindow(configuration, options) : (TimeSpan?)null,
+                run.ProfileId);
             GatewayServer gatewayServer = null;
             bool ranToEnd = false;
             try

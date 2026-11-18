@@ -95,7 +95,8 @@ The host serves the controller gateway too (`argus/gateway/v1`, CON-3, HOST-6;
 controllers can drive the run. It listens on `--gateway-endpoint`, then `ARGUS_GATEWAY_ENDPOINT`,
 then `127.0.0.1:50053`, a loopback `host:port` only. Each controller opens one bidirectional
 stream; the host assigns its controller ID, sends it every observation, and revokes its authority
-when the stream ends. Calls run on the host loop's thread between steps (`Gateway/GatewayServer`),
+when the stream ends. Its `SessionStarted` also carries the command window (in a run the host
+steps), the physical-actuator inhibit and the spacecraft profile's `profileId`. Calls run on the host loop's thread between steps (`Gateway/GatewayServer`),
 and each is timed by when it arrived, so a long step never counts as a controller's silence.
 
 - **`--step-driver host`** (default): the host steps. When a controller holds authority, the host

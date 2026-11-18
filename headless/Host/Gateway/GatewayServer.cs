@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using PbGateway = Argus.Contracts.Gateway.V1;
+using PbSim = Argus.Contracts.Sim.V1;
 
 namespace Argus.Simulation.Host
 {
@@ -229,18 +230,26 @@ namespace Argus.Simulation.Host
         private readonly CancellationTokenSource _stopping = new CancellationTokenSource();
         private readonly SimulationConfiguration _configuration;
         private readonly IReadOnlyDictionary<string, IDeviceKind> _kinds;
+        private readonly TimeSpan? _commandWindow;
+        private readonly string _spacecraftProfileId;
         private SimulationGateway _gateway;
         private PbGateway.ConnectResponse _latest;
         private string _runId;
         private long _nextControllerNumber = 1;
 
         // sessionRefusal: why the host refuses controller sessions, or null (Program.SessionRefusal).
+        // commandWindow: how long a host-stepped step waits for command k (Program.CommandWindow);
+        // null in a lockstep run. spacecraftProfileId: the run file's profile (HOST-9), or null.
         public GatewayHub(
             GatewayDispatcher dispatcher,
             SimulationConfiguration configuration,
             StepDriver stepDriver,
-            string sessionRefusal)
+            string sessionRefusal,
+            TimeSpan? commandWindow = null,
+            string spacecraftProfileId = null)
         {
+            _commandWindow = commandWindow;
+            _spacecraftProfileId = spacecraftProfileId;
             Dispatcher = dispatcher;
             _configuration = configuration;
             _kinds = GatewayMapper.Kinds(configuration);
@@ -289,16 +298,26 @@ namespace Argus.Simulation.Host
                 MaxUnsentMessages,
                 MaxUnsentMessageSizes * MaxMessageBytes);
             _sessions.Add(session);
-            session.Send(new PbGateway.ConnectResponse
+            PbGateway.SessionStarted started = new PbGateway.SessionStarted
             {
-                SessionStarted = new PbGateway.SessionStarted
+                ControllerId = session.ControllerId,
+                StepDriver = GatewayMapper.ToProto(StepDriver),
+                HeartbeatTimeoutWallS = _configuration.HeartbeatTimeoutWallSeconds,
+                MaxMessageBytes = (ulong)MaxMessageBytes,
+                // Always set, so an adapter never has to read an unset field as inhibited.
+                PhysicalActuators = new PbSim.PhysicalActuators
                 {
-                    ControllerId = session.ControllerId,
-                    StepDriver = GatewayMapper.ToProto(StepDriver),
-                    HeartbeatTimeoutWallS = _configuration.HeartbeatTimeoutWallSeconds,
-                    MaxMessageBytes = (ulong)MaxMessageBytes
-                }
-            });
+                    Enabled = _configuration.PhysicalActuators.Enabled,
+                    TestProcedure = _configuration.PhysicalActuators.TestProcedure ?? ""
+                },
+                SpacecraftProfileId = _spacecraftProfileId ?? ""
+            };
+            if (_commandWindow.HasValue)
+            {
+                started.CommandWindowWallS = _commandWindow.Value.TotalSeconds;
+            }
+
+            session.Send(new PbGateway.ConnectResponse { SessionStarted = started });
             if (_latest != null && _gateway.IsRunning)
             {
                 session.Send(_latest);
