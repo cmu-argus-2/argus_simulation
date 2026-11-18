@@ -9,6 +9,7 @@ package argus.gateway.v1;
 
 import "google/protobuf/timestamp.proto";
 import "argus/sim/v1/commands.proto";
+import "argus/sim/v1/run_configuration.proto";
 import "argus/sim/v1/sensor_output.proto";
 
 option csharp_namespace = "Argus.Contracts.Gateway.V1";
@@ -55,7 +56,9 @@ message SubmitCommand {
 }
 
 // Applies command k and runs the step, in a lockstep run (STEP_DRIVER_CONTROLLER;
-// IControllerGateway.Step). Observation k+1 is sent before this call's CallResult.
+// IControllerGateway.Step). Observation k+1 is sent before this call's CallResult. A step the
+// gateway accepted is accepted even when the backend fails during it: the terminal observation
+// (BACKEND_FAILED) and RunEnded come first, then an accepted CallResult.
 message StepCommand {
   CommandForStep command = 1;
 }
@@ -78,11 +81,12 @@ message CommandForStep {
 // Starts a new run of the host's scenario (its run configuration file) with this seed in place of the
 // file's random seed (SimulationGateway.Reset(seed, scenario)). Only the authority holder of a
 // lockstep run may reset; the host owns the runs it steps. A link cannot send a scenario in v1, so it
-// cannot change the spacecraft, the heartbeat timeout or the physical-actuator setting. The old run's
-// RunEnded and the new run's observation 0 are sent before this call's CallResult. A Reset clears
-// authority (CORE-9), so the controller claims again before it steps the new run.
+// cannot change the spacecraft, the heartbeat timeout or the physical-actuator setting. A run that
+// ended has no authority holder, so a link resets only a running run: its RunEnded and the new run's
+// observation 0 are sent before this call's CallResult. A Reset clears authority (CORE-9), so the
+// controller claims again before it steps the new run.
 message ResetRun {
-  // Required; 0 is a valid seed.
+  // Required, and at least 0; 0 is a valid seed.
   optional int32 seed = 1;
 }
 
@@ -116,10 +120,22 @@ message SessionStarted {
   optional double heartbeat_timeout_wall_s = 3;
   // The largest message the server sends on this session, in bytes; the client sets its gRPC
   // receive limit to at least this. 4 MiB (4194304, gRPC's default) when no camera is
-  // controller-visible; otherwise the largest controller-visible camera's width x height x 3 plus
-  // 1 MiB for the rest of the observation, if that is more. Fixed for the session, since a link
+  // controller-visible; otherwise the sum of every controller-visible camera's width x height x 3,
+  // since one observation can carry a frame from each, plus 1 MiB for the rest of the observation,
+  // if that is more. Fixed for the session, since a link
   // cannot change the spacecraft. Messages from the client stay within gRPC's default 4 MiB.
   uint64 max_message_bytes = 4;
+  // STEP_DRIVER_HOST only: after it publishes observation k, how long the host waits for the
+  // holder's command k before it starts step k, in seconds of the host's wall clock. It steps as
+  // soon as command k is accepted; one that arrives after step k starts is late (CORE-9). Unset in a
+  // lockstep run.
+  optional double command_window_wall_s = 5;
+  // The physical-actuator inhibit HIL adapters enforce (CORE-9, HIL-1). Unset reads as inhibited,
+  // the safe default.
+  argus.sim.v1.PhysicalActuators physical_actuators = 6;
+  // The profileId of the spacecraft profile the host's run file names (HOST-9), so a controller can
+  // refuse a host flying another spacecraft. Empty when the run file has none.
+  string spacecraft_profile_id = 7;
 }
 
 // The answer to one call.
@@ -197,8 +213,9 @@ message CameraObservation {
 }
 
 // The run ended: stopped, failed, finished, or replaced by a Reset (IControllerGateway.RunEnded).
-// Only a stop or a failure sends a terminal Observation first. The session stays open, and the next
-// run's observation 0 follows its Reset.
+// Only a stop or a failure sends a terminal Observation first. After a ResetRun the session goes on
+// with the new run's observation 0. A run that ends without being replaced has no authority holder
+// left to reset it, so no session can start another: the host stops and ends every session with OK.
 message RunEnded {
   // The ended run's ID.
   string run_id = 1;
