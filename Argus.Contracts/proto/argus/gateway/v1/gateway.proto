@@ -1,10 +1,222 @@
-// PLACEHOLDER: no messages yet.
-// TODO(D7, G1): CON-3, the controller link for HIL flight computers and external controllers. It carries
-// Core's IControllerGateway (CORE-9): claim, release, heartbeat, submit (owner-stepped runs) or step
-// (lockstep), controller-visible observations out (never truth) and the run's end. Define it with
-// headless/Host GatewayServer (HOST-6).
+// The controller link (CON-3, D7, G1): HIL flight computers (through HIL-1's adapters) and external
+// controllers drive a run through Core's IControllerGateway (CORE-9). headless/Host serves it
+// (HOST-6). Controllers get controller-visible observations only, never truth: no SimulationState
+// and no argus.basilisk.v1 type crosses this link. Delivery rules: Argus.Contracts/README.md,
+// "Controller gateway".
 syntax = "proto3";
 
 package argus.gateway.v1;
 
+import "google/protobuf/timestamp.proto";
+import "argus/sim/v1/commands.proto";
+import "argus/sim/v1/run_configuration.proto";
+import "argus/sim/v1/sensor_output.proto";
+
 option csharp_namespace = "Argus.Contracts.Gateway.V1";
+
+service ControllerGatewayService {
+  // One controller session: a bounded bidirectional stream. The server opens it with a
+  // SessionStarted carrying the controller ID it assigned, then sends every observation the gateway
+  // publishes, each call's result and each run's end. Ending the stream from either side ends the
+  // session, which revokes the session's authority (failsafe, CORE-9).
+  rpc Connect(stream ConnectRequest) returns (stream ConnectResponse);
+}
+
+// One call from the controller. The server handles a session's calls one at a time, in order.
+message ConnectRequest {
+  // Chosen by the client and echoed in the call's CallResult; not checked for uniqueness.
+  uint64 request_id = 1;
+  // Required: an unset call is answered with a refused CallResult.
+  oneof call {
+    ClaimAuthority claim = 2;
+    ReleaseAuthority release = 3;
+    Heartbeat heartbeat = 4;
+    SubmitCommand submit = 5;
+    StepCommand step = 6;
+    ResetRun reset = 7;
+  }
+}
+
+// Takes actuator authority (IControllerGateway.TryClaim). A claim starts a new tenure from idle
+// actuators, also when the session already holds authority (CORE-9).
+message ClaimAuthority {}
+
+// Gives authority up (IControllerGateway.TryRelease); every actuator then runs idle.
+message ReleaseAuthority {}
+
+// Proves the holder is alive (IControllerGateway.TryHeartbeat). Every accepted call is also a
+// heartbeat; a refused one is not.
+message Heartbeat {}
+
+// The command for step k in an owner-stepped run (STEP_DRIVER_HOST): the host's next step applies it
+// (IControllerGateway.TrySubmit). A step with no command repeats the tenure's last applied command,
+// or idles every actuator before the tenure's first (Held).
+message SubmitCommand {
+  CommandForStep command = 1;
+}
+
+// Applies command k and runs the step, in a lockstep run (STEP_DRIVER_CONTROLLER;
+// IControllerGateway.Step). Observation k+1 is sent before this call's CallResult. A step the
+// gateway accepted is accepted even when the backend fails during it: the terminal observation
+// (BACKEND_FAILED) and RunEnded come first, then an accepted CallResult.
+message StepCommand {
+  CommandForStep command = 1;
+}
+
+// Core DeviceCommandSet: the command computed from observation k, acting over [t_k, t_k+1)
+// (DATA-5, #70). A command the server can't decode into one (sequence, apply_at_simulation_time_s
+// or commands unset, or a DeviceValue with no value set) gets a refused CallResult naming the field
+// and is not logged: it never became a command. Every command that decodes, accepted or refused,
+// reaches the command log (dataset v1).
+message CommandForStep {
+  // k, observation k's sequence. Required; 0 is a valid step.
+  optional int64 sequence = 1;
+  // t_k in seconds since the run's start (simulation time), exactly observation k's
+  // simulation_time_s. Required; 0 is a valid time.
+  optional double apply_at_simulation_time_s = 2;
+  // Required. An actuator left out runs its kind's idle values, so the empty set means no output.
+  argus.sim.v1.DeviceCommandSet commands = 3;
+}
+
+// Starts a new run of the host's scenario (its run configuration file) with this seed in place of the
+// file's random seed (SimulationGateway.Reset(seed, scenario)). Only the authority holder of a
+// lockstep run may reset; the host owns the runs it steps. A link cannot send a scenario in v1, so it
+// cannot change the spacecraft, the heartbeat timeout or the physical-actuator setting. A run that
+// ended has no authority holder, so a link resets only a running run: its RunEnded and the new run's
+// observation 0 are sent before this call's CallResult. A Reset clears authority (CORE-9), so the
+// controller claims again before it steps the new run.
+message ResetRun {
+  // Required, and at least 0; 0 is a valid seed.
+  optional int32 seed = 1;
+}
+
+// One message from the server. Exactly one is set.
+message ConnectResponse {
+  oneof message {
+    SessionStarted session_started = 1;
+    CallResult result = 2;
+    Observation observation = 3;
+    RunEnded run_ended = 4;
+  }
+}
+
+enum StepDriver {
+  STEP_DRIVER_UNSPECIFIED = 0;
+  // The host steps the run (paced, HIL and unpaced host runs); the holder sends SubmitCommand.
+  STEP_DRIVER_HOST = 1;
+  // The authority holder steps the run with StepCommand (lockstep SIL and agent runs).
+  STEP_DRIVER_CONTROLLER = 2;
+}
+
+// The session's first message.
+message SessionStarted {
+  // Assigned by the server, unique while the host runs and never reused. Every command record and
+  // authority record of this session carries it (dataset v1). Clients never choose one.
+  string controller_id = 1;
+  // Fixed for the host's lifetime.
+  StepDriver step_driver = 2;
+  // The run's heartbeat timeout in seconds of the host's wall clock (monotonic, not simulation
+  // time); 0 when it is off. Required.
+  optional double heartbeat_timeout_wall_s = 3;
+  // The largest message the server sends on this session, in bytes; the client sets its gRPC
+  // receive limit to at least this. 4 MiB (4194304, gRPC's default) when no camera is
+  // controller-visible; otherwise the sum of every controller-visible camera's width x height x 3,
+  // since one observation can carry a frame from each, plus 1 MiB for the rest of the observation,
+  // if that is more. Fixed for the session, since a link
+  // cannot change the spacecraft. Messages from the client stay within gRPC's default 4 MiB.
+  uint64 max_message_bytes = 4;
+  // STEP_DRIVER_HOST only: after it publishes observation k, how long the host waits for the
+  // holder's command k before it starts step k, in seconds of the host's wall clock. It steps as
+  // soon as command k is accepted; one that arrives after step k starts is late (CORE-9). Unset in a
+  // lockstep run.
+  optional double command_window_wall_s = 5;
+  // The physical-actuator inhibit HIL adapters enforce (CORE-9, HIL-1). Unset reads as inhibited,
+  // the safe default.
+  argus.sim.v1.PhysicalActuators physical_actuators = 6;
+  // The profileId of the spacecraft profile the host's run file names (HOST-9), so a controller can
+  // refuse a host flying another spacecraft. Empty when the run file has none.
+  string spacecraft_profile_id = 7;
+}
+
+// The answer to one call.
+message CallResult {
+  // The call's ConnectRequest.request_id.
+  uint64 request_id = 1;
+  bool accepted = 2;
+  // Why the gateway refused the call; empty when accepted. A refused command that decoded is logged
+  // as Rejected with this reason (dataset v1); one that didn't decode is not logged
+  // (CommandForStep).
+  string refusal = 3;
+}
+
+enum ObservationStatus {
+  OBSERVATION_STATUS_UNSPECIFIED = 0;
+  // The step ran; the frames are what the controller-visible sensors produced.
+  OBSERVATION_STATUS_OK = 1;
+  // The dynamics backend failed; no frames, and the run has ended. The cause stays in the host's
+  // logs (D7).
+  OBSERVATION_STATUS_BACKEND_FAILED = 2;
+  // The host stopped the run; no frames, and the run has ended.
+  OBSERVATION_STATUS_STOPPED = 3;
+}
+
+// Core Observation: what a controller sees after Reset (observation 0) or step k (observation k+1).
+// A terminal observation has its status but never its termination reason.
+message Observation {
+  // Opaque run identity; not a coordinate or a timestamp.
+  string run_id = 1;
+  // k, the step this observation was sampled at. Required; 0 is a valid step.
+  optional int64 sequence = 2;
+  // t_k in seconds since the run's start (simulation time). Required; 0 is a valid time.
+  optional double simulation_time_s = 3;
+  // UTC corresponding to t_k.
+  google.protobuf.Timestamp timestamp_utc = 4;
+  // The dynamics backend that produced the step, e.g. basilisk.
+  string source = 5;
+  // Controller-visible frames sampled at step k, each through its kind's controller projection, in
+  // configuration order. A sensor that was not sampled has none; a late camera frame keeps its
+  // capture step and time (G3).
+  repeated ObservationFrame frames = 6;
+  ObservationStatus status = 7;
+}
+
+// One controller-visible frame.
+message ObservationFrame {
+  // The envelope (run, sensor, frame ID, sequence, capture step and time, UTC, status, source,
+  // kind). For every kind but a camera, payload holds the kind's output keys as the stream does
+  // (VALID/STALE: nonempty; UNAVAILABLE/INVALID: empty). For a camera, payload is always empty and
+  // the image is in camera.
+  argus.sim.v1.SensorFrame frame = 1;
+  // Set exactly when frame.kind is camera (CORE-23), for every status.
+  CameraObservation camera = 2;
+}
+
+// Core CameraObservation (CORE-23): what flight's own frame record holds. No pose, no Sun and no
+// intrinsics; a controller takes intrinsics and mounts from the spacecraft profile.
+message CameraObservation {
+  // The camera's device ID.
+  string camera_id = 1;
+  // The camera's frame sequence, not the engine step. Required; 0 is valid.
+  optional int64 sequence = 2;
+  // Exposure start in seconds since the run's start (simulation time). Required; 0 is valid.
+  optional double exposure_start_simulation_time_s = 3;
+  // UTC of the exposure start.
+  google.protobuf.Timestamp exposure_start_utc = 4;
+  // Exposure length in seconds of simulation time. Required; 0 is a valid exposure.
+  optional double exposure_duration_s = 5;
+  // Image size in pixels; both 0 when pixels_rgb8 is empty.
+  int32 width_px = 6;
+  int32 height_px = 7;
+  // Raw RGB8, row-major from the top-left pixel, 3 bytes per pixel: width_px x height_px x 3 bytes.
+  // Empty unless frame.status is VALID.
+  bytes pixels_rgb8 = 8;
+}
+
+// The run ended: stopped, failed, finished, or replaced by a Reset (IControllerGateway.RunEnded).
+// Only a stop or a failure sends a terminal Observation first. After a ResetRun the session goes on
+// with the new run's observation 0. A run that ends without being replaced has no authority holder
+// left to reset it, so no session can start another: the host stops and ends every session with OK.
+message RunEnded {
+  // The ended run's ID.
+  string run_id = 1;
+}
