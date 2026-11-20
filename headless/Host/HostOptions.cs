@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using Argus.Simulation.Core;
 
 namespace Argus.Simulation.Host
 {
@@ -16,6 +17,14 @@ namespace Argus.Simulation.Host
         public const string StreamRateVariable = "ARGUS_STREAM_RATE_HZ";
         public const double DefaultStreamRateHz = 10.0;
 
+        // The controller gateway (CON-3, HOST-6).
+        public const string GatewayEndpointVariable = "ARGUS_GATEWAY_ENDPOINT";
+        public const string DefaultGatewayEndpoint = "127.0.0.1:50053";
+
+        // How long an owner-stepped step waits for the authority holder's command (HOST-6).
+        public const double DefaultCommandWindowMilliseconds = 50.0;
+        public const double MaximumCommandWindowMilliseconds = 10_000.0;
+
         // The stream's send timer (PeriodicTimer) takes whole milliseconds, from 1 ms to
         // uint.MaxValue - 1 ms, so the rate is at most 1000 Hz and at least one send per 49.7 days.
         public const double MaximumStreamRateHz = 1000.0;
@@ -28,14 +37,20 @@ namespace Argus.Simulation.Host
         public const string Usage =
             "Usage: Argus.Simulation.Host [--duration-s <seconds>] [--real-time-factor <factor>] " +
             "[--basilisk-endpoint <host:port>] [--run-config <path>] [--record <dir>] " +
-            "[--stream-endpoint <host:port>] [--stream-rate-hz <hz>]\n" +
+            "[--stream-endpoint <host:port>] [--stream-rate-hz <hz>] [--gateway-endpoint <host:port>] " +
+            "[--step-driver host|controller] [--command-window-ms <ms>]\n" +
             "  --duration-s         Simulated seconds to run (default 60).\n" +
             "  --real-time-factor   0 runs unpaced (default); above 0 Basilisk paces each step.\n" +
             "  --basilisk-endpoint  Basilisk service (default $" + EndpointVariable + ", then " + DefaultEndpoint + ").\n" +
             "  --run-config         Run configuration file (default runs/p0-default.json).\n" +
             "  --record             Write dataset v1 under this directory, one <run_id>_<segment> folder per run (default: no recording).\n" +
             "  --stream-endpoint    Loopback address the state stream to Unity listens on (default $" + StreamEndpointVariable + ", then " + DefaultStreamEndpoint + ").\n" +
-            "  --stream-rate-hz     Most state-stream sends per second of wall-clock time, per client (default $" + StreamRateVariable + ", then 10).";
+            "  --stream-rate-hz     Most state-stream sends per second of wall-clock time, per client (default $" + StreamRateVariable + ", then 10).\n" +
+            "  --gateway-endpoint   Loopback address the controller gateway listens on (default $" + GatewayEndpointVariable + ", then " + DefaultGatewayEndpoint + ").\n" +
+            "  --step-driver        host (default): the host steps, and the authority holder submits each step's command;\n" +
+            "                       controller: lockstep, the authority holder steps the run.\n" +
+            "  --command-window-ms  When the host steps and a controller holds authority, how long each step waits for its\n" +
+            "                       command, in wall-clock ms (default 50; a paced run waits at most half a step).";
 
         private HostOptions(
             double durationSeconds,
@@ -45,7 +60,10 @@ namespace Argus.Simulation.Host
             string recordDirectory,
             IPEndPoint streamEndpoint,
             double streamRateHz,
-            TimeSpan streamPeriod)
+            TimeSpan streamPeriod,
+            IPEndPoint gatewayEndpoint,
+            StepDriver stepDriver,
+            TimeSpan commandWindow)
         {
             DurationSeconds = durationSeconds;
             RealTimeFactor = realTimeFactor;
@@ -55,6 +73,9 @@ namespace Argus.Simulation.Host
             StreamEndpoint = streamEndpoint;
             StreamRateHz = streamRateHz;
             StreamPeriod = streamPeriod;
+            GatewayEndpoint = gatewayEndpoint;
+            StepDriver = stepDriver;
+            CommandWindow = commandWindow;
         }
 
         public double DurationSeconds { get; }
@@ -75,6 +96,15 @@ namespace Argus.Simulation.Host
         // milliseconds, so a client never receives faster than StreamRateHz.
         public TimeSpan StreamPeriod { get; }
 
+        // A loopback address, as the stream's (Argus.Contracts/README.md Endpoints).
+        public IPEndPoint GatewayEndpoint { get; }
+
+        // Who steps the run: the host, or the controller holding authority (lockstep).
+        public StepDriver StepDriver { get; }
+
+        // How long an owner-stepped step waits for the holder's command, before a paced run's cap.
+        public TimeSpan CommandWindow { get; }
+
         // Each endpoint and the stream rate come from the flag, then the environment, then the
         // default.
         public static bool TryParse(string[] args, out HostOptions options, out string error)
@@ -87,6 +117,9 @@ namespace Argus.Simulation.Host
             string recordDirectory = null;
             string streamEndpoint = null;
             string streamRate = null;
+            string gatewayEndpoint = null;
+            StepDriver stepDriver = StepDriver.Host;
+            double commandWindowMilliseconds = DefaultCommandWindowMilliseconds;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -143,6 +176,35 @@ namespace Argus.Simulation.Host
                     case "--stream-rate-hz":
                         streamRate = value;
                         break;
+                    case "--gateway-endpoint":
+                        gatewayEndpoint = value;
+                        break;
+                    case "--step-driver":
+                        if (value == "host")
+                        {
+                            stepDriver = StepDriver.Host;
+                        }
+                        else if (value == "controller")
+                        {
+                            stepDriver = StepDriver.Controller;
+                        }
+                        else
+                        {
+                            error = "--step-driver must be host or controller.";
+                            return false;
+                        }
+
+                        break;
+                    case "--command-window-ms":
+                        if (!TryParseDouble(value, out commandWindowMilliseconds) ||
+                            commandWindowMilliseconds < 0.0 ||
+                            commandWindowMilliseconds > MaximumCommandWindowMilliseconds)
+                        {
+                            error = $"--command-window-ms must be a number of milliseconds from 0 to {MaximumCommandWindowMilliseconds:R}.";
+                            return false;
+                        }
+
+                        break;
                     default:
                         error = $"Unknown option {name}.";
                         return false;
@@ -173,8 +235,25 @@ namespace Argus.Simulation.Host
                 return false;
             }
 
+            gatewayEndpoint = FirstSet(gatewayEndpoint, GatewayEndpointVariable, DefaultGatewayEndpoint);
+            if (!TryParseEndpoint(gatewayEndpoint, out Uri gatewayAddress) || !TryLoopback(gatewayAddress, out IPEndPoint gateway))
+            {
+                error = $"The gateway endpoint must be a loopback host:port with port 1-65535, got '{gatewayEndpoint}'.";
+                return false;
+            }
+
             options = new HostOptions(
-                durationSeconds, realTimeFactor, address, runConfigurationPath, recordDirectory, stream, streamRateHz, streamPeriod);
+                durationSeconds,
+                realTimeFactor,
+                address,
+                runConfigurationPath,
+                recordDirectory,
+                stream,
+                streamRateHz,
+                streamPeriod,
+                gateway,
+                stepDriver,
+                TimeSpan.FromMilliseconds(commandWindowMilliseconds));
             error = null;
             return true;
         }

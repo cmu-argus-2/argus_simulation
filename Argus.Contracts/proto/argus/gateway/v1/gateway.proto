@@ -126,9 +126,10 @@ message SessionStarted {
   // cannot change the spacecraft. Messages from the client stay within gRPC's default 4 MiB.
   uint64 max_message_bytes = 4;
   // STEP_DRIVER_HOST only: after it publishes observation k, how long the host waits for the
-  // holder's command k before it starts step k, in seconds of the host's wall clock. It steps as
-  // soon as command k is accepted; one that arrives after step k starts is late (CORE-9). Unset in a
-  // lockstep run.
+  // holder's command k before it starts step k, in seconds of the host's wall clock; one that
+  // arrives after step k starts is late (CORE-9). An unpaced run steps as soon as command k is
+  // accepted; a paced run still starts step k on its clock, and the window ends no later than that.
+  // Unset in a lockstep run.
   optional double command_window_wall_s = 5;
   // The physical-actuator inhibit HIL adapters enforce (CORE-9, HIL-1). Unset reads as inhibited,
   // the safe default.
