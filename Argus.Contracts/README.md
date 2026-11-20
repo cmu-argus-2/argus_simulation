@@ -309,7 +309,10 @@ serves it (HOST-6).
   and logged, never applied (CORE-9). An actuator a command leaves out runs idle.
 - In a run the host steps, command k counts only if it is accepted before the host starts step
   k. After publishing observation k the host waits at most `SessionStarted.command_window_wall_s`
-  for it and steps as soon as it is accepted; one that arrives later is late, and step k holds.
+  for it; one that arrives later is late, and step k holds. In an unpaced run the host steps as
+  soon as command k is accepted. A paced run still starts step k on its clock: the window ends
+  no later than that, and an early command never runs the simulation ahead of real time, because
+  the service holds each step to its wall-clock time (`Argus.Basilisk/README.md` §5).
 - `SubmitCommand` is for runs the host steps (`STEP_DRIVER_HOST`); a step with no command
   holds the tenure's last applied one (`Held`). `StepCommand` is for lockstep runs
   (`STEP_DRIVER_CONTROLLER`). The other one is refused.

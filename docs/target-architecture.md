@@ -159,8 +159,9 @@ clock and cannot be stepped. The controller holding authority submits command k 
 observation k, then gives the holder a bounded window (part of the step's period; in an unpaced
 owner-stepped run, a stated wait) before stepping; a later command is late, and the step repeats
 the holder's last command (`Held`), as the coil registers do. `headless/Host` gives the window
-(HOST-6, #30): `--command-window-ms`, at most half a paced step, and it steps as soon as command k
-arrives.
+(HOST-6, #30): `--command-window-ms`, at most half a paced step. An unpaced run steps as soon as
+command k arrives; a paced run still starts each step on Basilisk's clock, since the service holds
+every step to its wall-clock time.
 
 ### Lockstep run (SIL and tests, target)
 

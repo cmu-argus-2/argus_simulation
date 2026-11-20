@@ -101,8 +101,10 @@ and each is timed by when it arrived, so a long step never counts as a controlle
 
 - **`--step-driver host`** (default): the host steps. When a controller holds authority, the host
   waits up to `--command-window-ms` (default 50 ms of wall time, at most half a paced step) for its
-  command k before each step, and steps as soon as it arrives; without one the step holds the
-  last command (`Held`). With no holder the host steps without waiting. The host refuses every
+  command k before each step; without one the step holds the last command (`Held`). An
+  unpaced run steps as soon as the command arrives. A paced run still steps on Basilisk's clock:
+  the host may call the step early, but the service holds it to its wall-clock time
+  (`Argus.Basilisk/README.md` §5), so a fast controller never runs the simulation ahead. With no holder the host steps without waiting. The host refuses every
   controller session (`FAILED_PRECONDITION`) on a run whose `heartbeatTimeoutWallSeconds` is 0, or
   shorter than two steps (a paced step, or the command window), since a hung controller would
   otherwise keep its last command or a healthy one would be lost.

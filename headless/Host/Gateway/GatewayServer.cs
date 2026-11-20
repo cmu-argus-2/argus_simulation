@@ -265,7 +265,8 @@ namespace Argus.Simulation.Host
         public CancellationToken Stopping => _stopping.Token;
 
         // The step k of the last command the authority holder submitted and the gateway accepted, so
-        // an owner-stepped loop can step as soon as command k is in (Program).
+        // an owner-stepped loop can stop waiting once command k is in (Program); a paced step is still
+        // held to its wall-clock time by the service.
         public long SubmittedSequence { get; private set; } = -1;
 
         // Sends the gateway's observations and run ends to every session. Call once, before the
