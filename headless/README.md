@@ -121,7 +121,9 @@ dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --replay runs
   defaults to 1. The stream still decimates to `--stream-rate-hz`. After the last state the host
   stops the stream and exits 0.
 - **Checks:** it rejects a `schema_version` other than `argus-dataset/1`, a device kind that is
-  not registered, and a line that breaks the dataset README's reader checks, naming the file and
+  not registered, devices that do not make a valid `SimulationConfiguration` (for example a
+  sample period that is not a whole number of steps), a frame of a sensor the manifest does not
+  list, and a line that breaks the dataset README's reader checks, naming the file and
   line (exit 2 for a bad manifest, 1 for a bad line during the replay). A recording with
   `complete: false` replays up to its last full line, with a warning. Files it does not read,
   such as `commands.jsonl` or `authority.jsonl`, are ignored.

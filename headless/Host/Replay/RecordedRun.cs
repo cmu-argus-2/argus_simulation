@@ -17,13 +17,18 @@ namespace Argus.Simulation.Host
         public const string SchemaVersion = "argus-dataset/1";
         private const string UtcFormat = "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'";
 
+        // Every device the manifest lists, configured or not: a frame of any other sensor is refused.
+        private readonly HashSet<string> _declared;
+
         private RecordedRun(
             string directory,
             bool complete,
             string dynamicsBackend,
             ReferenceFrame earthFixedFrame,
-            SimulationConfiguration configuration)
+            SimulationConfiguration configuration,
+            HashSet<string> declared)
         {
+            _declared = declared;
             Directory = directory;
             Complete = complete;
             DynamicsBackend = dynamicsBackend;
@@ -66,17 +71,34 @@ namespace Argus.Simulation.Host
 
                 string runId = Text(manifest, "run_id");
                 JsonElement configuration = Field(manifest, "configuration");
-                SimulationConfiguration run = new SimulationConfiguration(
-                    runId,
-                    Utc(configuration, "epoch_utc"),
-                    Number(configuration, "fixed_step_s"),
-                    devices: Devices(Field(manifest, "devices")));
+                DateTimeOffset epochUtc = Utc(configuration, "epoch_utc");
+                double fixedStepSeconds = Number(configuration, "fixed_step_s");
+                HashSet<string> declared = new HashSet<string>(StringComparer.Ordinal);
+                DeviceConfiguration[] devices = Devices(Field(manifest, "devices"), declared);
+                SimulationConfiguration run = new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, devices: devices);
+                if (!run.IsValid)
+                {
+                    // Named as RunConfigurationFile names a bad device: the first one invalid on its own.
+                    foreach (DeviceConfiguration device in devices)
+                    {
+                        if (!new SimulationConfiguration(runId, epochUtc, fixedStepSeconds, devices: new[] { device }).IsValid)
+                        {
+                            throw new FormatException(
+                                $"device '{device.Definition.SensorId}' is not a valid {device.Kind} for a {fixedStepSeconds:R} s step: " +
+                                (device.FindProblem() ?? "its definition (sample period, mount, source or visibility) is not valid"));
+                        }
+                    }
+
+                    throw new FormatException("configuration (run_id, fixed_step_s and devices) is not a valid SimulationConfiguration");
+                }
+
                 return new RecordedRun(
                     directory,
                     Flag(manifest, "complete"),
                     Text(Field(manifest, "dynamics_backend"), "name"),
                     Enum<ReferenceFrame>(manifest, "earth_fixed_frame"),
-                    run);
+                    run,
+                    declared);
             }
             catch (Exception exception) when (exception is JsonException || exception is FormatException)
             {
@@ -125,6 +147,12 @@ namespace Argus.Simulation.Host
                     (string sensorId, long stateSequence) = Envelope(sensors);
                     if (!streamed.TryGetValue(sensorId, out DeviceConfiguration device))
                     {
+                        // A camera, or a listed sensor with no kind: the stream carries neither.
+                        if (!_declared.Contains(sensorId))
+                        {
+                            throw sensors.Error($"sensor '{sensorId}' is not a device the manifest lists");
+                        }
+
                         sensors.Take();
                         continue;
                     }
@@ -294,20 +322,26 @@ namespace Argus.Simulation.Host
                 payload);
         }
 
-        // The manifest's configured devices, in its order (sensors, then actuators). A sensor with
-        // no kind, such as the ideal body-rate sensor, has no configuration to rebuild.
-        private static DeviceConfiguration[] Devices(JsonElement devices)
+        // The manifest's configured devices, in its order (sensors, then actuators), adding every
+        // listed device ID to declared. A sensor with no kind, such as the ideal body-rate sensor,
+        // has no configuration to rebuild.
+        private static DeviceConfiguration[] Devices(JsonElement devices, HashSet<string> declared)
         {
             List<DeviceConfiguration> configured = new List<DeviceConfiguration>();
             foreach (JsonElement device in Elements(devices, "devices"))
             {
+                string deviceId = Text(device, "device_id");
+                if (!declared.Add(deviceId))
+                {
+                    throw new FormatException($"device '{deviceId}' is listed twice");
+                }
+
                 JsonElement kind = Field(device, "kind");
                 if (IsNull(kind))
                 {
                     continue;
                 }
 
-                string deviceId = Text(device, "device_id");
                 string kindName = kind.GetString();
                 if (DeviceKinds.Find(kindName) == null)
                 {
