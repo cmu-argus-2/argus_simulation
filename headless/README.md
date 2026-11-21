@@ -112,7 +112,8 @@ dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --replay runs
   `StateStreamPublisher` as a live run. The backend sensors' frames also rebuild each state's
   `backend_samples`. A replay is identical to what the live run streamed, and the same every
   time; only `run_generation` differs (`RunReplayTests`). Every response carries
-  `source: RUN_SOURCE_REPLAY`, which a live run sends as `RUN_SOURCE_LIVE`.
+  `source: RUN_SOURCE_REPLAY`, which a live run sends as `RUN_SOURCE_LIVE`, and Unity's dashboard
+  shows **REPLAYING RECORDED RUN** while it follows a replay.
 - **What it does not serve:** camera frames and images (the live stream carries none either;
   nothing is re-rendered) and `commands.jsonl` (the stream has no command log). No gateway,
   controller or recorder runs.

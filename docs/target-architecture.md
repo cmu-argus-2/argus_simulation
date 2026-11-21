@@ -283,7 +283,8 @@ it unchanged.
 - No Basilisk service, gateway, controller or recorder runs. The host's stopwatch paces the
   replay at `--replay-speed` times the recorded simulation time (D2).
 - Each replay is a new `run_generation` with the recorded run ID, and every response carries
-  `source = RUN_SOURCE_REPLAY`, so the dashboard can label it (a Unity follow-up).
+  `source = RUN_SOURCE_REPLAY`. `StateStreamClient.IsReplay` carries it, and the dashboard
+  shows **REPLAYING RECORDED RUN** in place of **FOLLOWING HOST**.
 - Applied commands replay inside each state; `commands.jsonl` stays in the dataset, since the
   stream has no command log. Camera frames and images are not served, as in a live run, and
   nothing is re-rendered.

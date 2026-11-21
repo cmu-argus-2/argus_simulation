@@ -64,6 +64,10 @@ namespace Argus.Simulation.Unity
         // The generation of the last published pair, or null before the first.
         public string RunGeneration { get; private set; }
 
+        // Whether that generation is the host replaying a recorded run (HOST-7), not a live run. One
+        // generation has one source, so it changes only with RunGeneration.
+        public bool IsReplay { get; private set; }
+
         private void OnEnable()
         {
             // The host keeps running while Unity is unfocused, so Unity keeps following it.
@@ -98,6 +102,7 @@ namespace Argus.Simulation.Unity
             if (received.Pair.RunGeneration != RunGeneration)
             {
                 RunGeneration = received.Pair.RunGeneration;
+                IsReplay = received.Pair.IsReplay;
                 _lastSequence = -1;
                 HistoryReset?.Invoke();
             }
