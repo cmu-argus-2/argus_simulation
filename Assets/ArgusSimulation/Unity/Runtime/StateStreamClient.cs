@@ -23,10 +23,11 @@ namespace Argus.Simulation.Unity
     // only the latest received pair, and each frame publishes it on the main thread, so a frame that
     // falls behind skips pairs rather than catching up in a burst. In order: StateProduced with each
     // SimulationState (ISimulationStateSource, which SimulationRunner follows) and OutputProduced
-    // with its latest-per-sensor SensorOutputSet. When the host stops or restarts, the client reconnects and reports Status
+    // with its latest-per-sensor SensorOutputSet (ISensorOutputSource, which SimulationRunner pairs
+    // with the state). When the host stops or restarts, the client reconnects and reports Status
     // instead of throwing. The endpoint is -stream-endpoint, then $ARGUS_STREAM_ENDPOINT, then the
     // Inspector value (Argus.Contracts/README.md Endpoints).
-    public sealed class StateStreamClient : MonoBehaviour, ISimulationStateSource
+    public sealed class StateStreamClient : MonoBehaviour, ISimulationStateSource, ISensorOutputSource
     {
         public const string EndpointCommandLineOption = "-stream-endpoint";
         public const string EndpointVariable = "ARGUS_STREAM_ENDPOINT";

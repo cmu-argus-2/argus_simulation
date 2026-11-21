@@ -11,36 +11,41 @@
     "argumentOfPeriapsisDegrees": 0.0,
     "trueAnomalyDegrees": 0.0
   },
-  "spacecraft": {
-    "massKilograms": 2.6,
-    "inertiaBodyKilogramSquareMeters": [
-      [
-        0.01906,
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.01931,
-        0.0
-      ],
-      [
-        0.0,
-        0.0,
-        0.00824
-      ]
-    ],
-    "initialBodyToJ2000": {
+  "initialAttitude": {
+    "bodyToJ2000": {
       "x": 0.0,
       "y": 0.0,
       "z": 0.0,
       "w": 1.0
     },
-    "initialAngularVelocityBodyRadiansPerSecond": [
+    "angularVelocityBodyRadiansPerSecond": [
       0.0,
       0.3490658503988659,
       0.0
     ]
   },
-  "devices": []
+  "spacecraftProfile": {
+    "profileId": "ref-2u",
+    "body": {
+      "massKilograms": 2.6,
+      "inertiaBodyKilogramSquareMeters": [
+        [
+          0.01906,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.01931,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.00824
+        ]
+      ]
+    },
+    "devices": []
+  }
 }
