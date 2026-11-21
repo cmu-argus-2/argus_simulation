@@ -8,7 +8,8 @@ namespace Argus.Simulation.Host
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine, recording
     // dataset v1 with Core RunRecorder when --record is given (D6), and streaming decimated states
     // and sensor frames to Unity through Streaming/StateStreamServer (CON-1).
-    // TODO(D7, G1): serve the gateway to HIL and external controllers through Gateway/GatewayServer.
+    // TODO(D7, G1): HOST-6 serves the gateway's controller interface (IControllerGateway, CORE-9) to HIL and
+    // external controllers through Gateway/GatewayServer.
     public static class Program
     {
         public static int Main(string[] args)
@@ -20,11 +21,12 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
-            // A bad run file is bad input, rejected before the host connects to the service.
-            SimulationConfiguration configuration;
+            // A bad run file or spacecraft profile is bad input, rejected before the host connects
+            // to the service.
+            RunConfigurationFile.LoadedRun run;
             try
             {
-                configuration = RunConfigurationFile.Load(
+                run = RunConfigurationFile.Read(
                     options.RunConfigurationPath,
                     "host-" + Guid.NewGuid().ToString("N"));
             }
@@ -34,9 +36,16 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
+            string physicalActuatorProblem = PhysicalActuatorProblem(run.Configuration, options.RealTimeFactor);
+            if (physicalActuatorProblem != null)
+            {
+                Console.Error.WriteLine($"Run configuration {options.RunConfigurationPath}: {physicalActuatorProblem}");
+                return 2;
+            }
+
             // A recording that cannot work is also bad input, rejected before connecting: an ID the
             // recorder cannot turn into a directory name, or a root it cannot write.
-            using RunRecorder recorder = options.RecordDirectory == null ? null : OpenRecorder(options, configuration);
+            using RunRecorder recorder = options.RecordDirectory == null ? null : OpenRecorder(options, run);
             if (options.RecordDirectory != null && recorder == null)
             {
                 return 2;
@@ -51,7 +60,7 @@ namespace Argus.Simulation.Host
 
             try
             {
-                Run(options, configuration, recorder, cancellation.Token);
+                Run(options, run, recorder, cancellation.Token);
                 return 0;
             }
             catch (Exception exception) when (cancellation.IsCancellationRequested)
@@ -68,15 +77,51 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static RunRecorder OpenRecorder(HostOptions options, SimulationConfiguration configuration)
+        // Why a run that lifts the physical-actuator inhibit can't run at this pace, or null (CORE-9).
+        // HIL runs are paced by Basilisk (D2): an unpaced run would step hardware as fast as the host
+        // can. The gateway handles a controller's calls between steps, so a healthy holder is heard
+        // about once per paced step, and the failsafe acts at step starts: the timeout must cover two
+        // steps, so a healthy holder is not lost by a step's own length (a pacing overrun can still
+        // stretch one) and a silent one's last command runs for at most the timeout plus one step.
+        internal static string PhysicalActuatorProblem(SimulationConfiguration configuration, double realTimeFactor)
         {
+            if (!configuration.PhysicalActuators.Enabled)
+            {
+                return null;
+            }
+
+            if (realTimeFactor <= 0.0)
+            {
+                return "physicalActuators: needs a paced run (--real-time-factor > 0)";
+            }
+
+            double stepWallSeconds = configuration.FixedStepSeconds / realTimeFactor;
+            if (stepWallSeconds > configuration.HeartbeatTimeoutWallSeconds / 2.0)
+            {
+                return "physicalActuators: a paced step lasts " +
+                    $"{stepWallSeconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture)} s of wall time " +
+                    "(fixedStepSeconds / --real-time-factor), more than half of heartbeatTimeoutWallSeconds " +
+                    $"({configuration.HeartbeatTimeoutWallSeconds.ToString("R", System.Globalization.CultureInfo.InvariantCulture)} s): " +
+                    "the gateway hears a controller once per step";
+            }
+
+            return null;
+        }
+
+        private static RunRecorder OpenRecorder(HostOptions options, RunConfigurationFile.LoadedRun run)
+        {
+            SimulationConfiguration configuration = run.Configuration;
             for (int index = 0; index < configuration.Devices.Count; index++)
             {
                 string deviceId = configuration.Devices[index].Definition.SensorId;
                 if (!RunRecorder.IsPathSafeId(deviceId))
                 {
+                    // Named as the parser names a device: by its profile file, or inside the run file.
+                    string device = run.ProfileFile == null
+                        ? $"spacecraftProfile.devices[{index}]"
+                        : $"spacecraft profile {run.ProfileFile}: devices[{index}]";
                     Console.Error.WriteLine(
-                        $"Run configuration {options.RunConfigurationPath}: devices[{index}].deviceId: '{deviceId}' cannot be " +
+                        $"Run configuration {options.RunConfigurationPath}: {device}.deviceId: '{deviceId}' cannot be " +
                         "recorded; --record needs [a-z0-9][a-z0-9._-]*, not ending in '.' (Core/Recording/README.md)");
                     return null;
                 }
@@ -93,7 +138,7 @@ namespace Argus.Simulation.Host
             }
         }
 
-        private static void Run(HostOptions options, SimulationConfiguration configuration, RunRecorder recorder, CancellationToken cancellation)
+        private static void Run(HostOptions options, RunConfigurationFile.LoadedRun run, RunRecorder recorder, CancellationToken cancellation)
         {
             // Bound before the service is configured, so a busy port fails the run before it starts.
             StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamPeriod)
@@ -101,7 +146,7 @@ namespace Argus.Simulation.Host
             bool ranToEnd = false;
             try
             {
-                Run(options, configuration, recorder, stream, cancellation);
+                Run(options, run, recorder, stream, cancellation);
                 ranToEnd = true;
             }
             finally
@@ -120,11 +165,12 @@ namespace Argus.Simulation.Host
 
         private static void Run(
             HostOptions options,
-            SimulationConfiguration configuration,
+            RunConfigurationFile.LoadedRun run,
             RunRecorder recorder,
             StateStreamServer stream,
             CancellationToken cancellation)
         {
+            SimulationConfiguration configuration = run.Configuration;
             using BasiliskEngine engine = new BasiliskEngine(options.BasiliskAddress, options.RealTimeFactor, cancellation);
             SimulationGateway gateway = new SimulationGateway(engine);
 
@@ -140,17 +186,19 @@ namespace Argus.Simulation.Host
 
             // The stream only replaces its latest pair on this thread, so a slow client never delays
             // a step.
-            gateway.RunStarted += (run, sensors) => stream.Publisher.BeginGeneration(run);
+            gateway.RunStarted += (started, sensors) => stream.Publisher.BeginGeneration(started);
             gateway.StateProduced += stream.Publisher.PublishState;
             gateway.SensorOutputProduced += stream.Publisher.PublishSensorOutput;
 
             // The recorder only queues on this thread, so a slow disk never delays a step.
             if (recorder != null)
             {
-                gateway.RunStarted += (run, sensors) => recorder.BeginRun(run, sensors, engine.BasiliskVersion);
+                gateway.RunStarted += (started, sensors) => recorder.BeginRun(
+                    started, sensors, engine.BasiliskVersion, spacecraftProfileId: run.ProfileId, spacecraftProfilePath: run.ProfilePath);
                 gateway.StateProduced += recorder.RecordState;
                 gateway.SensorOutputProduced += recorder.RecordSensorOutput;
                 gateway.CommandLogged += recorder.RecordCommand;
+                gateway.AuthorityLogged += recorder.RecordAuthority;
                 gateway.RunTerminated += recorder.RecordTermination;
             }
 
@@ -197,7 +245,10 @@ namespace Argus.Simulation.Host
                     }
 
                     cancellation.ThrowIfCancellationRequested();
-                    // TODO(G1): no controller is attached yet, so every command is zero.
+                    // TODO(G1): no controller attaches until the gateway server (HOST-6) exists, so every step
+                    // is idle. Once one can, publish observation k, give the holder a bounded window
+                    // for command k (paced: part of the step's period; unpaced: a stated wait), then
+                    // step: a command that arrives later is late and the step holds (CORE-9).
                     observation = gateway.Step();
                 }
             }

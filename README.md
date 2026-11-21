@@ -75,7 +75,9 @@ dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 
 
 It writes dataset v1 to `runs-out/<run_id>_0/`: `manifest.json` (the configuration and its
 devices), then `states.jsonl` (truth), `sensors.jsonl` (every sensor frame) and
-`commands.jsonl` (every command), one JSON object per line. The fields are described in
+`commands.jsonl` (every command, applied, clamped, held, failsafe or rejected) and
+`authority.jsonl` (every claim, refusal, release and loss of actuator authority), one JSON object
+per line. The fields are described in
 [Core/Recording/README.md](Assets/ArgusSimulation/Core/Recording/README.md). See
 [headless/README.md](headless/README.md) for the other options, the exit codes and the run-file
 format.
