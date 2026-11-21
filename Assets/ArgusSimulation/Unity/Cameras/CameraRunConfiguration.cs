@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using Argus.Simulation.Core;
 using UnityEngine;
 
@@ -8,6 +9,8 @@ namespace Argus.Simulation.Unity
 {
     // Reads the camera subset of the same run file supplied to the headless host. The stream does
     // not carry run configuration, so a different host run must explicitly select the same file.
+    // The devices are in the spacecraft profile the run file names (HOST-9): a path relative to the
+    // run file, or the profile object itself, as the host reads it.
     internal static class CameraRunConfiguration
     {
         public static string ResolvePath(string inspectorPath)
@@ -21,9 +24,8 @@ namespace Argus.Simulation.Unity
 
         public static Dictionary<string, DeviceConfiguration> Load(string path)
         {
-            RunFile run = JsonUtility.FromJson<RunFile>(File.ReadAllText(path));
             var devices = new Dictionary<string, DeviceConfiguration>(StringComparer.Ordinal);
-            foreach (DeviceFile device in run.devices ?? Array.Empty<DeviceFile>())
+            foreach (DeviceFile device in ProfileDevices(path))
             {
                 if (device.kind != CameraKind.KindName) continue;
                 Parameters p = device.parameters ?? throw new InvalidDataException("Camera parameters are missing: " + device.deviceId);
@@ -48,11 +50,39 @@ namespace Argus.Simulation.Unity
                 if (!configured.IsValid) throw new InvalidDataException("Invalid camera " + device.deviceId + ": " + configured.FindProblem());
                 devices.Add(device.deviceId, configured);
             }
+            if (devices.Count == 0)
+                throw new InvalidDataException("The spacecraft profile of run file " + path + " has no camera devices.");
             return devices;
         }
 
+        // The devices of the profile the run file's spacecraftProfile names. JsonUtility can't read a
+        // field that is either a string or an object, so the field's JSON type picks the shape.
+        private static DeviceFile[] ProfileDevices(string runPath)
+        {
+            string text = File.ReadAllText(runPath);
+            Match field = Regex.Match(text, "\"spacecraftProfile\"\\s*:\\s*([\"{])");
+            if (!field.Success)
+                throw new InvalidDataException("Run file " + runPath + " has no spacecraftProfile path or object.");
+            ProfileFile profile;
+            if (field.Groups[1].Value == "{")
+            {
+                profile = JsonUtility.FromJson<RunFileWithProfile>(text).spacecraftProfile;
+            }
+            else
+            {
+                string profilePath = JsonUtility.FromJson<RunFileWithPath>(text).spacecraftProfile;
+                if (string.IsNullOrWhiteSpace(profilePath))
+                    throw new InvalidDataException("Run file " + runPath + " has a blank spacecraftProfile.");
+                string profileFile = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runPath) ?? "", profilePath));
+                profile = JsonUtility.FromJson<ProfileFile>(File.ReadAllText(profileFile));
+            }
+            return profile?.devices ?? Array.Empty<DeviceFile>();
+        }
+
 #pragma warning disable CS0649 // JsonUtility populates these run-file fields.
-        [Serializable] private sealed class RunFile { public DeviceFile[] devices; }
+        [Serializable] private sealed class RunFileWithPath { public string spacecraftProfile; }
+        [Serializable] private sealed class RunFileWithProfile { public ProfileFile spacecraftProfile; }
+        [Serializable] private sealed class ProfileFile { public DeviceFile[] devices; }
         [Serializable] private sealed class DeviceFile
         {
             public string deviceId, kind, modelName, frameId;

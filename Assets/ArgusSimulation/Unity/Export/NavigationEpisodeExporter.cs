@@ -189,7 +189,10 @@ namespace Argus.Simulation.Unity
             int captureNumber = _captureNumber++;
             LastCaptureError = string.Empty;
             _releasePose = _pose != null && !_pose.IsHeld;
-            _pose?.HoldCurrent(state);
+            // A pose this capture holds snaps to the state its metadata reports: the interpolated pose
+            // lags it by up to one stream interval. A hold that already existed keeps its own state.
+            if (_releasePose) _pose.Hold(state);
+            else _pose?.HoldCurrent(state);
             cameraRig.GetComponent<NadirTilePriority>()?.RestoreViewsForCapture();
             _captureCancellation = new CancellationTokenSource();
             if (_renderer == null)

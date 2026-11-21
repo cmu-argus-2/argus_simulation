@@ -451,6 +451,40 @@ namespace Argus.Simulation.Tests
             finally { File.Delete(file); }
         }
 
+        // The interpolated pose lags the latest state; a capture that takes the hold snaps to the state
+        // its metadata reports, so the rendered pose and the truth fields agree.
+        [UnityTest]
+        public IEnumerator ACaptureRendersTheStateItReportsNotTheInterpolatedPose()
+        {
+            var source = _simulation.AddComponent<TestStateSource>();
+            var runner = _simulation.AddComponent<SimulationRunner>();
+            runner.Configure(source);
+            var pose = _rig.gameObject.AddComponent<CesiumSpacecraftPoseDriver>();
+            pose.Configure(runner, _rig.GetComponent<CesiumGlobeAnchor>());
+            source.Publish(0);
+            yield return new WaitForSecondsRealtime(0.2f);
+            SimulationState latest = OrbitState(15, 550000, 10);
+            source.Publish(latest);
+            var exporter = _simulation.AddComponent<NavigationEpisodeExporter>();
+            typeof(NavigationEpisodeExporter).GetField("episodeName", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(exporter, "unity4-snap-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                // Before the driver's next Update, the shown pose is still state 0's.
+                Assert.That(exporter.RequestCapture(), Is.True);
+                for (int frame = 0; frame < 900 && exporter.IsCaptureInProgress; frame++) yield return null;
+                Assert.That(exporter.LastCaptureStatus, Is.EqualTo("SAVED"), exporter.LastCaptureError);
+                Assert.That(pose.IsHeld, Is.False);
+                foreach (string json in File.ReadAllLines(Path.Combine(exporter.EpisodeDirectory, "navigation_metadata.jsonl")))
+                {
+                    SavedCapture row = JsonUtility.FromJson<SavedCapture>(json);
+                    Assert.That(row.sequence, Is.EqualTo(10));
+                    AssertVector(row.rendered_position_ecef_m, latest.Spacecraft.PositionEcefMeters, 0.01);
+                }
+            }
+            finally { if (!string.IsNullOrEmpty(exporter.EpisodeDirectory)) Directory.Delete(exporter.EpisodeDirectory, true); }
+        }
+
         private static int ReadPngInteger(byte[] png, int start) =>
             (png[start] << 24) | (png[start + 1] << 16) | (png[start + 2] << 8) | png[start + 3];
 

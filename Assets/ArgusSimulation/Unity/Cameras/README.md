@@ -67,9 +67,12 @@ lighting is used and no Sun model is approximated.
 ## Runtime ownership and cancellation
 
 `SimulationRunner` follows the headless host. Capture never pauses or gates its state stream.
-The exporter uses `CesiumSpacecraftPoseDriver.HoldCurrent` while snapshotting the displayed
-spacecraft and cameras. A hold that already existed is preserved after capture; otherwise the
-exporter releases its hold on completion, failure, disable or cancellation. Requests and host
+The exporter holds the spacecraft while snapshotting it and its cameras. When the pose isn't
+already held, it snaps to the runner's last state with `CesiumSpacecraftPoseDriver.Hold`, so the
+image is rendered at the state its metadata reports rather than the interpolated pose one stream
+interval behind; mount edits on the camera transforms survive. A hold that already existed is kept
+(`HoldCurrent`) and preserved after capture; otherwise the exporter releases its hold on
+completion, failure, disable or cancellation. Requests and host
 truth are frozen together before yielding; incoming host states do not rewrite active metadata.
 Host-to-Unity Core render transport remains UNITY-10 (#64).
 
@@ -85,7 +88,9 @@ There is one tile-wait/render/readback path. Readback is synchronous `Camera.Ren
 
 ## Camera run configuration
 
-The rig reads the camera subset of `headless/Host/runs/p0-default.json` by default. Supply the
+The rig reads the cameras of the spacecraft profile that `headless/Host/runs/p0-default.json`
+names (`spacecraftProfile`, a path relative to the run file or the profile inline; HOST-9) by
+default, and fails when that profile has no camera devices. Supply the
 **same file as the host's `--run-config`** through Unity's `--run-config <absolute-path>`,
 `ARGUS_RUN_CONFIG`, or the rig's `runConfigurationFile` Inspector field. The stream does not
 transport the active run configuration; selecting a custom host file requires selecting it in
