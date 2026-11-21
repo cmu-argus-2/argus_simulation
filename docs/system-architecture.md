@@ -146,6 +146,11 @@ Only one controller has actuator authority during a run.
 Recorded states, sensor frames, commands, and images are played back without an
 active controller. Unity uses the same state contract as a live run.
 
+`headless/Host --replay` plays a dataset v1 run over the state stream (HOST-7,
+[target-architecture.md](target-architecture.md) §4): the states, with their applied
+commands, and the non-camera sensor frames, tagged `RUN_SOURCE_REPLAY`, which the dashboard
+shows as **REPLAYING RECORDED RUN**. Camera images are not served yet.
+
 ## 6. Core contracts
 
 The first implementation lives in `Assets/ArgusSimulation/Core` and has no Unity

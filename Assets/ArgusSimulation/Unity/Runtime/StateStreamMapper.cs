@@ -7,18 +7,24 @@ using PbStream = Argus.Contracts.Stream.V1;
 
 namespace Argus.Simulation.Unity
 {
-    // One received state-stream pair in Core types (CON-1): its run generation, the host's state and
-    // its latest-per-sensor projection.
+    // One received state-stream pair in Core types (CON-1): its run generation, whether the host is
+    // replaying a recording, the host's state and its latest-per-sensor projection.
     public readonly struct StreamPair
     {
-        public StreamPair(string runGeneration, SimulationState state, SensorOutputSet output)
+        public StreamPair(string runGeneration, SimulationState state, SensorOutputSet output, bool isReplay = false)
         {
             RunGeneration = runGeneration;
             State = state;
             Output = output;
+            IsReplay = isReplay;
         }
 
         public string RunGeneration { get; }
+
+        // True when the host plays back a recorded run (source RUN_SOURCE_REPLAY, HOST-7); a live
+        // run, or a host that predates the field, is false.
+        public bool IsReplay { get; }
+
         public SimulationState State { get; }
         public SensorOutputSet Output { get; }
     }
@@ -63,7 +69,7 @@ namespace Argus.Simulation.Unity
                 throw Invalid("sensor_output", "has an invalid frame, or one captured after the state");
             }
 
-            return new StreamPair(response.RunGeneration, state, set);
+            return new StreamPair(response.RunGeneration, state, set, response.Source == PbStream.RunSource.Replay);
         }
 
         private static SimulationState ToCore(PbSim.SimulationState message, IReadOnlyDictionary<string, IBackendSensorKind> kinds)

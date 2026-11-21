@@ -160,7 +160,12 @@ is distinct from the original per-step SensorManager output used by the recorder
   Unity clears interpolation on a new subscription or changed generation. Any already
   in-flight old response remains labelled with its old generation and must not be mixed
   with new-generation state. Cancel old readers and discard their callbacks after reconnect.
-  No historical replay; on stop, finish active streams.
+  On stop, finish active streams.
+- `source` says where the generation's run comes from: `RUN_SOURCE_LIVE` for a run the host is
+  stepping, `RUN_SOURCE_REPLAY` for a recorded run it plays back (`headless/Host --replay`,
+  HOST-7). A replay follows every rule above, as a new generation with the recorded run ID, so a
+  client needs nothing else to follow it. `RUN_SOURCE_UNSPECIFIED` comes only from a host that
+  predates the field; treat it as live.
 - The recorder and controllers retain their full-rate paths. Unpaced runs can have large
   simulation-time gaps and are not guaranteed smooth live visualization.
 

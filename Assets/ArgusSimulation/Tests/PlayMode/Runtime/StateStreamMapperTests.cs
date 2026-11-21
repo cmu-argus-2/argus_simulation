@@ -20,6 +20,10 @@ namespace Argus.Simulation.Tests
             StreamPair pair = StateStreamMapper.ToCore(Response());
 
             Assert.That(pair.RunGeneration, Is.EqualTo("generation-a"));
+            Assert.That(pair.IsReplay, Is.False);
+            PbStream.SubscribeResponse replay = Response();
+            replay.Source = PbStream.RunSource.Replay;
+            Assert.That(StateStreamMapper.ToCore(replay).IsReplay, Is.True);
             SimulationState state = pair.State;
             Assert.That(state.Spacecraft.Sequence, Is.EqualTo(12));
             Assert.That(state.Spacecraft.EarthFixedFrame, Is.EqualTo(ReferenceFrame.Itrf93));

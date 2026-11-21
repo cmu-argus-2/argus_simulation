@@ -7,7 +7,8 @@ namespace Argus.Simulation.Host
 {
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine, recording
     // dataset v1 with Core RunRecorder when --record is given (D6), and streaming decimated states
-    // and sensor frames to Unity through Streaming/StateStreamServer (CON-1).
+    // and sensor frames to Unity through Streaming/StateStreamServer (CON-1). With --replay it
+    // plays a recorded run over the same stream instead, with no Basilisk service (HOST-7).
     // TODO(D7, G1): HOST-6 serves the gateway's controller interface (IControllerGateway, CORE-9) to HIL and
     // external controllers through Gateway/GatewayServer.
     public static class Program
@@ -19,6 +20,11 @@ namespace Argus.Simulation.Host
                 Console.Error.WriteLine(error);
                 Console.Error.WriteLine(HostOptions.Usage);
                 return 2;
+            }
+
+            if (options.ReplayDirectory != null)
+            {
+                return Replay(options);
             }
 
             // A bad run file or spacecraft profile is bad input, rejected before the host connects
@@ -68,6 +74,87 @@ namespace Argus.Simulation.Host
                 // Cancellation reaches us wrapped (for example an RpcException inside an
                 // InvalidOperationException), so the token, not the exception type, decides.
                 Console.Error.WriteLine($"Cancelled: {exception.Message}");
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception.Message);
+                return 1;
+            }
+        }
+
+        // Plays one recorded run over the state stream, then stops the stream and exits as a live run
+        // does at its duration.
+        private static int Replay(HostOptions options)
+        {
+            // A directory that is not a dataset v1 run is bad input, rejected before the stream binds.
+            RecordedRun run;
+            try
+            {
+                run = RecordedRun.Open(options.ReplayDirectory);
+            }
+            catch (Exception exception) when (exception is InvalidDataException || exception is IOException || exception is UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"--replay: {exception.Message}");
+                return 2;
+            }
+
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
+            Console.CancelKeyPress += (sender, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                cancellation.Cancel();
+            };
+
+            try
+            {
+                StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamPeriod)
+                    .GetAwaiter().GetResult();
+                bool ranToEnd = false;
+                try
+                {
+                    Console.WriteLine(
+                        $"Replaying run {run.RunId} from {Path.GetFullPath(run.Directory)} at {options.ReplaySpeed:R}x, " +
+                        $"{run.Configuration.Devices.Count} devices, state stream on {stream.Endpoint} at {options.StreamRateHz:R} Hz " +
+                        $"(every {options.StreamPeriod.TotalMilliseconds:R} ms)");
+                    if (!run.Complete)
+                    {
+                        Console.Error.WriteLine("The recording is incomplete (manifest complete: false); replaying it up to its last full line.");
+                    }
+
+                    double nextReport = double.NegativeInfinity;
+                    long states = RunReplay.Play(run, stream.Publisher, options.ReplaySpeed, cancellation.Token, state =>
+                    {
+                        // About once per recorded second, as a live run reports.
+                        SpacecraftState spacecraft = state.Spacecraft;
+                        if (spacecraft.SimulationTimeSeconds >= nextReport)
+                        {
+                            nextReport = spacecraft.SimulationTimeSeconds + 1.0;
+                            Console.WriteLine(
+                                $"t={spacecraft.SimulationTimeSeconds,8:F1} s  seq={spacecraft.Sequence,6}  " +
+                                $"|r|={spacecraft.PositionEcefMeters.Magnitude / 1000.0,9:F3} km  replay");
+                        }
+                    });
+                    ranToEnd = true;
+                    Console.WriteLine($"Replayed {states} states of run {run.RunId}");
+                }
+                finally
+                {
+                    try
+                    {
+                        stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    }
+                    catch (Exception exception) when (!ranToEnd)
+                    {
+                        Console.Error.WriteLine($"Stopping the state stream also failed: {exception.Message}");
+                    }
+                }
+
+                return 0;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                Console.Error.WriteLine("Cancelled (Ctrl+C)");
                 return 0;
             }
             catch (Exception exception)

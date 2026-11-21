@@ -110,7 +110,7 @@ tiles. It is not run data and sits outside D6.
 | # | Decision | Why | Consequence |
 |---|---|---|---|
 | D1 | The core is headless: `Argus.Simulation.Core` never references Unity. Unity is a client and a renderer. | Runs, SIL and HIL must work without the GUI. | The Core asmdef sets `noEngineReferences`, and `headless/` builds Core with plain `dotnet`. |
-| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` is a follower (UNITY-6): Unity never steps or paces a run. Replaying a recorded Argus run for review stays a separate planned mode ([system-architecture.md §5.3](system-architecture.md)). Lockstep SIL runs use Basilisk too, unpaced (DATA-10, #75; §4). Unity as a controller (UNITY-11) submits commands in owner-stepped runs; it never steps one (CORE-9). |
+| D2 | Basilisk is the real dynamics backend and owns simulation time in every Basilisk run. In real-time and HIL runs it also owns pacing (`clockSynch`). | One authoritative clock. Live runs are never driven from an offline Basilisk recording. | Argus follows Basilisk's timestamps, and `SimulationRunner` is a follower (UNITY-6): Unity never steps or paces a run. Replaying a recorded Argus run for review is a separate mode: `headless/Host --replay` plays a dataset over the state stream with its own wall clock and no Basilisk service (HOST-7, §4, [system-architecture.md §5.3](system-architecture.md)). Lockstep SIL runs use Basilisk too, unpaced (DATA-10, #75; §4). Unity as a controller (UNITY-11) submits commands in owner-stepped runs; it never steps one (CORE-9). |
 | D3 | SPICE runs inside Basilisk (`spiceInterface`). There is no separate SPICE service. | Basilisk and SPICE always run together, and a second SPICE source could drift from the one the dynamics used. | One pinned NAIF kernel set, loaded only by Basilisk. Tests use fixed environment tables instead of a second SPICE. One exception (HOST-8, #32): the offline checker `Argus.Basilisk/scripts/check_reference_runs.py` and its tests read the same pinned, SHA-checked set through spiceypy to verify Basilisk's output; the service, Core and the host never load a second SPICE. |
 | D4 | Environment data travels inside `SimulationState` as `EnvironmentState` (Sun vector, J2000 ↔ ITRF93 orientation, eclipse). There is no separate environment service. | It is per-step data produced together with the dynamics. | Lighting, camera models and the recorder read it through the state broadcast. |
 | D5 | Cameras are Core sensor models. Unity only renders, through `IImageRenderer`. | Core owns exposure timing, pose and calibration, so camera frames share the run's timestamps. | Dashboard previews stay live on separate cameras; request rendering preserves their Cesium tile selection except for one-frame readiness probes (alternating with live-view frames by default) and applies capture lighting only during synchronous render. A run that needs Unity-rendered images needs Unity with a GPU (batch mode is fine, `-nographics` is not). Other runs use another image source or mark cameras `Unavailable`; they never return black images. The camera frame is OpenCV's (+x image right, +y image down, +z out of the lens; pixel (0, 0) is the centre of the top-left pixel), as in the Argus flight and GNC code, so the DATA-6 mounts are used unchanged (CORE-6); the renderer converts to its own axes. |
@@ -272,6 +272,25 @@ ground-truth sensors) to the recorder. The state stream takes only the state and
    the CubeSat at the captured state while its tiles load, so the images match the exported
    state.
 
+### Replay of a recorded run (HOST-7)
+
+Decided on #31: the host replays the recording over `argus/stream/v1`, and Unity never reads
+datasets. `headless/Host --replay <run dir>` reads one dataset v1 run directory and feeds each
+recorded state and its step's non-camera frames to `StateStreamPublisher`, in place of the
+gateway's events, so a replayed pair is built by the same code as a live one and Unity follows
+it unchanged.
+
+- No Basilisk service, gateway, controller or recorder runs. The host's stopwatch paces the
+  replay at `--replay-speed` times the recorded simulation time (D2).
+- Each replay is a new `run_generation` with the recorded run ID, and every response carries
+  `source = RUN_SOURCE_REPLAY`. `StateStreamClient.IsReplay` carries it, and the dashboard
+  shows **REPLAYING RECORDED RUN** in place of **FOLLOWING HOST**.
+- Applied commands replay inside each state; `commands.jsonl` stays in the dataset, since the
+  stream has no command log. Camera frames and images are not served, as in a live run, and
+  nothing is re-rendered.
+- Two replays of one run publish identical pairs, equal to what the live run streamed apart from
+  the generation (`RunReplayTests`).
+
 ## 5. Contract changes needed
 
 | Contract | File | Change | For | Status |
@@ -322,7 +341,7 @@ SPICE, eclipse, the P0 sensors with their seeded noise, ClockSynch pacing (BSK-7
 `ideal_body_torque` and `magnetic_torquer` effectors (BSK-8, #21) are built, and the Basilisk path
 is verified with the full P0 scenario, HOST-5 #29); camera rendering on request (UNITY-4, #57); the upcoming sensor models (GNSS, fine Sun sensor, star tracker, power,
 thermal, radio, radiation: placeholders only, Basilisk or Argus source still open);
-replay of recorded runs; the gateway server for external controllers (HOST-6 #30), over the
+camera frames and images in a replay (HOST-7 serves states and non-camera frames); the gateway server for external controllers (HOST-6 #30), over the
 `argus/gateway/v1` schema (CON-3 #35).
 
 The Foundation tileset uses the project-owned `ArgusFourOverlayTileset` material,

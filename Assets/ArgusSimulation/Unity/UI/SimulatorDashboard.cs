@@ -727,6 +727,7 @@ namespace Argus.Simulation.Unity
             _streamText.text =
                 $"{_streamClient.Endpoint}   {_streamClient.Status.ToString().ToUpperInvariant()}" +
                 (generation == null ? "" : $"   run {generation.Substring(0, Math.Min(8, generation.Length))}") +
+                (generation != null && _streamClient.IsReplay ? "   REPLAY" : "") +
                 (_runner != null && _runner.HasState ? $"   ×{_runner.SimulationRate:0.#} real time" : "") +
                 (_streamClient.StatusMessage.Length > 0 ? "\n" + _streamClient.StatusMessage : "");
 
@@ -734,6 +735,10 @@ namespace Argus.Simulation.Unity
             {
                 case StateStreamStatus.Streaming when _nadirPriority != null && _nadirPriority.IsWarmingUp:
                     SetStatus($"● LOADING NADIR {_nadirPriority.WarmUpProgress:0}%", WaitColor);
+                    break;
+                case StateStreamStatus.Streaming when _streamClient.IsReplay:
+                    // The host plays back a recording (--replay, HOST-7): no live run, no controller.
+                    SetStatus("● REPLAYING RECORDED RUN", GoodColor);
                     break;
                 case StateStreamStatus.Streaming:
                     SetStatus("● FOLLOWING HOST", GoodColor);

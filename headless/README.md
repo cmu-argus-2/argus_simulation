@@ -97,6 +97,41 @@ failsafe or rejected (`commands.jsonl`), and every authority change (`authority.
 gateway's events. It writes on its own thread, so a slow disk
 never delays a step, and `manifest.json` counts anything it had to drop.
 
+### Replay a recorded run (HOST-7)
+
+`--replay <run dir>` plays one run directory that `--record` wrote (`<run_id>_<segment>`, the
+folder holding `manifest.json`) back over the same state stream, so Unity follows a replay
+exactly as it follows a live run. No Basilisk service is needed:
+
+```bash
+dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --replay runs-out/host-0123abcd_0 --replay-speed 4
+```
+
+- **What it serves:** every state in `states.jsonl`, with its environment and the command that
+  produced it, and each step's non-camera frames from `sensors.jsonl`, through the same
+  `StateStreamPublisher` as a live run. The backend sensors' frames also rebuild each state's
+  `backend_samples`. A replay is identical to what the live run streamed, and the same every
+  time; only `run_generation` differs (`RunReplayTests`). Every response carries
+  `source: RUN_SOURCE_REPLAY`, which a live run sends as `RUN_SOURCE_LIVE`, and Unity's dashboard
+  shows **REPLAYING RECORDED RUN** while it follows a replay.
+- **What it does not serve:** camera frames and images (the live stream carries none either;
+  nothing is re-rendered) and `commands.jsonl` (the stream has no command log). No gateway,
+  controller or recorder runs.
+- **Pacing:** state k is published at (t_k − t_0) / `--replay-speed` of wall-clock time after
+  state 0, by the host's own clock, never a Basilisk one (D2). The speed must be above 0 and
+  defaults to 1. The stream still decimates to `--stream-rate-hz`. After the last state the host
+  stops the stream and exits 0.
+- **Checks:** it rejects a `schema_version` other than `argus-dataset/1`, a device kind that is
+  not registered, devices that do not make a valid `SimulationConfiguration` (for example a
+  sample period that is not a whole number of steps), a frame of a sensor the manifest does not
+  list, and a line that breaks the dataset README's reader checks, naming the file and
+  line (exit 2 for a bad manifest, 1 for a bad line during the replay). A recording with
+  `complete: false` replays up to its last full line, with a warning. Files it does not read,
+  such as `commands.jsonl` or `authority.jsonl`, are ignored.
+- **Options:** a replay takes `--stream-endpoint` and `--stream-rate-hz`, and rejects the
+  live-run options `--duration-s`, `--real-time-factor`, `--basilisk-endpoint`, `--run-config`
+  and `--record`.
+
 ## Run configuration files
 
 A run configuration file defines one run once (G5): epoch, fixed step, seed, kernel set,
