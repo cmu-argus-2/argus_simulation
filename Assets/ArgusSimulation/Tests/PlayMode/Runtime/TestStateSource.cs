@@ -32,6 +32,8 @@ namespace Argus.Simulation.Tests
             return state;
         }
 
+        public void Publish(SimulationState state) => StateProduced?.Invoke(state);
+
         public void PublishOutput(SensorOutputSet output) => OutputProduced?.Invoke(output);
 
         public void ResetHistory() => HistoryReset?.Invoke();

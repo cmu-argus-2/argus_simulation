@@ -144,6 +144,9 @@ namespace Argus.Simulation.Editor
             light.intensity = 1.0f;
             sunlight.transform.rotation = Quaternion.Euler(30f, -35f, 0f);
             rasterController.ConfigureSunlight(light);
+            CubeSatCameraRig cameraRig = spacecraft.AddComponent<CubeSatCameraRig>();
+            UnityImageRenderer imageRenderer = simulation.AddComponent<UnityImageRenderer>();
+            imageRenderer.Configure(cameraRig, geospatialRoot.GetComponent<CesiumGeoreference>(), light, rasterController);
 
             EnsureDirectory(SceneDirectory);
             EditorSceneManager.SaveScene(scene, ScenePath);

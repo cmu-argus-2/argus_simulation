@@ -121,7 +121,7 @@ Core/Sensors/
 ├── GnssSensor.cs, SunSensor.cs, StarTrackerSensor.cs     # Upcoming sensors (TODO(sensors))
 ├── PowerTelemetrySensor.cs, ThermalSensor.cs
 └── RadioLinkSensor.cs, RadiationSensor.cs
-Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
+Unity/Cameras/UnityImageRenderer.cs                      # On-request Core IImageRenderer; Cesium wait/render/readback
 Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/render/v1/                   # TODO(D5, G3)
