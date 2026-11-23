@@ -582,6 +582,9 @@ namespace Argus.Simulation.Unity
 
             SpacecraftState state = _runner.LastState.Spacecraft;
             StringBuilder builder = new StringBuilder(1400);
+            SunLightDriver lighting = FindAnyObjectByType<SunLightDriver>();
+            AddRow(builder, "Lighting", lighting != null && lighting.HasPhysicalLighting
+                ? "Environment Sun" : "Non-physical lighting");
 
             if (IsGroupVisible(SensorGroup.OrbitTruth))
             {

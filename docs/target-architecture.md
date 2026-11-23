@@ -320,7 +320,7 @@ for provenance and the offline GPU validation command.
 
 **Known issues:**
 
-- The scene's Sun light is fixed.
+- Environment Sun lighting is implemented locally; real streamed Basilisk lighting validation remains pending. Without environment data, the scene retains its fixed light and labels it non-physical.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
 - Orbit and attitude nudges are gone until they can be engine commands sent to the host

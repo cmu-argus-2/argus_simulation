@@ -120,7 +120,7 @@ Core/Sensors/
 ├── PowerTelemetrySensor.cs, ThermalSensor.cs
 └── RadioLinkSensor.cs, RadiationSensor.cs
 Unity/Cameras/UnityImageRenderer.cs                      # TODO(D5)
-Unity/Visualization/SunLightDriver.cs                    # TODO(D4)
+Unity/Visualization/SunLightDriver.cs                    # Environment Sun lighting and explicit fixed-light fallback
 headless/Host/Gateway/GatewayServer.cs                   # TODO(D7, G1)
 Argus.Contracts/proto/argus/{gateway,render}/v1/         # TODO(D7, G1), TODO(D5, G3)
 Argus.Hardware/README.md                                 # TODO(D7, G1)
