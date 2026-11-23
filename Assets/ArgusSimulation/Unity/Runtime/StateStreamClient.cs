@@ -23,10 +23,11 @@ namespace Argus.Simulation.Unity
     // only the latest received pair, and each frame publishes it on the main thread, so a frame that
     // falls behind skips pairs rather than catching up in a burst. In order: StateProduced with each
     // SimulationState (ISimulationStateSource, which SimulationRunner follows) and OutputProduced
-    // with its latest-per-sensor SensorOutputSet. When the host stops or restarts, the client reconnects and reports Status
+    // with its latest-per-sensor SensorOutputSet (ISensorOutputSource, which SimulationRunner pairs
+    // with the state). When the host stops or restarts, the client reconnects and reports Status
     // instead of throwing. The endpoint is -stream-endpoint, then $ARGUS_STREAM_ENDPOINT, then the
     // Inspector value (Argus.Contracts/README.md Endpoints).
-    public sealed class StateStreamClient : MonoBehaviour, ISimulationStateSource
+    public sealed class StateStreamClient : MonoBehaviour, ISimulationStateSource, ISensorOutputSource
     {
         public const string EndpointCommandLineOption = "-stream-endpoint";
         public const string EndpointVariable = "ARGUS_STREAM_ENDPOINT";
@@ -63,6 +64,10 @@ namespace Argus.Simulation.Unity
         // The generation of the last published pair, or null before the first.
         public string RunGeneration { get; private set; }
 
+        // Whether that generation is the host replaying a recorded run (HOST-7), not a live run. One
+        // generation has one source, so it changes only with RunGeneration.
+        public bool IsReplay { get; private set; }
+
         private void OnEnable()
         {
             // The host keeps running while Unity is unfocused, so Unity keeps following it.
@@ -97,6 +102,7 @@ namespace Argus.Simulation.Unity
             if (received.Pair.RunGeneration != RunGeneration)
             {
                 RunGeneration = received.Pair.RunGeneration;
+                IsReplay = received.Pair.IsReplay;
                 _lastSequence = -1;
                 HistoryReset?.Invoke();
             }

@@ -31,6 +31,7 @@ namespace Argus.Simulation.Unity
         private bool _isHeld;
 
         public bool IsHeld => _isHeld;
+        public SimulationState HeldState { get; private set; }
 
         private void Reset()
         {
@@ -73,8 +74,15 @@ namespace Argus.Simulation.Unity
         // Shows exactly this state until Release, while states keep arriving.
         public void Hold(SimulationState state)
         {
-            _isHeld = true;
+            HoldCurrent(state);
             Apply(state.Spacecraft.PositionEcefMeters, state.Spacecraft.BodyToEcef);
+        }
+
+        // Freeze presentation without replacing Inspector edits or the interpolated pose.
+        public void HoldCurrent(SimulationState sourceState)
+        {
+            HeldState = sourceState;
+            _isHeld = true;
         }
 
         public void Release()

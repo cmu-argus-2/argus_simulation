@@ -75,7 +75,9 @@ dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 
 
 It writes dataset v1 to `runs-out/<run_id>_0/`: `manifest.json` (the configuration and its
 devices), then `states.jsonl` (truth), `sensors.jsonl` (every sensor frame) and
-`commands.jsonl` (every command), one JSON object per line. The fields are described in
+`commands.jsonl` (every command, applied, clamped, held, failsafe or rejected) and
+`authority.jsonl` (every claim, refusal, release and loss of actuator authority), one JSON object
+per line. The fields are described in
 [Core/Recording/README.md](Assets/ArgusSimulation/Core/Recording/README.md). See
 [headless/README.md](headless/README.md) for the other options, the exit codes and the run-file
 format.
@@ -126,7 +128,9 @@ When Unity opens for the first time:
    runs none of its own and follows the host's state stream on `127.0.0.1:50052`.
 4. Press the **Play** button. The toolbar shows **FOLLOWING HOST** once states arrive, or
    **CONNECTING TO HOST** / **HOST DISCONNECTED** while the host is not streaming; Unity keeps
-   retrying, so the host can start before or after Play.
+   retrying, so the host can start before or after Play. While the host replays a recorded run
+   (`--replay`, HOST-7) instead of running one, it shows **REPLAYING RECORDED RUN**, and the
+   stream panel tags the run `REPLAY`.
 
 The scene is at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 

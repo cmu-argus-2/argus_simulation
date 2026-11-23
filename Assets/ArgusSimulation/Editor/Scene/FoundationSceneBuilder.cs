@@ -145,6 +145,9 @@ namespace Argus.Simulation.Editor
             rasterController.ConfigureSunlight(light);
             sunlight.AddComponent<SunLightDriver>().Configure(
                 runner, geospatialRoot.GetComponent<CesiumGeoreference>(), light, rasterController);
+            CubeSatCameraRig cameraRig = spacecraft.AddComponent<CubeSatCameraRig>();
+            UnityImageRenderer imageRenderer = simulation.AddComponent<UnityImageRenderer>();
+            imageRenderer.Configure(cameraRig, geospatialRoot.GetComponent<CesiumGeoreference>(), light, rasterController);
 
             EnsureDirectory(SceneDirectory);
             EditorSceneManager.SaveScene(scene, ScenePath);

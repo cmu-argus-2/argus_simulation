@@ -1,6 +1,6 @@
 # Argus.Contracts: cross-process schemas
 
-**Status:** Basilisk and state-stream schemas defined; gateway and renderer schemas planned
+**Status:** Basilisk, state-stream and controller-gateway schemas defined; renderer schema planned
 
 `headless/Host` serves the state stream (HOST-3, `Streaming/StateStreamServer.cs`); the Unity
 client is UNITY-5.
@@ -22,7 +22,7 @@ proto/argus/
 ├── basilisk/v1/                # Basilisk-native link (package argus.basilisk.v1)
 │   └── basilisk_service.proto  # BasiliskSimulationService: ConfigureRun, Reset, Step
 ├── stream/v1/state_stream.proto      # Host → Unity state stream (CON-1)
-├── gateway/v1/gateway.proto          # Placeholder: HIL and controller link (D7, G1)
+├── gateway/v1/gateway.proto          # Controller link for HIL and external controllers (CON-3)
 └── render/v1/render.proto            # Placeholder: RenderRequest / ImageFrame (D5, G3)
 ```
 
@@ -52,8 +52,10 @@ types directly.
 - buf STANDARD style: `<Rpc>Request` / `<Rpc>Response`, a `Service` suffix, and every enum
   zero value named `_UNSPECIFIED` and rejected.
 - **Presence:** an unset message field or oneof is INVALID_ARGUMENT, never defaulted; the
-  exceptions are empty `BasiliskDeviceSample.output` (Unavailable) and the state-stream
-  presence rules below. DeviceValue maps use the keys/types declared by their kind
+  exceptions are empty `BasiliskDeviceSample.output` (Unavailable), the state-stream
+  presence rules below, and fields added to a frozen v1 message, which an older client cannot
+  send: an unset one reads as its default (`RunConfiguration.heartbeat_timeout_wall_s`: the
+  heartbeat timeout off; `physical_actuators`: the inhibit on; CORE-9). DeviceValue maps use the keys/types declared by their kind
   (`docs/device-model.md` §3). For scalars zero is a value; range checks reject
   meaningless zeros. A scalar whose zero would be a plausible wrong value is declared
   `optional` (for example `StepResponse.spacecraft_shadow_factor`, where 0 means umbra).
@@ -89,6 +91,7 @@ protoc -I Argus.Contracts/proto -I "$(brew --prefix)/include" --descriptor_set_o
 |---|---|---|---|---|---|---|
 | Basilisk | `Argus.Basilisk` | `headless/Host` (`BasiliskEngine`) | `ARGUS_BASILISK_ENDPOINT` | `127.0.0.1:50051` | insecure h2c, loopback only in v1 | Not applicable |
 | State stream | `headless/Host` | Unity | `ARGUS_STREAM_ENDPOINT` | `127.0.0.1:50052` | native gRPC, h2c; Unity HTTP/2 handler | `--stream-rate-hz` > `ARGUS_STREAM_RATE_HZ` > **10 Hz wall-clock** |
+| Controller gateway | `headless/Host` (HOST-6) | HIL adapters (HIL-1), external controllers | `ARGUS_GATEWAY_ENDPOINT` | `127.0.0.1:50053` | native gRPC, h2c, loopback only in v1; one bidirectional stream per controller | One observation per step, never decimated |
 
 For every endpoint, precedence is command-line flag, then environment, then default.
 Basilisk uses `--basilisk-endpoint` > `ARGUS_BASILISK_ENDPOINT` > `127.0.0.1:50051`.
@@ -98,13 +101,13 @@ default above. Stream rate uses `--stream-rate-hz`, then `ARGUS_STREAM_RATE_HZ`,
 loopback stream endpoint. Both endpoint settings take bare `host:port`
 (bracket IPv6 addresses, e.g. `[::1]:50052`), with no URI scheme or path. The stream
 client adds `http://` when constructing its channel URI; the server parses host/port.
+The gateway endpoint uses `--gateway-endpoint`, then `ARGUS_GATEWAY_ENDPOINT`, then
+`127.0.0.1:50053`, in the same bare `host:port` form; HOST-6 accepts only a loopback address.
 
 ## Deferred
 
 Added with the PR that first needs them:
 
-- the gateway link for HIL flight computers and other external controllers (observations
-  out, commands in);
 - the runtime state-stream Unity client (UNITY-5); the schema is below and `headless/Host`
   serves it (HOST-3);
 - camera `RenderRequest`s to the Unity `IImageRenderer` and `ImageFrame`s back; large
@@ -157,7 +160,12 @@ is distinct from the original per-step SensorManager output used by the recorder
   Unity clears interpolation on a new subscription or changed generation. Any already
   in-flight old response remains labelled with its old generation and must not be mixed
   with new-generation state. Cancel old readers and discard their callbacks after reconnect.
-  No historical replay; on stop, finish active streams.
+  On stop, finish active streams.
+- `source` says where the generation's run comes from: `RUN_SOURCE_LIVE` for a run the host is
+  stepping, `RUN_SOURCE_REPLAY` for a recorded run it plays back (`headless/Host --replay`,
+  HOST-7). A replay follows every rule above, as a new generation with the recorded run ID, so a
+  client needs nothing else to follow it. `RUN_SOURCE_UNSPECIFIED` comes only from a host that
+  predates the field; treat it as live.
 - The recorder and controllers retain their full-rate paths. Unpaced runs can have large
   simulation-time gaps and are not guaranteed smooth live visualization.
 
@@ -223,3 +231,97 @@ Applied commands list every configured actuator, including idle values, at most 
 the list is empty when the run configures no actuator. Per-device state is deferred to the
 first stateful actuator, the momentum wheel (`docs/device-model.md` §8).
 HOST-3 should alias generated names as `PbSim` / `PbStream` to avoid Core name collisions.
+
+## Controller gateway (CON-3)
+
+`ControllerGatewayService.Connect` carries Core's `IControllerGateway` (CORE-9) to HIL
+adapters (HIL-1) and external controllers: claim, release, heartbeat, the command for a
+step, and, in lockstep runs, the step itself and a Reset. Observations go out as Core
+publishes them (`ObservationPublished`), with each run's end (`RunEnded`). `headless/Host`
+serves it (HOST-6).
+
+### Decisions
+
+- **Shape: one bounded bidirectional stream per controller session**, not unary calls
+  (system-architecture §12). The stream is the session. The server assigns its controller ID
+  and revokes its authority when it ends, so a controller that disconnects or crashes fails
+  safe without a separate session API. In runs the host steps (paced and HIL), observations
+  arrive on the host's clock, and a stream delivers them without polling. One ordered stream
+  also fixes the order of observations and call results.
+- **Endpoint:** `--gateway-endpoint` > `ARGUS_GATEWAY_ENDPOINT` > `127.0.0.1:50053`,
+  cleartext h2c on loopback only in v1, as the other links. HIL-1's adapters run on the host
+  machine and bridge to the flight computer's own buses.
+- **Reset:** a link sends only a seed. The scenario is the host's run file (G5), so a link
+  cannot change the spacecraft, the heartbeat timeout or the physical-actuator setting. Only the
+  authority holder of a lockstep run may reset; the host owns the runs it steps.
+- **Camera images inline:** a controller-visible camera's pixels travel in the observation
+  as raw RGB8 (`CameraObservation.pixels_rgb8`). `SessionStarted.max_message_bytes` tells the
+  client the largest message it will receive: 4 MiB (gRPC's default) with no controller-visible
+  camera, otherwise the sum of every such camera's width x height x 3 plus 1 MiB, since one
+  observation can carry a frame from each. One IMX708 at 4608 x 2592 gives 36,880,384 bytes
+  (about 35.2 MiB); all four of P0's give 144,375,808 bytes (about 137.7 MiB). The client sets
+  its receive limit to that value; its own messages stay within the default 4 MiB. P0's cameras are not
+  controller-visible, so P0 sessions stay at 4 MiB. Shared memory (system-architecture §12)
+  can be added beside it if images become the bottleneck.
+
+### Session rules
+
+- The server's first message is `SessionStarted`: the controller ID it assigned (clients never
+  choose one), the host's `StepDriver`, the run's heartbeat timeout, `max_message_bytes`, the
+  command window in a run the host steps, the physical-actuator inhibit (unset reads as
+  inhibited) and the spacecraft profile's ID (HOST-9). If a run is running, the run's latest
+  observation follows, so a controller that joins mid-run knows step k.
+- In a run the host steps, the host refuses every session with `FAILED_PRECONDITION` at
+  connect, before `SessionStarted`, when the run's heartbeat timeout is 0 or shorter than two
+  steps: a hung controller would keep its last command, or a healthy one would be lost
+  (CORE-9). A lockstep run may leave the timeout off, since its run stops with its controller.
+- Unity never claims authority (D2); how the server recognises Unity's session is UNITY-11's
+  (#65), with its dashboard commands.
+- The server handles a session's calls one at a time, in order, and answers each with one
+  `CallResult` echoing its `request_id`. An observation or `RunEnded` that a call causes is
+  sent before that call's result: a lockstep `StepCommand` gets observation k+1, then its
+  result, and an accepted step whose backend fails still gets an accepted result, after the
+  terminal observation and `RunEnded`. A `ResetRun` gets the old run's `RunEnded`, observation
+  0, then its result; a run that ended has no holder, so a link only resets a running run.
+- Every session gets every observation, holder or not. Observations are never decimated or
+  dropped. The server keeps at most 16 unsent messages per session, and at most
+  4 x `max_message_bytes` of them, whichever comes first; a session that falls further behind
+  is ended with `RESOURCE_EXHAUSTED`, which revokes its authority (failsafe). The worst case is
+  16 MiB per session with no controller-visible camera, about 141 MiB with one IMX708
+  (4 x 35.2 MiB) and about 551 MiB with all four of P0's (4 x 137.7 MiB); the host holds that for
+  each session it serves. HTTP/2 flow control bounds
+  the calls a client can queue.
+- Every accepted call is a heartbeat; a refused call is not (CORE-9). A holder silent past the
+  heartbeat timeout loses authority, and every actuator runs idle until a controller claims
+  again.
+- Every command that decodes into a Core `DeviceCommandSet`, accepted or refused, reaches the
+  command log (dataset v1). One that doesn't (`sequence`, `apply_at_simulation_time_s` or
+  `commands` unset, or a `DeviceValue` with no value set) never became a command: it gets a
+  refused `CallResult` naming the field and is not logged.
+- A terminal observation carries its status (`BACKEND_FAILED`, `STOPPED`) and no frames, never
+  its termination reason, which can carry backend failure text (D7). Refusal text is the
+  gateway's own and is sent.
+- A run ends with `RunEnded`. After a `ResetRun` the session goes on with the new run. A
+  Reset clears authority, so a controller claims again before stepping the new run. A run that
+  ends without being replaced has no holder left to reset it, so no session can start another:
+  the host stops then, and ends every session with OK.
+
+### Commands and observations
+
+- A command for step k is computed from observation k and names it: `sequence` = k and
+  `apply_at_simulation_time_s` = t_k, exactly observation k's `simulation_time_s`; it acts over
+  [t_k, t_k+1) (DATA-5, #70). Late, early, duplicate and unauthorised commands are refused
+  and logged, never applied (CORE-9). An actuator a command leaves out runs idle.
+- In a run the host steps, command k counts only if it is accepted before the host starts step
+  k. After publishing observation k the host waits at most `SessionStarted.command_window_wall_s`
+  for it and steps as soon as it is accepted; one that arrives later is late, and step k holds.
+- `SubmitCommand` is for runs the host steps (`STEP_DRIVER_HOST`); a step with no command
+  holds the tenure's last applied one (`Held`). `StepCommand` is for lockstep runs
+  (`STEP_DRIVER_CONTROLLER`). The other one is refused.
+- Observation frames reuse `argus.sim.v1.SensorFrame` with the state stream's presence and
+  device-model rules, except a camera: its `payload` is always empty and `camera` carries
+  the `CameraObservation` for every status, with pixels only when `VALID`. No truth crosses this
+  link: no `SimulationState`, no camera pose or Sun, no ground-truth sensor (D7), and no
+  `argus.basilisk.v1` type.
+- Generated C# aliases the package as `PbGateway`, beside `PbSim`, because `Observation`,
+  `StepDriver` and `CameraObservation` collide with Core.

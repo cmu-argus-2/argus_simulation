@@ -10,21 +10,29 @@ namespace Argus.Simulation.Core
     {
         // Starts a new dataset directory. Call it on every gateway Reset (SimulationGateway.RunStarted),
         // before that run's state at t_0. dynamicsBackendVersion and analyticOrbit describe the engine,
-        // which the gateway does not know.
+        // which the gateway does not know. spacecraftProfileId and spacecraftProfilePath name the
+        // spacecraft profile the run's body and devices came from (docs/device-model.md §4): its
+        // profileId, and its path as the run file wrote it, or null for a profile given inline.
         void BeginRun(
             SimulationConfiguration run,
             IReadOnlyList<SensorDefinition> sensors,
             string dynamicsBackendVersion = null,
-            AnalyticOrbit? analyticOrbit = null);
+            AnalyticOrbit? analyticOrbit = null,
+            string spacecraftProfileId = null,
+            string spacecraftProfilePath = null);
 
         void RecordState(SimulationState state);
 
         // Every frame of the step, controller-visible or not.
         void RecordSensorOutput(SensorOutputSet output);
 
-        // Every command the gateway logged (SimulationGateway.CommandLogged), applied, clamped or
-        // rejected.
+        // Every command the gateway logged (SimulationGateway.CommandLogged): applied, clamped, held,
+        // failsafe or rejected.
         void RecordCommand(CommandRecord record);
+
+        // Every authority change the gateway logged (SimulationGateway.AuthorityLogged, CORE-9):
+        // claimed, refused, released or lost.
+        void RecordAuthority(AuthorityRecord record);
 
         // Why the gateway ended the run (SimulationGateway.RunTerminated); the manifest's termination.
         void RecordTermination(Observation terminal);

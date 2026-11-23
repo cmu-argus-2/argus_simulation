@@ -18,14 +18,16 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.IO;
+using System.Threading;
+using Unity.Mathematics;
 using Argus.Simulation.Core;
 using CesiumForUnity;
 using UnityEngine;
 
 namespace Argus.Simulation.Unity
 {
-    // TODO(D6): retire once Core RunRecorder covers what the Python navigation code reads. Move the
-    // tile-wait and readback code into UnityImageRenderer first, then remove this component from
+    // TODO(D6): retire once Core RunRecorder covers what the Python navigation code reads.
+    // This component delegates tile-wait and readback to UnityImageRenderer; remove this component from
     // the scene, FoundationSceneBuilder and the tests in one change.
     [DisallowMultipleComponent]
     public sealed class NavigationEpisodeExporter : MonoBehaviour
@@ -39,11 +41,12 @@ namespace Argus.Simulation.Unity
         [SerializeField, Min(0)] private int selectedCameraIndex = 0;
         [SerializeField] private string episodeName = "unity_navigation_episode";
 
-        [Header("Cesium readiness")]
-        [SerializeField, Range(90f, 100f)] private float minimumLoadProgress = 100f;
-        [SerializeField, Min(1)] private int stableFramesRequired = 10;
-        [SerializeField, Min(0f)] private float postLoadSettleSeconds = 1f;
-        [SerializeField, Min(1f)] private float loadTimeoutSeconds = 60f;
+        private UnityImageRenderer _renderer;
+        private CancellationTokenSource _captureCancellation;
+        private CesiumSpacecraftPoseDriver _pose;
+        private bool _releasePose;
+        private int _captureIndex;
+        private int _captureTotal;
 
         private string _episodeDirectory;
         private string _metadataPath;
@@ -53,12 +56,14 @@ namespace Argus.Simulation.Unity
 
         public bool IsCaptureInProgress { get; private set; }
         public string LastCaptureStatus { get; private set; } = "CAPTURE";
+        public string LastCaptureError { get; private set; } = string.Empty;
         public string EpisodeDirectory => _episodeDirectory ?? string.Empty;
 
         // JsonUtility serializes public fields, not C# properties.
         [Serializable]
         private sealed class NavigationRecord
         {
+            public int metadata_version = 3;
             public string timestamp_utc;
             public long sequence;
             public double simulation_time_seconds;
@@ -68,25 +73,43 @@ namespace Argus.Simulation.Unity
             public int image_width_px;
             public int image_height_px;
 
-            // Standard pinhole calibration in pixel units.
+            // Legacy edge-origin pinhole calibration. Exact zero-based pixel-centre values follow.
             public double fx_px;
             public double fy_px;
             public double cx_px;
             public double cy_px;
+            public double rendered_cx_px;
+            public double rendered_cy_px;
 
             // Unity-coordinate camera-to-body quaternion [x, y, z, w].
             // A later bridge will convert/document the exact Argus convention.
             public double[] rotation_camera_to_body_unity_xyzw;
 
-            // Simulator truth in ECEF.
+            // Exact rendered camera pose, using OpenCV camera axes (right, down, forward).
+            public double[] camera_position_ecef_m;
+            public double[] camera_to_ecef_xyzw;
+            public double[] camera_to_body_xyzw;
+            public double exposure_duration_s;
+            public string renderer;
+            public bool has_sun_position;
+            public double[] sun_position_ecef_m;
+
+            // Legacy fields retain host truth, including its body axes.
             public double[] position_ecef_m;
             public double[] velocity_ecef_m_per_s;
-
-            // Simulator truth attitude: body -> ECEF, [x, y, z, w].
             public double[] rotation_body_to_ecef_xyzw;
-
-            // Truth body angular velocity. This is NOT a noisy gyro yet.
             public double[] angular_velocity_body_truth_rad_per_s;
+
+            // Actual displayed body pose, including manual edits. Rates are re-expressed host
+            // rates, not a physical simulation of an instantaneous manual nudge.
+            public double[] rendered_position_ecef_m;
+            public double[] rendered_rotation_body_to_ecef_xyzw;
+            public double[] rendered_angular_velocity_body_rad_per_s;
+
+            // Preserve the underlying engine state separately from the rendered pose.
+            public double[] source_position_ecef_m;
+            public double[] source_rotation_body_to_ecef_xyzw;
+            public double[] source_angular_velocity_body_truth_rad_per_s;
         }
 
         private void Awake()
@@ -114,7 +137,15 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        public bool RequestCapture()
+        public bool RequestCapture() => BeginCapture(false);
+
+        // A manual acceptance capture, not a replacement for the Core camera configuration.
+        // Uses Core camera profiles from the host run configuration for the four body views.
+        public bool RequestFullResolutionCapture() => BeginCapture(true);
+
+        public void CancelCapture() => _captureCancellation?.Cancel();
+
+        private bool BeginCapture(bool fullResolution)
         {
             if (IsCaptureInProgress)
             {
@@ -144,114 +175,178 @@ namespace Argus.Simulation.Unity
                 return false;
             }
 
-            // A warm-up takes the non-nadir views away from Cesium, so they would be saved unloaded.
-            NadirTilePriority nadir = cameraRig.GetComponent<NadirTilePriority>();
-            if (nadir != null && nadir.IsWarmingUp)
-            {
-                SetCaptureStatus("WAIT: NADIR");
-                return false;
-            }
-
-            StartCoroutine(CaptureWhenCesiumIsReady(runner.LastState));
+            _pose = cameraRig.GetComponent<CesiumSpacecraftPoseDriver>();
+            SimulationState source = _pose != null && _pose.IsHeld ? _pose.HeldState : runner.LastState;
+            StartCoroutine(CaptureWhenCesiumIsReady(source, fullResolution));
             return true;
         }
 
-        // The host keeps running, so the CubeSat is held at the captured state while its tiles load:
-        // the images then match the exported state.
-        private IEnumerator CaptureWhenCesiumIsReady(SimulationState captured)
+        private IEnumerator CaptureWhenCesiumIsReady(SimulationState state, bool fullResolution)
         {
             IsCaptureInProgress = true;
-            SpacecraftState state = captured.Spacecraft;
-            CesiumSpacecraftPoseDriver pose = cameraRig.GetComponent<CesiumSpacecraftPoseDriver>();
-            pose?.Hold(captured);
-
-            Cesium3DTileset[] tilesets = FindObjectsByType<Cesium3DTileset>(
-                FindObjectsInactive.Exclude);
-            int requiredStableFrames = Math.Max(1, stableFramesRequired);
-            float timeout = Math.Max(1f, loadTimeoutSeconds);
-            float startedAt = Time.realtimeSinceStartup;
-            int stableFrames = 0;
-
-            while (stableFrames < requiredStableFrames)
+            // Reserve a capture number even if a later camera fails. Retrying must not overwrite
+            // already saved images or append metadata pointing at a replacement image.
+            int captureNumber = _captureNumber++;
+            LastCaptureError = string.Empty;
+            _releasePose = _pose != null && !_pose.IsHeld;
+            // A pose this capture holds snaps to the state its metadata reports: the interpolated pose
+            // lags it by up to one stream interval. A hold that already existed keeps its own state.
+            if (_releasePose) _pose.Hold(state);
+            else _pose?.HoldCurrent(state);
+            cameraRig.GetComponent<NadirTilePriority>()?.RestoreViewsForCapture();
+            _captureCancellation = new CancellationTokenSource();
+            if (_renderer == null)
             {
-                float progress = MinimumEnabledTilesetProgress(tilesets);
-                if (progress >= minimumLoadProgress)
-                {
-                    stableFrames++;
-                }
-                else
-                {
-                    stableFrames = 0;
-                }
-
-                SetCaptureStatus($"LOADING {progress:0}%");
-                if (Time.realtimeSinceStartup - startedAt >= timeout)
-                {
-                    Debug.LogWarning(
-                        $"Image capture cancelled because Cesium did not reach " +
-                        $"{minimumLoadProgress:0}% load progress within {timeout:0} seconds.",
-                        this);
-                    CompleteCapture(pose, "LOAD TIMEOUT");
-                    yield break;
-                }
-
-                yield return null;
+                _renderer = GetComponent<UnityImageRenderer>();
+                if (_renderer == null) _renderer = gameObject.AddComponent<UnityImageRenderer>();
             }
-
-            if (postLoadSettleSeconds > 0f)
-            {
-                SetCaptureStatus("FINALIZING");
-                yield return new WaitForSecondsRealtime(postLoadSettleSeconds);
-            }
-
-            yield return new WaitForEndOfFrame();
-            SetCaptureStatus("CAPTURING");
-            string finalStatus;
+            _renderer.CaptureStatusChanged += HandleRendererStatus;
+            string status = "EXPORT ERROR";
             try
             {
-                EnsureOutputDirectory();
-                ExportState(state, _captureNumber);
-                _captureNumber++;
-                finalStatus = "SAVED";
-
-                Debug.Log(
-                    "Navigation image capture complete.\nDirectory:\n" + _episodeDirectory,
-                    this);
-            }
-            catch (Exception exception)
-            {
-                finalStatus = "EXPORT ERROR";
-                Debug.LogException(exception, this);
-            }
-
-            CompleteCapture(pose, finalStatus);
-        }
-
-        internal static float MinimumEnabledTilesetProgress(Cesium3DTileset[] tilesets)
-        {
-            float progress = 100f;
-            bool foundEnabledTileset = false;
-
-            foreach (Cesium3DTileset tileset in tilesets)
-            {
-                if (tileset == null || !tileset.isActiveAndEnabled)
+                int first = fullResolution || captureAllCameras ? 0 : selectedCameraIndex;
+                int last = fullResolution ? Math.Min(4, cameraRig.Cameras.Count)
+                    : captureAllCameras ? cameraRig.Cameras.Count : selectedCameraIndex + 1;
+                _captureTotal = last - first;
+                if (first < 0 || last > cameraRig.Cameras.Count)
                 {
-                    continue;
+                    status = "NO CAMERA";
+                    LastCaptureError = "Selected camera index is outside the camera rig.";
+                    yield break;
                 }
-
-                foundEnabledTileset = true;
-                progress = Math.Min(progress, tileset.ComputeLoadProgress());
+                var requests = new RenderRequest[last - first];
+                var cameraToBody = new Quaternion[last - first];
+                SpacecraftState capturedState;
+                try
+                {
+                    capturedState = SnapshotSpacecraft(state.Spacecraft);
+                    // Orbit edits can precede this frame's LateUpdate, which normally aligns nadir.
+                    cameraRig.UpdateGroundTruthPose();
+                    // Snapshot every view before yielding: manual pose changes or a follower's
+                    // later states must not change the exposure while terrain is loading.
+                    for (int index = first; index < last; index++)
+                    {
+                        requests[index - first] = CreateRequest(state, index, fullResolution, captureNumber);
+                        cameraToBody[index - first] = Quaternion.Inverse(cameraRig.transform.rotation) *
+                            cameraRig.Cameras[index].transform.rotation;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    LastCaptureError = exception.Message;
+                    Debug.LogException(exception, this);
+                    yield break;
+                }
+                for (int index = first; index < last; index++)
+                {
+                    _captureIndex = index - first + 1;
+                    SetCaptureStatus($"{_captureIndex}/{_captureTotal} QUEUED");
+                    System.Threading.Tasks.Task<ImageFrame> task = null;
+                    try
+                    {
+                        task = _renderer.RenderPngAsync(requests[index - first], _captureCancellation.Token);
+                    }
+                    catch (Exception exception) { LastCaptureError = exception.Message; Debug.LogException(exception, this); }
+                    if (task == null) yield break;
+                    while (!task.IsCompleted) yield return null;
+                    try
+                    {
+                        ImageFrame frame = task.GetAwaiter().GetResult();
+                        EnsureOutputDirectory();
+                        ExportCamera(capturedState, state.Spacecraft, index, captureNumber, frame, cameraToBody[index - first]);
+                    }
+                    catch (TimeoutException exception)
+                    {
+                        LastCaptureError = exception.Message;
+                        Debug.LogWarning("Camera capture timed out: " + LastCaptureError, this);
+                        status = "LOAD TIMEOUT";
+                        yield break;
+                    }
+                    catch (OperationCanceledException exception) { LastCaptureError = exception.Message; status = "CANCELLED"; yield break; }
+                    catch (Exception exception) { LastCaptureError = exception.Message; Debug.LogException(exception, this); yield break; }
+                }
+                status = "SAVED";
+                Debug.Log($"Camera capture saved {_captureTotal} images to: {_episodeDirectory}", this);
             }
-
-            return foundEnabledTileset ? progress : 100f;
+            finally
+            {
+                _renderer.CaptureStatusChanged -= HandleRendererStatus;
+                _captureCancellation?.Dispose();
+                _captureCancellation = null;
+                CompleteCapture(status);
+            }
         }
 
-        private void CompleteCapture(CesiumSpacecraftPoseDriver pose, string status)
+        private SpacecraftState SnapshotSpacecraft(SpacecraftState source)
         {
-            pose?.Release();
+            var anchor = cameraRig.GetComponent<CesiumGlobeAnchor>();
+            if (anchor == null)
+                throw new InvalidOperationException("Capture metadata requires a spacecraft CesiumGlobeAnchor.");
+            // Include same-frame Transform edits even when the anchor's change detection is off.
+            anchor.Sync();
+            double3 position = anchor.positionGlobeFixed;
+            float4 rotation = anchor.rotationGlobeFixed.value;
+            var bodyToEcef = new Quaterniond(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
+            var ecefToBody = new Quaterniond(-bodyToEcef.X, -bodyToEcef.Y, -bodyToEcef.Z, bodyToEcef.W);
+            Vector3d angularVelocity = ecefToBody.Rotate(source.BodyToEcef.Rotate(source.AngularVelocityBodyRadiansPerSecond));
+            return new SpacecraftState(source.Sequence, source.SimulationTimeSeconds, source.TimestampUtc,
+                new Vector3d(position.x, position.y, position.z), source.VelocityEcefMetersPerSecond,
+                bodyToEcef, angularVelocity, source.EarthFixedFrame);
+        }
 
+        private RenderRequest CreateRequest(SimulationState state, int index, bool fullResolution, int captureNumber)
+        {
+            Camera camera = cameraRig.Cameras[index];
+            RenderTexture target = cameraRig.RenderTextures[index];
+            CesiumGeoreference reference = cameraRig.GetComponentInParent<CesiumGeoreference>();
+            Vector3 localPosition = reference.transform.InverseTransformPoint(camera.transform.position);
+            double3 position = reference.TransformUnityPositionToEarthCenteredEarthFixed(
+                new double3(localPosition.x, localPosition.y, localPosition.z));
+            Vector3d right = ToEcefDirection(reference, camera.transform.right);
+            Vector3d down = ToEcefDirection(reference, -camera.transform.up);
+            Vector3d forward = ToEcefDirection(reference, camera.transform.forward);
+            double fy = 0.5 * target.height / Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
+            CameraIntrinsics intrinsics = fullResolution
+                ? cameraRig.BodyCameraProfile(index).Intrinsics
+                : new CameraIntrinsics(target.width, target.height, fy, fy, (target.width - 1) / 2.0, (target.height - 1) / 2.0);
+            return new RenderRequest(cameraRig.Names[index], captureNumber, state.Spacecraft.Sequence,
+                state.Spacecraft.SimulationTimeSeconds, state.Spacecraft.TimestampUtc,
+                index < 4 ? cameraRig.BodyCameraProfile(index).ExposureDurationSeconds : 0,
+                new Vector3d(position.x, position.y, position.z), Quaterniond.FromBasis(right, down, forward),
+                intrinsics,
+                state.Environment?.SunPositionItrf93Meters);
+        }
+
+        private static Vector3d ToEcefDirection(CesiumGeoreference reference, Vector3 worldDirection)
+        {
+            Vector3 local = reference.transform.InverseTransformDirection(worldDirection);
+            double3 direction = reference.TransformUnityDirectionToEarthCenteredEarthFixed(new double3(local.x, local.y, local.z));
+            return new Vector3d(direction.x, direction.y, direction.z).Normalized();
+        }
+
+        private void OnDisable()
+        {
+            if (!IsCaptureInProgress) return;
+            _captureCancellation?.Cancel();
+            if (_renderer != null) _renderer.CaptureStatusChanged -= HandleRendererStatus;
+            StopAllCoroutines();
+            _captureCancellation?.Dispose();
+            _captureCancellation = null;
+            CompleteCapture("CANCELLED");
+        }
+
+        private void CompleteCapture(string status)
+        {
+            if (_releasePose) _pose?.Release();
+            _releasePose = false;
             IsCaptureInProgress = false;
             SetCaptureStatus(status);
+        }
+
+        private void HandleRendererStatus(string status)
+        {
+            if (IsCaptureInProgress && status != "IDLE")
+                SetCaptureStatus($"{_captureIndex}/{_captureTotal} {status}");
         }
 
         private void SetCaptureStatus(string status)
@@ -268,7 +363,7 @@ namespace Argus.Simulation.Unity
             }
 
             string safeEpisodeName = MakeSafeFileName(episodeName);
-            string runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
+            string runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ");
             _episodeDirectory = Path.Combine(
                 Application.persistentDataPath,
                 "NavigationEpisodes",
@@ -281,81 +376,43 @@ namespace Argus.Simulation.Unity
             File.WriteAllText(_metadataPath, string.Empty);
         }
 
-        private void ExportState(SpacecraftState state, int captureNumber)
-        {
-            if (captureAllCameras)
-            {
-                for (int index = 0; index < cameraRig.Cameras.Count; index++)
-                {
-                    ExportCamera(state, index, captureNumber);
-                }
-
-                return;
-            }
-
-            if (selectedCameraIndex < 0 ||
-                selectedCameraIndex >= cameraRig.Cameras.Count)
-            {
-                Debug.LogError(
-                    "selectedCameraIndex is outside CubeSatCameraRig.Cameras.",
-                    this);
-                return;
-            }
-
-            ExportCamera(state, selectedCameraIndex, captureNumber);
-        }
-
         private void ExportCamera(
             SpacecraftState state,
+            SpacecraftState sourceState,
             int cameraIndex,
-            int captureNumber)
+            int captureNumber,
+            ImageFrame frame,
+            Quaternion cameraToBody)
         {
-            Camera camera = cameraRig.Cameras[cameraIndex];
-            RenderTexture renderTexture = cameraRig.RenderTextures[cameraIndex];
-
-            if (camera == null || renderTexture == null)
-            {
-                Debug.LogWarning("Skipping unavailable camera feed.", this);
-                return;
-            }
-
-            // Render the camera now, then copy its RenderTexture to a PNG.
-            camera.Render();
-
             string safeCameraName = MakeSafeFileName(cameraRig.Names[cameraIndex]);
             string imageFileName =
                 $"capture_{captureNumber:D4}_frame_{state.Sequence:D6}_{safeCameraName}.png";
             string imagePath = Path.Combine(_episodeDirectory, imageFileName);
 
-            SaveRenderTextureAsPng(renderTexture, imagePath);
-
-            double fy = 0.5 * renderTexture.height /
-                Math.Tan(0.5 * camera.fieldOfView * Math.PI / 180.0);
-            // Unity's Camera.fieldOfView is vertical. With square pixels, the
-            // horizontal FOV changes with aspect ratio while fx remains equal to fy.
-            double fx = fy;
-
-            // Rotation from this camera frame into the CubeSat body frame.
-            Quaternion cameraToBody = Quaternion.Inverse(cameraRig.transform.rotation) *
-                camera.transform.rotation;
+            File.WriteAllBytes(imagePath, UnityImageRenderer.EncodePng(frame));
+            CameraIntrinsics intrinsics = frame.Intrinsics;
+            var ecefToBody = new Quaterniond(-state.BodyToEcef.X, -state.BodyToEcef.Y,
+                -state.BodyToEcef.Z, state.BodyToEcef.W);
 
             NavigationRecord record = new NavigationRecord
             {
-                timestamp_utc = state.TimestampUtc.ToString(
+                timestamp_utc = frame.TimestampUtc.ToString(
                     "O",
                     CultureInfo.InvariantCulture),
-                sequence = state.Sequence,
-                simulation_time_seconds = state.SimulationTimeSeconds,
+                sequence = frame.StateSequence,
+                simulation_time_seconds = frame.SimulationTimeSeconds,
 
                 image_file = imageFileName,
                 camera_name = cameraRig.Names[cameraIndex],
-                image_width_px = renderTexture.width,
-                image_height_px = renderTexture.height,
+                image_width_px = frame.Intrinsics.WidthPixels,
+                image_height_px = frame.Intrinsics.HeightPixels,
 
-                fx_px = fx,
-                fy_px = fy,
-                cx_px = 0.5 * renderTexture.width,
-                cy_px = 0.5 * renderTexture.height,
+                fx_px = intrinsics.FocalLengthXPixels,
+                fy_px = intrinsics.FocalLengthYPixels,
+                cx_px = intrinsics.PrincipalPointXPixels + 0.5,
+                rendered_cx_px = intrinsics.PrincipalPointXPixels,
+                cy_px = intrinsics.PrincipalPointYPixels + 0.5,
+                rendered_cy_px = intrinsics.PrincipalPointYPixels,
 
                 rotation_camera_to_body_unity_xyzw = new[]
                 {
@@ -365,20 +422,28 @@ namespace Argus.Simulation.Unity
                     (double)cameraToBody.w
                 },
 
-                position_ecef_m = ToArray(state.PositionEcefMeters),
+                camera_position_ecef_m = ToArray(frame.CameraPositionEcefMeters),
+                camera_to_ecef_xyzw = ToArray(frame.CameraToEcef),
+                camera_to_body_xyzw = ToArray((ecefToBody * frame.CameraToEcef).Normalized()),
+                exposure_duration_s = frame.ExposureDurationSeconds,
+                renderer = frame.Renderer,
+                has_sun_position = frame.Request.HasSunPosition,
+                sun_position_ecef_m = frame.Request.HasSunPosition
+                    ? ToArray(frame.Request.SunPositionEcefMeters.Value) : null,
+
+                position_ecef_m = ToArray(sourceState.PositionEcefMeters),
+                rendered_position_ecef_m = ToArray(state.PositionEcefMeters),
                 velocity_ecef_m_per_s =
                     ToArray(state.VelocityEcefMetersPerSecond),
 
-                rotation_body_to_ecef_xyzw = new[]
-                {
-                    state.BodyToEcef.X,
-                    state.BodyToEcef.Y,
-                    state.BodyToEcef.Z,
-                    state.BodyToEcef.W
-                },
+                rotation_body_to_ecef_xyzw = ToArray(sourceState.BodyToEcef),
+                rendered_rotation_body_to_ecef_xyzw = ToArray(state.BodyToEcef),
 
-                angular_velocity_body_truth_rad_per_s =
-                    ToArray(state.AngularVelocityBodyRadiansPerSecond)
+                angular_velocity_body_truth_rad_per_s = ToArray(sourceState.AngularVelocityBodyRadiansPerSecond),
+                rendered_angular_velocity_body_rad_per_s = ToArray(state.AngularVelocityBodyRadiansPerSecond),
+                source_position_ecef_m = ToArray(sourceState.PositionEcefMeters),
+                source_rotation_body_to_ecef_xyzw = ToArray(sourceState.BodyToEcef),
+                source_angular_velocity_body_truth_rad_per_s = ToArray(sourceState.AngularVelocityBodyRadiansPerSecond)
             };
 
             File.AppendAllText(
@@ -386,35 +451,14 @@ namespace Argus.Simulation.Unity
                 JsonUtility.ToJson(record) + Environment.NewLine);
         }
 
-        private static void SaveRenderTextureAsPng(
-            RenderTexture renderTexture,
-            string outputPath)
-        {
-            RenderTexture previous = RenderTexture.active;
-            RenderTexture.active = renderTexture;
-
-            Texture2D image = new Texture2D(
-                renderTexture.width,
-                renderTexture.height,
-                TextureFormat.RGB24,
-                false);
-
-            image.ReadPixels(
-                new Rect(0, 0, renderTexture.width, renderTexture.height),
-                0,
-                0);
-
-            image.Apply();
-
-            File.WriteAllBytes(outputPath, image.EncodeToPNG());
-
-            RenderTexture.active = previous;
-            Destroy(image);
-        }
-
         private static double[] ToArray(Vector3d vector)
         {
             return new[] { vector.X, vector.Y, vector.Z };
+        }
+
+        private static double[] ToArray(Quaterniond rotation)
+        {
+            return new[] { rotation.X, rotation.Y, rotation.Z, rotation.W };
         }
 
         private static string MakeSafeFileName(string value)

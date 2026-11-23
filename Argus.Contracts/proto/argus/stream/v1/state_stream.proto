@@ -6,7 +6,8 @@ import "argus/sim/v1/sensor_output.proto";
 option csharp_namespace = "Argus.Contracts.Stream.V1";
 
 service StateStreamService {
-  // Subscribe to the active run. Live data, not recorder replay or a control API.
+  // Subscribe to the host's current run: a live run, or a recorded run the host replays
+  // (HOST-7, `source`). A display stream, not a control API.
   rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
 }
 
@@ -24,4 +25,16 @@ message SubscribeResponse {
   // across host restarts (e.g. UUID). Stable across subscriptions in one generation.
   // Independent of recorder segment numbers, which depend on recording storage.
   string run_generation = 3;
+  // Where the run comes from, the same for every response of a generation. UNSPECIFIED only from
+  // a host that predates the field; clients may treat it as LIVE.
+  RunSource source = 4;
+}
+
+// Append new values only; never renumber.
+enum RunSource {
+  RUN_SOURCE_UNSPECIFIED = 0;
+  // The host is running the simulation now (Basilisk owns the clock, D2).
+  RUN_SOURCE_LIVE = 1;
+  // The host is playing back a dataset v1 recording (`--replay`): no engine, no controller.
+  RUN_SOURCE_REPLAY = 2;
 }

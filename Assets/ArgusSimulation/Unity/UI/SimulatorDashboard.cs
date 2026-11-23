@@ -16,8 +16,7 @@ namespace Argus.Simulation.Unity
         {
             OrbitTruth,
             HostSensors,
-            Cameras,
-            SensorAvailability
+            Cameras
         }
 
         private static readonly Color PanelColor = new Color(0.025f, 0.043f, 0.067f, 0.96f);
@@ -37,6 +36,9 @@ namespace Argus.Simulation.Unity
         // time scale or reset here, and orbit and attitude nudges wait for engine commands (UNITY-11).
         private SimulationRunner _runner;
         private StateStreamClient _streamClient;
+        // The runner's LastOutput frames by sensor ID, sorted again only when the set changes.
+        private readonly List<ISensorFrame> _sortedFrames = new List<ISensorFrame>();
+        private SensorOutputSet _sortedOutput;
         private CubeSatCameraRig _cameraRig;
         private NadirTilePriority _nadirPriority;
         private NavigationEpisodeExporter _episodeExporter;
@@ -381,7 +383,7 @@ namespace Argus.Simulation.Unity
 
             string[] labels =
             {
-                "ORBIT TRUTH", "HOST SENSORS", "CAMERAS", "AVAILABILITY"
+                "ORBIT TRUTH", "HOST SENSORS", "CAMERAS"
             };
             SensorGroup[] groups = (SensorGroup[])Enum.GetValues(typeof(SensorGroup));
             for (int index = 0; index < groups.Length; index++)
@@ -601,10 +603,7 @@ namespace Argus.Simulation.Unity
 
             if (IsGroupVisible(SensorGroup.HostSensors))
             {
-                // TODO(G2): list the host's sensor frames from StateStreamClient.OutputProduced
-                // (UNITY-7, #61); Unity no longer runs sensors of its own.
-                AddHeader(builder, "HOST SENSORS");
-                AddRow(builder, "Status", "Received on the stream; shown here by UNITY-7");
+                AddHostSensors(builder);
             }
 
             if (IsGroupVisible(SensorGroup.Cameras))
@@ -631,23 +630,91 @@ namespace Argus.Simulation.Unity
                 }
             }
 
-            if (IsGroupVisible(SensorGroup.SensorAvailability))
-            {
-                // TODO(G2): list sensors from the received SensorOutputSet instead of this fixed
-                // text. The accelerometer (IMU) and magnetometer now exist as Basilisk-sourced
-                // models (Core/Sensors) but publish nothing until the Basilisk service runs.
-                AddHeader(builder, "UNIMPLEMENTED SENSOR MODELS");
-                AddRow(builder, "GNSS", "UNAVAILABLE — no model registered");
-                AddRow(builder, "Accelerometer", "UNAVAILABLE — no model registered");
-                AddRow(builder, "Magnetometer", "UNAVAILABLE — no model registered");
-                AddRow(builder, "Sun sensor", "UNAVAILABLE — no model registered");
-                AddRow(builder, "Star tracker", "UNAVAILABLE — no model registered");
-                AddRow(builder, "Power / thermal", "UNAVAILABLE — no model registered");
-                AddRow(builder, "Radio / radiation", "UNAVAILABLE — no model registered");
-            }
-
             _telemetryText.text = builder.ToString();
         }
+
+        // Every sensor in the set paired with the runner's last state, by ID: the frame's status as
+        // the host set it, how far it lags the set (a slower sensor keeps its last frame), and its
+        // reading. While the stream is down the set is the last one received, so it is marked not live.
+        private void AddHostSensors(StringBuilder builder)
+        {
+            AddHeader(builder, "HOST SENSORS");
+            SensorOutputSet output = _runner.LastOutput;
+            if (output == null)
+            {
+                AddRow(builder, "Status", _runner.HasOutputSource
+                    ? "Waiting for the host's sensor frames…"
+                    : "UNAVAILABLE — the state source sends no sensor frames");
+                return;
+            }
+
+            bool isLive = _streamClient == null || _streamClient.Status == StateStreamStatus.Streaming;
+            AddRow(builder, "As of", $"{output.SimulationTimeSeconds:F1} s / sequence {output.SpacecraftSequence}" +
+                (isLive ? "" : $"  <color=#FAB838>NOT LIVE — stream {_streamClient.Status.ToString().ToLowerInvariant()}</color>"));
+            if (output.Frames.Count == 0)
+            {
+                AddRow(builder, "Sensors", "none configured in this run");
+                return;
+            }
+
+            foreach (ISensorFrame frame in SortedFrames(output))
+            {
+                double age = output.SimulationTimeSeconds - frame.SimulationTimeSeconds;
+                AddRow(builder, EscapeRichText(frame.SensorId), $"{FormatStatus(frame.Status, isLive)}  {age:F1} s old");
+                if (!HasPayload(frame))
+                {
+                    continue;
+                }
+
+                switch (frame.UntypedPayload)
+                {
+                    case ImuMeasurement imu:
+                        AddVector(builder, "    ω rad/s", imu.AngularVelocitySensorRadiansPerSecond);
+                        AddVector(builder, "    f m/s²", imu.SpecificForceSensorMetersPerSecondSquared);
+                        break;
+                    case MagnetometerMeasurement magnetometer:
+                        Vector3d microtesla = magnetometer.MagneticFieldSensorTesla * 1e6;
+                        AddRow(builder, "    B µT", $"{microtesla.X:F2}, {microtesla.Y:F2}, {microtesla.Z:F2}");
+                        break;
+                    case LightSensorMeasurement light:
+                        AddRow(builder, "    E W/m²", $"{light.IrradianceWattsPerSquareMeter:F1}");
+                        break;
+                    default:
+                        AddRow(builder, "    Reading", $"{EscapeRichText(frame.PayloadType.Name)} (no dashboard view)");
+                        break;
+                }
+            }
+        }
+
+        private List<ISensorFrame> SortedFrames(SensorOutputSet output)
+        {
+            if (!ReferenceEquals(output, _sortedOutput))
+            {
+                _sortedOutput = output;
+                _sortedFrames.Clear();
+                _sortedFrames.AddRange(output.Frames);
+                _sortedFrames.Sort((left, right) => string.CompareOrdinal(left.SensorId, right.SensorId));
+            }
+
+            return _sortedFrames;
+        }
+
+        // Valid and Stale frames carry a reading; Unavailable and Invalid ones carry none.
+        private static bool HasPayload(ISensorFrame frame) =>
+            frame.Status == SensorFrameStatus.Valid || frame.Status == SensorFrameStatus.Stale;
+
+        // The host's status; a valid frame from a set that is no longer live shows as the last one.
+        private static string FormatStatus(SensorFrameStatus status, bool isLive) => status switch
+        {
+            SensorFrameStatus.Valid when !isLive => "<color=#FAB838>LAST VALID</color>",
+            SensorFrameStatus.Valid => "<color=#4DFF94>VALID</color>",
+            SensorFrameStatus.Stale => "<color=#FAB838>STALE</color>",
+            SensorFrameStatus.Unavailable => "<color=#FF7366>UNAVAILABLE</color>",
+            _ => $"<color=#FF7366>{status.ToString().ToUpperInvariant()}</color>"
+        };
+
+        // Legacy UI Text has no escape for rich-text tags, so host-named text cannot open one.
+        private static string EscapeRichText(string value) => value.Replace('<', '‹');
 
         // The top bar's status and the stream panel: whether Unity is following the host.
         private void RefreshStream()
@@ -663,6 +730,7 @@ namespace Argus.Simulation.Unity
             _streamText.text =
                 $"{_streamClient.Endpoint}   {_streamClient.Status.ToString().ToUpperInvariant()}" +
                 (generation == null ? "" : $"   run {generation.Substring(0, Math.Min(8, generation.Length))}") +
+                (generation != null && _streamClient.IsReplay ? "   REPLAY" : "") +
                 (_runner != null && _runner.HasState ? $"   ×{_runner.SimulationRate:0.#} real time" : "") +
                 (_streamClient.StatusMessage.Length > 0 ? "\n" + _streamClient.StatusMessage : "");
 
@@ -670,6 +738,10 @@ namespace Argus.Simulation.Unity
             {
                 case StateStreamStatus.Streaming when _nadirPriority != null && _nadirPriority.IsWarmingUp:
                     SetStatus($"● LOADING NADIR {_nadirPriority.WarmUpProgress:0}%", WaitColor);
+                    break;
+                case StateStreamStatus.Streaming when _streamClient.IsReplay:
+                    // The host plays back a recording (--replay, HOST-7): no live run, no controller.
+                    SetStatus("● REPLAYING RECORDED RUN", GoodColor);
                     break;
                 case StateStreamStatus.Streaming:
                     SetStatus("● FOLLOWING HOST", GoodColor);

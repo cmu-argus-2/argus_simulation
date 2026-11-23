@@ -1,28 +1,53 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 
 namespace Argus.Simulation.Core
 {
+    // Who steps a gateway's runs (CORE-9), fixed when it is built.
+    public enum StepDriver
+    {
+        // The gateway's owner (headless/Host, a test) calls Step() or Step(command); a controller with
+        // authority submits the next step's command with TrySubmit. Paced real-time and HIL runs, and
+        // unpaced host runs.
+        Host = 0,
+
+        // Only the controller holding authority steps, with Step(controllerId, command): lockstep SIL
+        // and agent runs (target-architecture §4). Physical actuators are refused. Wall time between
+        // the holder's calls counts as silence, so the run's heartbeat timeout is longer than the
+        // controller's slowest step, or the controller sends heartbeats while it plans (#156 review).
+        Controller = 1
+    }
+
     // Closed-loop session, used by the tests and headless/Host; deterministic except for camera
     // frames, which are only as deterministic as their renderer (Reset, §4). It returns only
     // controller-visible observations (D7) in the DATA-5 order (target-architecture §4):
-    // Reset(seed, scenario) returns observation 0, and Step(command k) applies command k over
-    // [t_k, t_k+1) and returns observation k+1. An observation holds each controller-visible frame
-    // through its kind's controller projection (IDeviceKind.ControllerProjection), so a camera
-    // frame reaches a controller as a CameraObservation without its pose or Sun (CORE-23). Truth and
-    // every sensor frame as sampled, including ground truth, leave the gateway through
-    // StateProduced and SensorOutputProduced: the recorder takes them all, and the state stream
-    // takes the state and the non-camera frames. Every command Step receives reaches the recorder
-    // through CommandLogged.
+    // Reset(seed, scenario) returns observation 0, and a step applies command k over [t_k, t_k+1) and
+    // returns observation k+1. An observation holds each controller-visible frame through its kind's
+    // controller projection (IDeviceKind.ControllerProjection), so a camera frame reaches a controller
+    // as a CameraObservation without its pose or Sun (CORE-23). Truth and every sensor frame as
+    // sampled, including ground truth, leave the gateway through StateProduced and
+    // SensorOutputProduced: the recorder takes them all, and the state stream takes the state and the
+    // non-camera frames. Every command the gateway receives, applies, holds or discards reaches the
+    // recorder through CommandLogged, and every authority change through AuthorityLogged (D6).
     // Each actuator command is held to its device's limits by its kind, then clamped or rejected per
-    // the device's limit_policy (CORE-10). TODO(D7, G1): authority and heartbeat (CORE-9), which log
-    // their decisions through CommandLogged. Serving it to HIL and external controllers is
-    // headless/Host GatewayServer.
-    public sealed class SimulationGateway
+    // the device's limit_policy (CORE-10). One controller at a time holds actuator authority
+    // (IControllerGateway, CORE-9); its accepted calls are its heartbeat, and a missed heartbeat past the run's
+    // timeout drops it; an owner-stepped run then runs every actuator idle (Failsafe) until a controller
+    // claims again, and a lockstep run waits for a claim. Each
+    // tenure starts from idle. Single-threaded: call it from one thread, never from inside one of its
+    // events. Serving it to HIL and external controllers is headless/Host GatewayServer (HOST-6).
+    public sealed class SimulationGateway : IControllerGateway
     {
+        private const int MaximumControllerIdLength = 64;
+        private const string NotRunning = "The run has not started or has ended; call Reset.";
+
         private readonly ISimulationEngine _engine;
         private readonly Func<DeviceConfiguration, ISensor> _sensorFactory;
+        private readonly StepDriver _stepDriver;
+        private readonly Func<TimeSpan> _clock;
         private SimulationConfiguration _scenario;
         private SensorManager _sensors;
         // Each controller-visible sensor's projection, by sensor ID.
@@ -34,11 +59,40 @@ namespace Argus.Simulation.Core
         // RunStarted has fired for _scenario, so a command can be logged against that run.
         private bool _hasStartedRun;
 
+        // Authority (CORE-9). The holder and when it was last heard; the failsafe after a loss; the
+        // one submitted command waiting for the next step; and the command a held step repeats, with
+        // the step it was sent for (-1: idle, as every tenure starts).
+        private string _holder;
+        private TimeSpan _lastHeard;
+        private bool _isFailsafe;
+        private string _failsafeReason;
+        private PendingCommand _pending;
+        private DeviceCommandSet _held;
+        private long _heldFromSequence = -1;
+        // Above 0 while one of the gateway's events runs; every public call is refused then.
+        private int _eventDepth;
+
         // sensorFactory builds the run's sensors from the scenario; SensorFactory.Create by default.
-        public SimulationGateway(ISimulationEngine engine, Func<DeviceConfiguration, ISensor> sensorFactory = null)
+        // clock is a monotonic wall clock for the heartbeat; a Stopwatch by default.
+        public SimulationGateway(
+            ISimulationEngine engine,
+            Func<DeviceConfiguration, ISensor> sensorFactory = null,
+            StepDriver stepDriver = StepDriver.Host,
+            Func<TimeSpan> clock = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _sensorFactory = sensorFactory ?? SensorFactory.Create;
+            switch (stepDriver)
+            {
+                case StepDriver.Host:
+                case StepDriver.Controller:
+                    _stepDriver = stepDriver;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(stepDriver), stepDriver, "Not a known step driver.");
+            }
+
+            _clock = clock ?? StopwatchClock();
         }
 
         // Raised by each successful Reset, before that run's state at t_0, with the run as configured
@@ -56,16 +110,34 @@ namespace Argus.Simulation.Core
         // The terminal observation when the run ends, so the recorder knows why (D6).
         public event Action<Observation> RunTerminated;
 
-        // The command log (D6, D7): every command Step receives once a run has started, applied or
-        // rejected, raised before the engine runs it or Step throws.
+        // The command log (D6, D7): every command the gateway receives once a run has started, applied,
+        // clamped, held, failsafe or rejected (a discarded submission included), raised before the
+        // engine runs it or the call throws.
         public event Action<CommandRecord> CommandLogged;
+
+        // The authority log (D6, CORE-9): every claim, refusal, release and loss once a run has started.
+        // A claim is raised before the holder changes, so a claim whose log fails is no tenure; a
+        // release or a loss after, so its subscribers already see no holder.
+        public event Action<AuthorityRecord> AuthorityLogged;
+
+        // Every controller-visible observation, once its step is committed (NextSequence already
+        // advanced): observation 0, each step's, and the terminal one (CORE-9).
+        public event Action<Observation> ObservationPublished;
+
+        // The run ended: stopped, failed, finished, or replaced by a Reset (CORE-9). Finish and a
+        // replacing Reset publish no terminal observation. A subscriber that throws during a replacing
+        // Reset fails that Reset, as a RunStarted subscriber's would: the old run has ended, and no new
+        // one starts.
+        public event Action RunEnded;
 
         // A sensor that could not release what it held when its run ended, such as a renderer whose
         // cancellation callback throws (CORE-21). The run ends as it would have; this only reports the
         // failure, for logs. A subscriber that throws is ignored.
         public event Action<Exception> SensorEndFailed;
 
-        // The backend exception that ended the run, for logs; never shown to a controller.
+        // The backend exception that ended the run, for logs. Its message is also in the terminal
+        // observation's reason, which in-process controllers see (IControllerGateway.ObservationPublished);
+        // the gateway link sends them the status only (HOST-6).
         public Exception Failure { get; private set; }
 
         // True from a successful Reset until the run terminates.
@@ -75,23 +147,42 @@ namespace Argus.Simulation.Core
         public long NextSequence => _nextSequence;
         public double NextSimulationTimeSeconds => _nextSimulationTimeSeconds;
 
+        // The controller holding actuator authority, or null.
+        public string AuthorityHolder => _holder;
+
+        // A controller lost authority and no controller has claimed it since: every actuator runs idle.
+        public bool IsFailsafe => _isFailsafe;
+
+        // The physical-actuator inhibit of the current run is lifted (CORE-9); HIL-1 (#66) enforces it.
+        public bool PhysicalActuatorsEnabled => _isRunning && _scenario.PhysicalActuators.Enabled;
+
         // Starts the scenario with seed in place of its RandomSeed and returns observation 0. The
         // same seed and scenario give the same observations, except camera frames, which are only
         // as deterministic as their renderer: the step on which a frame arrives, its status (a
         // render that fails is published Unavailable) and its pixels (a renderer that streams its
         // scene can return different pixels) can differ between runs, while its capture time and
-        // capture state are fixed (G3). A lockstep wait for renders is UNITY-4's (#57).
+        // capture state are fixed (G3). A lockstep wait for renders is UNITY-4's (#57). Every run
+        // starts with no controller.
         public Observation Reset(int seed, SimulationConfiguration scenario)
         {
+            ThrowIfInsideEvent();
             if (seed < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(seed), "The seed must be >= 0.");
             }
 
-            SimulationConfiguration run = WithRandomSeed(scenario, seed);
+            SimulationConfiguration run = scenario.WithRandomSeed(seed);
             if (!run.IsValid)
             {
                 throw new ArgumentException("A valid scenario is required.", nameof(scenario));
+            }
+
+            // A frozen lockstep run cannot stop hardware that keeps running (D2: HIL runs are paced).
+            if (run.PhysicalActuators.Enabled && !AllowsPhysicalActuators(_stepDriver))
+            {
+                throw new ArgumentException(
+                    "A run its controller steps (lockstep) cannot enable physical actuators: hardware keeps running while the run waits.",
+                    nameof(scenario));
             }
 
             // Sensors first, so a factory that disagrees with its device is refused like an invalid
@@ -99,16 +190,30 @@ namespace Argus.Simulation.Core
             // the run in progress left running (CORE-22).
             SensorManager sensors = BuildSensors(run);
             Dictionary<string, ControllerProjection> projections = ControllerProjections(run);
+            // The run in progress, if any, ends here. A command a controller submitted for it is logged
+            // as discarded first, under that run and while it still runs, so it lands in its segment
+            // (CORE-9).
+            DiscardPending("the run was reset");
+            EndTenure("the run was reset");
+            bool replacesRun = _isRunning;
             _isRunning = false;
             _hasStartedRun = false;
             Failure = null;
-            // The run in progress, if any, ends here: its sensors are replaced without being sampled
-            // again, so they release their renders first (CORE-21). End is idempotent, so sensors a
-            // stop, failure or Finish already ended are unaffected. Only after BuildSensors, so a
-            // refused Reset leaves the run in progress and its renders untouched (CORE-22). Before
-            // the new sensors' Reset, so a sensor the factory returns again has nothing left to
-            // release there, and a failure to release is reported (SensorEndFailed), not thrown.
+            ClearAuthority();
+            // Its sensors are replaced without being sampled again, so they release their renders first
+            // (CORE-21). End is idempotent, so sensors a stop, failure or Finish already ended are
+            // unaffected. Only after BuildSensors, so a refused Reset leaves the run in progress and its
+            // renders untouched (CORE-22). Before the new sensors' Reset, so a sensor the factory returns
+            // again has nothing left to release there, and a failure to release is reported
+            // (SensorEndFailed), not thrown.
             EndSensors();
+            // Controllers of the replaced run stop here, as at any other end: once its sensors have
+            // ended, and before anything below can fail.
+            if (replacesRun)
+            {
+                Raise(RunEnded);
+            }
+
             sensors.Reset(new SensorResetContext(run.RunId, run.EpochUtc, run.RandomSeed));
             _engine.Initialize(run);
             _scenario = run;
@@ -125,37 +230,310 @@ namespace Argus.Simulation.Core
             // committed only once that state and its frames are published.
             _nextSequence = 0;
             _nextSimulationTimeSeconds = 0.0;
-            RunStarted?.Invoke(run, SensorDefinitions(_sensors));
+            Raise(RunStarted, run, (IReadOnlyList<SensorDefinition>)SensorDefinitions(_sensors));
             _hasStartedRun = true;
             // Running from here, so a subscriber that throws in Publish ends the run at t_0.
             _lastSpacecraft = state.Spacecraft;
             _isRunning = true;
-            return Publish(state);
+            Observation first = Publish(state);
+            PublishToControllers(first);
+            return first;
         }
 
-        // The empty command for the next step: no output (D11).
+        // The owner's step (StepDriver.Host). With no controller, the empty command: no output (D11).
+        // With a controller holding authority, its submitted command for this step, or else its last
+        // applied command again (Held). After a loss, every actuator idle (Failsafe).
         public Observation Step()
         {
-            return Step(DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
+            ThrowIfInsideEvent();
+            RequireOwnerSteps();
+            if (_isRunning)
+            {
+                CheckLiveness();
+            }
+
+            if (!_isRunning || (_holder == null && !_isFailsafe))
+            {
+                return OwnerStep(DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
+            }
+
+            if (_holder != null)
+            {
+                return _pending != null ? AdvancePending() : AdvanceHeld();
+            }
+
+            DeviceCommandSet none = DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds);
+            return Advance(new CommandRecord(
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                CommandOutcome.Failsafe,
+                none,
+                WithIdleActuators(none),
+                _failsafeReason));
         }
 
-        // Applies command k over [t_k, t_k+1) and returns observation k+1. A backend failure ends
-        // the run with a BackendFailed observation instead of throwing; Failure keeps the cause.
-        // Every command is logged first (CommandLogged), including one Step then rejects.
+        // The owner's command (StepDriver.Host, no controller holding authority): applies command k over
+        // [t_k, t_k+1) and returns observation k+1. A backend failure ends the run with a BackendFailed
+        // observation instead of throwing; Failure keeps the cause. Every command is logged first
+        // (CommandLogged), including one Step then rejects.
         public Observation Step(DeviceCommandSet command)
         {
-            if (!_isRunning)
+            ThrowIfInsideEvent();
+            if (_isRunning)
             {
-                const string notRunning = "The run has not started or has ended; call Reset.";
-                if (_hasStartedRun)
+                string refusal = null;
+                if (_stepDriver != StepDriver.Host)
                 {
-                    Log(Rejected(command, notRunning));
+                    refusal = "This run is stepped by the controller holding authority; its owner cannot step it.";
+                }
+                else
+                {
+                    CheckLiveness();
+                    if (_holder != null)
+                    {
+                        refusal = $"Controller '{_holder}' holds actuator authority, so the owner's command is refused.";
+                    }
+                    else if (_isFailsafe)
+                    {
+                        refusal = $"{_failsafeReason} A controller must claim authority before any command.";
+                    }
                 }
 
-                throw new InvalidOperationException(notRunning);
+                if (refusal != null)
+                {
+                    Log(Rejected(command, refusal));
+                    throw new InvalidOperationException(refusal);
+                }
+            }
+
+            return OwnerStep(command);
+        }
+
+        // StepDriver.Controller (lockstep): the controller holding authority applies command k and gets
+        // observation k+1. An accepted step is its heartbeat; its liveness is checked first.
+        public Observation Step(string controllerId, DeviceCommandSet command)
+        {
+            ThrowIfInsideEvent();
+            string refusal = ControllerCallRefusal(controllerId, StepDriver.Controller, out bool unusableId);
+            if (refusal != null)
+            {
+                if (_hasStartedRun)
+                {
+                    Log(Rejected(command, refusal, unusableId ? null : controllerId));
+                }
+
+                if (unusableId)
+                {
+                    throw new ArgumentException(refusal, nameof(controllerId));
+                }
+
+                throw new InvalidOperationException(refusal);
             }
 
             string rejection = Rejection(command, out DeviceCommandSet limited, out string clamped);
+            if (rejection != null)
+            {
+                Log(Rejected(command, rejection, controllerId));
+                throw new ArgumentException(rejection, nameof(command));
+            }
+
+            // Only an accepted command is a heartbeat: a controller whose every command is refused is
+            // not controlling, so it fails safe after the timeout (CORE-9 final review).
+            _lastHeard = _clock();
+            Observation next = Advance(new CommandRecord(
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                clamped == null ? CommandOutcome.Applied : CommandOutcome.Clamped,
+                command,
+                WithIdleActuators(limited),
+                clamped,
+                controllerId));
+            // The step's own engine and publish time is not silence: the holder cannot call during it.
+            if (_holder == controllerId)
+            {
+                _lastHeard = _clock();
+            }
+
+            return next;
+        }
+
+        // StepDriver.Host: the controller holding authority submits the command for the next step,
+        // which the owner's Step() applies. Only for step k, before the owner starts it: an earlier
+        // step's command is late, a later one early, a second one for k a duplicate. A refusal is
+        // logged, never applied; an accepted command is logged at the step that applies it, or as
+        // discarded if it never gets there.
+        public bool TrySubmit(string controllerId, DeviceCommandSet command, out string refusal)
+        {
+            ThrowIfInsideEvent();
+            refusal = SubmissionRefusal(controllerId, command, out DeviceCommandSet limited, out string clamped);
+            if (refusal != null)
+            {
+                if (_hasStartedRun)
+                {
+                    Log(Rejected(command, refusal, UsableOrNull(controllerId)));
+                }
+
+                return false;
+            }
+
+            // Only an accepted command is a heartbeat (see Step(controllerId, command)).
+            _lastHeard = _clock();
+            _pending = new PendingCommand(controllerId, command, limited, clamped);
+            return true;
+        }
+
+        // Granted when no controller holds authority, when the holder has missed its heartbeat (it is
+        // lost first), or to the holder itself; each grant starts a new tenure from idle, so a
+        // restarted controller inherits nothing. Refused while another controller holds it (logged).
+        public bool TryClaim(string controllerId, out string refusal)
+        {
+            ThrowIfInsideEvent();
+            refusal = ControllerIdProblem(controllerId) ?? (_isRunning ? null : NotRunning);
+            if (refusal != null)
+            {
+                return false;
+            }
+
+            CheckLiveness();
+            if (_holder != null && _holder != controllerId)
+            {
+                refusal = $"Controller '{_holder}' holds actuator authority.";
+                LogAuthority(AuthorityChange.Refused, controllerId, refusal);
+                return false;
+            }
+
+            if (_holder != null)
+            {
+                DiscardPending($"controller '{controllerId}' claimed authority again");
+            }
+
+            // Logged before the tenure starts, so a claim whose log fails (which ends the run) is no
+            // tenure, and the run's end closes none it did not record.
+            LogAuthority(AuthorityChange.Claimed, controllerId, null);
+            _holder = controllerId;
+            _lastHeard = _clock();
+            _isFailsafe = false;
+            _failsafeReason = null;
+            _held = WithIdleActuators(DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds));
+            _heldFromSequence = -1;
+            return true;
+        }
+
+        // The holder gives authority up; the run is uncontrolled again and its owner's steps idle.
+        public bool TryRelease(string controllerId, out string refusal)
+        {
+            ThrowIfInsideEvent();
+            refusal = HolderRefusal(controllerId);
+            if (refusal != null)
+            {
+                return false;
+            }
+
+            _holder = null;
+            DiscardPending($"controller '{controllerId}' released authority");
+            ClearAuthority();
+            LogAuthority(AuthorityChange.Released, controllerId, null);
+            return true;
+        }
+
+        public bool TryHeartbeat(string controllerId, out string refusal)
+        {
+            ThrowIfInsideEvent();
+            refusal = HolderRefusal(controllerId);
+            if (refusal != null)
+            {
+                return false;
+            }
+
+            _lastHeard = _clock();
+            return true;
+        }
+
+        // The owner's liveness check without a step (HOST-6 calls it while it waits): a holder silent
+        // past the timeout is lost.
+        public void CheckHeartbeat()
+        {
+            ThrowIfInsideEvent();
+            if (_isRunning)
+            {
+                CheckLiveness();
+            }
+        }
+
+        // The owner drops the holder, such as when its link session ends (HOST-6): a loss, logged with
+        // the reason. Does nothing for a controller that does not hold authority, or with no run.
+        public void Revoke(string controllerId, string reason)
+        {
+            ThrowIfInsideEvent();
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new ArgumentException("A reason is required.", nameof(reason));
+            }
+
+            if (_isRunning && _holder != null && _holder == controllerId)
+            {
+                Lose(reason);
+            }
+        }
+
+        // Ends a running run on the caller's behalf (Ctrl+C, a recorder failure), so subscribers such
+        // as the recorder learn why it ended. Returns the terminal observation, or null when no run
+        // is running.
+        public Observation Stop(string reason)
+        {
+            ThrowIfInsideEvent();
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                throw new ArgumentException("A reason is required.", nameof(reason));
+            }
+
+            return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
+        }
+
+        // The run reached its last step: no sensor is sampled again, so each releases what it holds,
+        // such as a camera's renders (CORE-21), and Step refuses further commands. Nothing went wrong,
+        // so there is no terminal observation and RunTerminated is not raised; the recording ends as
+        // complete. A submitted command that never ran is logged as discarded first. Does nothing when
+        // no run is running. Every driver that stops stepping at a run's last step calls it
+        // (headless/Host does); otherwise the sensors keep their renders until the next Reset.
+        public void Finish()
+        {
+            ThrowIfInsideEvent();
+            if (!_isRunning)
+            {
+                return;
+            }
+
+            DiscardPending("the run reached its last step");
+            EndTenure("the run reached its last step");
+            _isRunning = false;
+            ClearAuthority();
+            EndSensors();
+            Raise(RunEnded);
+        }
+
+        // The owner's own command, with no controller holding authority.
+        private Observation OwnerStep(DeviceCommandSet command)
+        {
+            if (!_isRunning)
+            {
+                if (_hasStartedRun)
+                {
+                    Log(Rejected(command, NotRunning));
+                }
+
+                throw new InvalidOperationException(NotRunning);
+            }
+
+            string rejection = Rejection(command, out DeviceCommandSet limited, out string clamped);
+            // With the inhibit lifted, only a controller holding authority moves an actuator (CORE-9).
+            if (rejection == null && PhysicalActuatorsEnabled && !IsIdle(limited))
+            {
+                rejection = "Physical actuators are enabled, so only a controller holding authority may command a non-idle value.";
+            }
+
             if (rejection != null)
             {
                 Log(Rejected(command, rejection));
@@ -164,15 +542,64 @@ namespace Argus.Simulation.Core
 
             // The record keeps the command as sent and what the engine runs: within the limits, or
             // clamped to them with the reason (CORE-10).
-            DeviceCommandSet applied = WithIdleActuators(limited);
-            Log(new CommandRecord(
+            return Advance(new CommandRecord(
                 _scenario.RunId,
                 _nextSequence,
                 _nextSimulationTimeSeconds,
                 clamped == null ? CommandOutcome.Applied : CommandOutcome.Clamped,
                 command,
-                applied,
+                WithIdleActuators(limited),
                 clamped));
+        }
+
+        // The holder's submitted command for this step.
+        private Observation AdvancePending()
+        {
+            PendingCommand pending = _pending;
+            _pending = null;
+            if (pending.Requested.Sequence != _nextSequence)
+            {
+                // Every step consumes or discards the pending command, so this is a bug.
+                throw new InvalidOperationException(
+                    $"A command submitted for step {pending.Requested.Sequence} was still pending at step {_nextSequence}.");
+            }
+
+            return Advance(new CommandRecord(
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                pending.Clamped == null ? CommandOutcome.Applied : CommandOutcome.Clamped,
+                pending.Requested,
+                WithIdleActuators(pending.Limited),
+                pending.Clamped,
+                pending.ControllerId));
+        }
+
+        // No command arrived for this step: the tenure's last applied command again, restamped to it.
+        // Its requested set is empty, since nothing was sent for this step.
+        private Observation AdvanceHeld()
+        {
+            DeviceCommandSet held = new DeviceCommandSet(_nextSequence, _nextSimulationTimeSeconds, _held.Commands);
+            string reason = _heldFromSequence < 0
+                ? $"No command for step {_nextSequence} from controller '{_holder}'; holding idle."
+                : $"No command for step {_nextSequence} from controller '{_holder}'; holding step {_heldFromSequence}'s.";
+            return Advance(new CommandRecord(
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                CommandOutcome.Held,
+                DeviceCommandSet.None(_nextSequence, _nextSimulationTimeSeconds),
+                held,
+                reason,
+                _holder));
+        }
+
+        // Logs the record, runs its applied command over [t_k, t_k+1), publishes observation k+1, and
+        // only then publishes it to controllers.
+        private Observation Advance(CommandRecord record)
+        {
+            DeviceCommandSet applied = record.Applied.Value;
+            Log(record);
 
             long sequence = _nextSequence + 1;
             double simulationTimeSeconds = sequence * _scenario.FixedStepSeconds;
@@ -213,37 +640,236 @@ namespace Argus.Simulation.Core
             Observation observation = Publish(state);
             _nextSequence = sequence;
             _nextSimulationTimeSeconds = simulationTimeSeconds;
+            // The command a held step repeats is the holder's last one that was sent and applied.
+            if (_holder != null && record.ControllerId == _holder && IsSentCommand(record.Outcome))
+            {
+                _held = applied;
+                _heldFromSequence = record.Sequence;
+            }
+
+            PublishToControllers(observation);
             return observation;
         }
 
-        // Ends a running run on the caller's behalf (Ctrl+C, a recorder failure), so subscribers such
-        // as the recorder learn why it ended. Returns the terminal observation, or null when no run
-        // is running.
-        public Observation Stop(string reason)
+        // A command a controller sent and the engine runs, as opposed to one the gateway made up for
+        // the step (Held, Failsafe) or refused.
+        private static bool IsSentCommand(CommandOutcome outcome)
         {
-            if (string.IsNullOrWhiteSpace(reason))
+            switch (outcome)
             {
-                throw new ArgumentException("A reason is required.", nameof(reason));
+                case CommandOutcome.Applied:
+                case CommandOutcome.Clamped:
+                    return true;
+                case CommandOutcome.Held:
+                case CommandOutcome.Failsafe:
+                case CommandOutcome.Rejected:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "Not a known command outcome.");
             }
-
-            return _isRunning ? End(ObservationStatus.Stopped, reason) : null;
         }
 
-        // The run reached its last step: no sensor is sampled again, so each releases what it holds,
-        // such as a camera's renders (CORE-21), and Step refuses further commands. Nothing went wrong,
-        // so there is no terminal observation and RunTerminated is not raised; the recording ends as
-        // complete. Does nothing when no run is running. Every driver that stops stepping at a run's
-        // last step calls it (headless/Host does); otherwise the sensors keep their renders until
-        // the next Reset.
-        public void Finish()
+        // Whether a step driver may run physical actuators: only one that keeps stepping while a
+        // controller is silent, so the failsafe can act (D2).
+        private static bool AllowsPhysicalActuators(StepDriver stepDriver)
         {
+            switch (stepDriver)
+            {
+                case StepDriver.Host:
+                    return true;
+                case StepDriver.Controller:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(stepDriver), stepDriver, "Not a known step driver.");
+            }
+        }
+
+        // Why a submission is refused, or null.
+        private string SubmissionRefusal(string controllerId, DeviceCommandSet command, out DeviceCommandSet limited, out string clamped)
+        {
+            limited = command;
+            clamped = null;
+            string refusal = ControllerCallRefusal(controllerId, StepDriver.Host, out _);
+            if (refusal != null)
+            {
+                return refusal;
+            }
+
+            // An invalid command is refused as invalid first, so it is never mistaken for a duplicate.
+            if (!command.IsValid)
+            {
+                return Rejection(command, out limited, out clamped);
+            }
+
+            if (command.Sequence < _nextSequence)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "The command for step {0} is late: step {1} is next.",
+                    command.Sequence,
+                    _nextSequence);
+            }
+
+            if (command.Sequence > _nextSequence)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "The command for step {0} is early: only the next step, {1}, takes a command.",
+                    command.Sequence,
+                    _nextSequence);
+            }
+
+            if (_pending != null)
+            {
+                return $"A command for step {_nextSequence} is already accepted, so this one is a duplicate.";
+            }
+
+            return Rejection(command, out limited, out clamped);
+        }
+
+        // Why a release or heartbeat from this controller is refused, or null.
+        private string HolderRefusal(string controllerId) => ControllerCallRefusal(controllerId, null, out _);
+
+        // Why a call from a controller that must hold authority (a step, a submission, a heartbeat or
+        // a release) is refused, or null, in one order: an unusable ID first (its line can carry no
+        // controller), then no run, then the wrong step driver for the call (null for a heartbeat or
+        // release), then liveness, then authority. A claim checks the ID and the run the same way, then
+        // decides authority itself (TryClaim); a rule added here for every call belongs there too.
+        private string ControllerCallRefusal(string controllerId, StepDriver? expected, out bool unusableId)
+        {
+            string idProblem = ControllerIdProblem(controllerId);
+            unusableId = idProblem != null;
+            if (unusableId)
+            {
+                return idProblem;
+            }
+
             if (!_isRunning)
+            {
+                return NotRunning;
+            }
+
+            if (expected.HasValue && _stepDriver != expected.Value)
+            {
+                switch (_stepDriver)
+                {
+                    case StepDriver.Host:
+                        return "This run is stepped by its owner; submit commands with TrySubmit.";
+                    case StepDriver.Controller:
+                        return "This run is stepped by the controller holding authority; call Step(controllerId, command).";
+                    default:
+                        throw new InvalidOperationException($"Step driver {_stepDriver} is not one the gateway knows.");
+                }
+            }
+
+            CheckLiveness();
+            return _holder == controllerId ? null : NotHolder(controllerId);
+        }
+
+        private string NotHolder(string controllerId)
+        {
+            if (_holder != null)
+            {
+                return $"Controller '{controllerId}' does not hold actuator authority; controller '{_holder}' does.";
+            }
+
+            return _isFailsafe
+                ? $"Controller '{controllerId}' does not hold actuator authority. {_failsafeReason} Claim it first."
+                : $"Controller '{controllerId}' does not hold actuator authority; claim it first.";
+        }
+
+        // A holder silent past the run's timeout is lost; a timeout of 0 never fires.
+        private void CheckLiveness()
+        {
+            double timeoutSeconds = _scenario.HeartbeatTimeoutWallSeconds;
+            if (_holder == null || timeoutSeconds <= 0.0)
             {
                 return;
             }
 
-            _isRunning = false;
-            EndSensors();
+            // From ticks, since TimeSpan.TotalSeconds differs in its last bits between Mono (Unity) and
+            // .NET. The reason gives the silence rounded up to the millisecond, so it never reads as
+            // no longer than the timeout.
+            long silentTicks = (_clock() - _lastHeard).Ticks;
+            double silentSeconds = silentTicks / (double)TimeSpan.TicksPerSecond;
+            if (silentSeconds > timeoutSeconds)
+            {
+                long silentMilliseconds = (silentTicks + TimeSpan.TicksPerMillisecond - 1) / TimeSpan.TicksPerMillisecond;
+                Lose(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "no heartbeat for {0:0.###} s; the timeout is {1:R} s",
+                    silentMilliseconds / 1000.0,
+                    timeoutSeconds));
+            }
+        }
+
+        // The holder loses authority: its pending command is discarded and the run fails safe.
+        private void Lose(string reason)
+        {
+            string lost = _holder;
+            _holder = null;
+            _isFailsafe = true;
+            _failsafeReason = $"Failsafe since step {_nextSequence}: controller '{lost}' lost authority ({reason}).";
+            _held = default;
+            _heldFromSequence = -1;
+            DiscardPending($"controller '{lost}' lost authority ({reason})");
+            LogAuthority(AuthorityChange.Lost, lost, reason);
+        }
+
+        // Clears the pending command first, then logs it as discarded under the current run, so a log
+        // subscriber that throws (which ends the run through End) finds nothing left to discard.
+        private void DiscardPending(string reason)
+        {
+            PendingCommand pending = _pending;
+            _pending = null;
+            if (pending == null || !_hasStartedRun)
+            {
+                return;
+            }
+
+            Log(new CommandRecord(
+                _scenario.RunId,
+                _nextSequence,
+                _nextSimulationTimeSeconds,
+                CommandOutcome.Rejected,
+                pending.Requested,
+                null,
+                $"Discarded before step {_nextSequence} ran: {reason}.",
+                pending.ControllerId));
+        }
+
+        // A tenure that ends with its run is closed in the authority log: the holder is Released with how
+        // the run ended, under that run and while it still runs (#156 review). The holder is cleared
+        // first, so a log subscriber that throws (which ends the run through End) finds no tenure left.
+        private void EndTenure(string reason)
+        {
+            string holder = _holder;
+            if (holder == null || !_hasStartedRun)
+            {
+                return;
+            }
+
+            _holder = null;
+            LogAuthority(AuthorityChange.Released, holder, reason);
+        }
+
+        private void ClearAuthority()
+        {
+            _holder = null;
+            _isFailsafe = false;
+            _failsafeReason = null;
+            _pending = null;
+            _held = default;
+            _heldFromSequence = -1;
+        }
+
+        private void RequireOwnerSteps()
+        {
+            if (_stepDriver != StepDriver.Host)
+            {
+                throw new InvalidOperationException(
+                    "This run is stepped by the controller holding authority; its owner cannot step it.");
+            }
         }
 
         // Ends the run. The observation is the last step that exists, k, so its time and UTC are the
@@ -256,7 +882,12 @@ namespace Argus.Simulation.Core
 
         private Observation End(ObservationStatus status, string reason)
         {
+            // A submitted command that never ran is logged under this run while it still runs; a
+            // discard whose log fails ends the run here again, with nothing left to discard.
+            DiscardPending($"the run ended ({reason})");
+            EndTenure($"the run ended ({reason})");
             _isRunning = false;
+            ClearAuthority();
             Observation observation = new Observation(
                 _scenario.RunId,
                 _lastSpacecraft.Sequence,
@@ -269,7 +900,13 @@ namespace Argus.Simulation.Core
             // No sensor is sampled again for this run, so each releases what it holds, such as a
             // camera's renders (CORE-21).
             EndSensors();
-            RunTerminated?.Invoke(observation);
+            // Controllers learn of the end even when a RunTerminated subscriber (the recorder) throws,
+            // and the first subscriber's exception, not a later one's, reaches the caller.
+            ExceptionDispatchInfo failure = null;
+            RaiseCapturing(() => Raise(RunTerminated, observation), ref failure);
+            RaiseCapturing(() => Raise(ObservationPublished, observation), ref failure);
+            RaiseCapturing(() => Raise(RunEnded), ref failure);
+            failure?.Throw();
             return observation;
         }
 
@@ -287,7 +924,7 @@ namespace Argus.Simulation.Core
             {
                 try
                 {
-                    SensorEndFailed?.Invoke(failure);
+                    Raise(SensorEndFailed, failure);
                 }
                 catch
                 {
@@ -406,6 +1043,21 @@ namespace Argus.Simulation.Core
             return null;
         }
 
+        // Every commanded actuator is at its kind's idle values.
+        private bool IsIdle(DeviceCommandSet command)
+        {
+            foreach (DeviceCommand device in command.Commands)
+            {
+                DeviceConfiguration? configured = ConfiguredActuator(device.DeviceId);
+                if (configured.HasValue && !((IActuatorKind)configured.Value.KindDefinition).IsIdle(device.Values))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // The run's actuator with this device ID, or null.
         private DeviceConfiguration? ConfiguredActuator(string deviceId)
         {
@@ -451,9 +1103,9 @@ namespace Argus.Simulation.Core
             return false;
         }
 
-        private CommandRecord Rejected(DeviceCommandSet command, string reason) =>
+        private CommandRecord Rejected(DeviceCommandSet command, string reason, string controllerId = null) =>
             new CommandRecord(
-                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Rejected, command, null, reason);
+                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, CommandOutcome.Rejected, command, null, reason, controllerId);
 
         // A subscriber that throws ends the run, so the engine never runs a command the log missed,
         // and the caller gets the subscriber's exception, even in place of a rejection: a log with a
@@ -463,12 +1115,29 @@ namespace Argus.Simulation.Core
         {
             try
             {
-                CommandLogged?.Invoke(record);
+                Raise(CommandLogged, record);
             }
             catch (Exception exception)
             {
                 EndBeforeRethrow(() => End(
                     ObservationStatus.Stopped, $"Logging the command for step {record.Sequence} failed: {exception.Message}"));
+                throw;
+            }
+        }
+
+        // As Log, for the authority log.
+        private void LogAuthority(AuthorityChange change, string controllerId, string reason)
+        {
+            AuthorityRecord record = new AuthorityRecord(
+                _scenario.RunId, _nextSequence, _nextSimulationTimeSeconds, controllerId, change, reason);
+            try
+            {
+                Raise(AuthorityLogged, record);
+            }
+            catch (Exception exception)
+            {
+                EndBeforeRethrow(() => End(
+                    ObservationStatus.Stopped, $"Logging the authority change at step {record.Sequence} failed: {exception.Message}"));
                 throw;
             }
         }
@@ -483,9 +1152,9 @@ namespace Argus.Simulation.Core
             Observation observation;
             try
             {
-                StateProduced?.Invoke(state);
+                Raise(StateProduced, state);
                 SensorOutputSet output = _sensors.Sample(new SensorSampleContext(_scenario.RunId, state));
-                SensorOutputProduced?.Invoke(output);
+                Raise(SensorOutputProduced, output);
                 observation = Observation.Owning(
                     state.RunId,
                     spacecraft.Sequence,
@@ -530,6 +1199,133 @@ namespace Argus.Simulation.Core
             }
 
             return visible;
+        }
+
+        // ObservationPublished, once the step is committed. A subscriber that throws ends the run, as
+        // in Publish.
+        private void PublishToControllers(Observation observation)
+        {
+            try
+            {
+                Raise(ObservationPublished, observation);
+            }
+            catch (Exception exception)
+            {
+                EndBeforeRethrow(() => End(
+                    ObservationStatus.Stopped, $"Publishing observation {observation.Sequence} failed: {exception.Message}"));
+                throw;
+            }
+        }
+
+        // Raises an event and keeps the first exception any of a series throws.
+        private static void RaiseCapturing(Action raise, ref ExceptionDispatchInfo failure)
+        {
+            try
+            {
+                raise();
+            }
+            catch (Exception exception)
+            {
+                failure = failure ?? ExceptionDispatchInfo.Capture(exception);
+            }
+        }
+
+        // Every event is raised through these, so a gateway call from inside a subscriber is refused
+        // (ThrowIfInsideEvent): a controller answers after the call that published returns (CORE-9).
+        private void Raise(Action handler)
+        {
+            if (handler == null)
+            {
+                return;
+            }
+
+            _eventDepth++;
+            try
+            {
+                handler();
+            }
+            finally
+            {
+                _eventDepth--;
+            }
+        }
+
+        private void Raise<T>(Action<T> handler, T value)
+        {
+            if (handler == null)
+            {
+                return;
+            }
+
+            _eventDepth++;
+            try
+            {
+                handler(value);
+            }
+            finally
+            {
+                _eventDepth--;
+            }
+        }
+
+        private void Raise<T1, T2>(Action<T1, T2> handler, T1 first, T2 second)
+        {
+            if (handler == null)
+            {
+                return;
+            }
+
+            _eventDepth++;
+            try
+            {
+                handler(first, second);
+            }
+            finally
+            {
+                _eventDepth--;
+            }
+        }
+
+        private void ThrowIfInsideEvent()
+        {
+            if (_eventDepth > 0)
+            {
+                throw new InvalidOperationException(
+                    "A gateway call from inside one of its events is refused; answer after the call that raised it returns.");
+            }
+        }
+
+        // Non-blank, at most 64 characters, no control characters; HOST-6 gives each link session its own.
+        private static string ControllerIdProblem(string controllerId)
+        {
+            if (string.IsNullOrWhiteSpace(controllerId))
+            {
+                return "A controller ID is required.";
+            }
+
+            if (controllerId.Length > MaximumControllerIdLength)
+            {
+                return $"A controller ID has at most {MaximumControllerIdLength} characters; this one has {controllerId.Length}.";
+            }
+
+            foreach (char character in controllerId)
+            {
+                if (char.IsControl(character))
+                {
+                    return "A controller ID has no control characters.";
+                }
+            }
+
+            return null;
+        }
+
+        private static string UsableOrNull(string controllerId) =>
+            ControllerIdProblem(controllerId) == null ? controllerId : null;
+
+        private static Func<TimeSpan> StopwatchClock()
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            return () => watch.Elapsed;
         }
 
         private bool IsExpectedState(
@@ -671,15 +1467,21 @@ namespace Argus.Simulation.Core
 
         private static bool IsSensor(DeviceConfiguration device) => device.KindDefinition?.Role == DeviceRole.Sensor;
 
-        private static SimulationConfiguration WithRandomSeed(SimulationConfiguration scenario, int seed) =>
-            new SimulationConfiguration(
-                scenario.RunId,
-                scenario.EpochUtc,
-                scenario.FixedStepSeconds,
-                initialOrbit: scenario.InitialOrbit,
-                randomSeed: seed,
-                kernelSetId: scenario.KernelSetId,
-                spacecraft: scenario.Spacecraft,
-                devices: scenario.Devices);
+        // A controller's accepted command for the next step, validated and limited at submission.
+        private sealed class PendingCommand
+        {
+            public PendingCommand(string controllerId, DeviceCommandSet requested, DeviceCommandSet limited, string clamped)
+            {
+                ControllerId = controllerId;
+                Requested = requested;
+                Limited = limited;
+                Clamped = clamped;
+            }
+
+            public string ControllerId { get; }
+            public DeviceCommandSet Requested { get; }
+            public DeviceCommandSet Limited { get; }
+            public string Clamped { get; }
+        }
     }
 }

@@ -9,6 +9,8 @@ namespace Argus.Simulation.Unity
     // (D2). States arrive through the scene's ISimulationStateSource (StateStreamClient) and are
     // published as delivered, never stepped, re-timed or paused; Unity has no simulation of its own.
     // Presentation (CesiumSpacecraftPoseDriver) interpolates between them without changing them.
+    // When the source is also an ISensorOutputSource, LastOutput keeps the SensorOutputSet paired
+    // with LastState, so the dashboard's sensors always describe the state it shows.
     public sealed class SimulationRunner : MonoBehaviour
     {
         [SerializeField] private MonoBehaviour stateSourceComponent;
@@ -19,6 +21,7 @@ namespace Argus.Simulation.Unity
         private readonly double[] _arrivalSeconds = new double[RateWindow];
         private readonly double[] _arrivalSimulationSeconds = new double[RateWindow];
         private ISimulationStateSource _stateSource;
+        private ISensorOutputSource _outputSource;
         private bool _isSubscribed;
         private int _arrivals;
 
@@ -29,6 +32,12 @@ namespace Argus.Simulation.Unity
 
         public bool HasState { get; private set; }
         public SimulationState LastState { get; private set; }
+        // The sensor output set of LastState, or null before it arrives, for a state source that sends
+        // none, and after HistoryReset.
+        public SensorOutputSet LastOutput { get; private set; }
+
+        public bool HasOutputSource => _outputSource != null;
+
         public double SimulationTimeSeconds => HasState ? LastState.Spacecraft.SimulationTimeSeconds : 0.0;
 
         // Simulated seconds per wall-clock second over the last few states, or 0 before two: how fast
@@ -82,13 +91,29 @@ namespace Argus.Simulation.Unity
 
             LastState = state;
             HasState = true;
+            LastOutput = null;
             StateProduced?.Invoke(state);
+        }
+
+        // A set arrives right after its state; one whose state was rejected, or that belongs to
+        // another state, is dropped so LastOutput never describes a state other than LastState.
+        private void HandleOutput(SensorOutputSet output)
+        {
+            if (output == null || !HasState ||
+                output.RunId != LastState.RunId ||
+                output.SpacecraftSequence != LastState.Spacecraft.Sequence)
+            {
+                return;
+            }
+
+            LastOutput = output;
         }
 
         private void HandleHistoryReset()
         {
             HasState = false;
             LastState = default;
+            LastOutput = null;
             SimulationRate = 0.0;
             _arrivals = 0;
             HistoryReset?.Invoke();
@@ -98,6 +123,8 @@ namespace Argus.Simulation.Unity
         {
             Unsubscribe();
             _stateSource = stateSourceComponent as ISimulationStateSource;
+            _outputSource = _stateSource as ISensorOutputSource;
+            LastOutput = null;
             if (stateSourceComponent != null && _stateSource == null)
             {
                 Debug.LogError(
@@ -120,6 +147,10 @@ namespace Argus.Simulation.Unity
 
             _stateSource.StateProduced += HandleState;
             _stateSource.HistoryReset += HandleHistoryReset;
+            if (_outputSource != null)
+            {
+                _outputSource.OutputProduced += HandleOutput;
+            }
             _isSubscribed = true;
         }
 
@@ -132,6 +163,10 @@ namespace Argus.Simulation.Unity
 
             _stateSource.StateProduced -= HandleState;
             _stateSource.HistoryReset -= HandleHistoryReset;
+            if (_outputSource != null)
+            {
+                _outputSource.OutputProduced -= HandleOutput;
+            }
             _isSubscribed = false;
         }
     }

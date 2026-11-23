@@ -4,14 +4,15 @@ using UnityEngine;
 
 namespace Argus.Simulation.Tests
 {
-    // A host stand-in for PlayMode tests: publishes states of Core's analytic test fixture (D9) as
-    // StateStreamClient would, on demand.
-    public sealed class TestStateSource : MonoBehaviour, ISimulationStateSource
+    // A host stand-in for PlayMode tests: publishes states of Core's analytic test fixture (D9), and
+    // sensor output sets, as StateStreamClient would, on demand.
+    public sealed class TestStateSource : MonoBehaviour, ISimulationStateSource, ISensorOutputSource
     {
         private AnalyticSimulationEngine _engine;
 
         public event Action<SimulationState> StateProduced;
         public event Action HistoryReset;
+        public event Action<SensorOutputSet> OutputProduced;
 
         // Publishes the fixture's state at this step of a 0.1 s run.
         public SimulationState Publish(long sequence)
@@ -30,6 +31,10 @@ namespace Argus.Simulation.Tests
             StateProduced?.Invoke(state);
             return state;
         }
+
+        public void Publish(SimulationState state) => StateProduced?.Invoke(state);
+
+        public void PublishOutput(SensorOutputSet output) => OutputProduced?.Invoke(output);
 
         public void ResetHistory() => HistoryReset?.Invoke();
     }

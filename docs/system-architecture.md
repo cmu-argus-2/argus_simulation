@@ -146,6 +146,11 @@ Only one controller has actuator authority during a run.
 Recorded states, sensor frames, commands, and images are played back without an
 active controller. Unity uses the same state contract as a live run.
 
+`headless/Host --replay` plays a dataset v1 run over the state stream (HOST-7,
+[target-architecture.md](target-architecture.md) §4): the states, with their applied
+commands, and the non-camera sensor frames, tagged `RUN_SOURCE_REPLAY`, which the dashboard
+shows as **REPLAYING RECORDED RUN**. Camera images are not served yet.
+
 ## 6. Core contracts
 
 The first implementation lives in `Assets/ArgusSimulation/Core` and has no Unity
@@ -312,8 +317,9 @@ equation, the step each command acts over, and the magnetic torquers' `m × B`, 
 | Datasets and replay | versioned files/manifests |
 
 REST is not part of the inner control loop. Protobuf schemas in `Argus.Contracts/` are the
-cross-language source of truth; v1 covers the Basilisk link, and the gateway, stream and
-renderer schemas are placeholders.
+cross-language source of truth; v1 covers the Basilisk link, the state stream (CON-1) and the
+controller gateway (CON-3, one bidirectional stream per controller session); the renderer schema
+is a placeholder.
 
 ## 13. Safety, validation, and observability
 
@@ -372,8 +378,8 @@ folders, is [code-organization.md](code-organization.md).
 
 ### Runtime separation
 
-- [x] Define versioned Protobuf schemas for the Basilisk link (gateway, stream and renderer
-      schemas remain).
+- [x] Define versioned Protobuf schemas for the Basilisk link, the state stream and the
+      controller gateway (the renderer schema remains).
 - [ ] Run the core in a standalone headless process (`headless/Host` runs the gateway,
       `BasiliskEngine` and the P0 sensors; the recorder, gateway server and Unity state
       stream remain, target-architecture G2).
