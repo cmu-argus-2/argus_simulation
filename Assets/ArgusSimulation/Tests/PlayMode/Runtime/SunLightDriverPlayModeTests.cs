@@ -5,6 +5,7 @@ using Argus.Simulation.Core;
 using Argus.Simulation.Unity;
 using CesiumForUnity;
 using NUnit.Framework;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -62,6 +63,43 @@ namespace Argus.Simulation.Tests
             yield return null;
             Assert.That(driver.HasPhysicalLighting, Is.False);
             Assert.That(Quaternion.Angle(separateLight.transform.rotation, fallback), Is.LessThan(0.01f));
+            UnityEngine.Object.Destroy(lightObject);
+            UnityEngine.Object.Destroy(root);
+            yield return null;
+        }
+
+        // A rotated georeference object: the light still points from the ITRF93 Sun, and the night
+        // side's world-to-Earth-fixed conversion (NasaGibsRasterController) gets the same Sun back.
+        [UnityTest]
+        public IEnumerator SunFollowsARotatedGeoreference()
+        {
+            var root = new GameObject("Sun test");
+            var frame = root.AddComponent<CesiumGeoreference>();
+            frame.SetOriginLongitudeLatitudeHeight(0, 0, 0);
+            root.transform.rotation = Quaternion.Euler(40, 25, -60);
+            var runner = root.AddComponent<SimulationRunner>();
+            var driver = root.AddComponent<SunLightDriver>();
+            var spacecraft = new SpacecraftState(0, 0, DateTimeOffset.UtcNow,
+                new Vector3d(7000000, 0, 0), new Vector3d(0, 0, 0), new Quaterniond(0, 0, 0, 1),
+                new Vector3d(0, 0, 0), ReferenceFrame.Itrf93);
+            var environment = new EnvironmentState(new Vector3d(1.5e11, 0, 0),
+                new Quaterniond(0, 0, 0, 1), new Vector3d(0, 0, 0), 1);
+            typeof(SimulationRunner).GetMethod("HandleState", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(runner, new object[] { new SimulationState("sun", "test", spacecraft, null, environment) });
+            var lightObject = new GameObject("Light");
+            var light = lightObject.AddComponent<Light>();
+            var raster = root.AddComponent<NasaGibsRasterController>();
+            raster.enabled = false;
+            driver.Configure(runner, frame, light, raster);
+            yield return null;
+            yield return null;
+
+            Vector3 towardSun = -light.transform.forward;
+            // At (0, 0, 0) the Sun on ECEF +x is straight up the georeference's local axes.
+            Assert.That(Vector3.Dot(towardSun, root.transform.up), Is.GreaterThan(0.999f));
+            Vector3 local = root.transform.InverseTransformDirection(towardSun);
+            double3 ecef = frame.TransformUnityDirectionToEarthCenteredEarthFixed(new double3(local.x, local.y, local.z));
+            Assert.That(ecef.x / Math.Sqrt(ecef.x * ecef.x + ecef.y * ecef.y + ecef.z * ecef.z), Is.GreaterThan(0.999));
             UnityEngine.Object.Destroy(lightObject);
             UnityEngine.Object.Destroy(root);
             yield return null;
