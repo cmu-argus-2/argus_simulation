@@ -73,8 +73,9 @@ def iterate_tiles(max_level):
 
 
 def build_url(layer, date, image_format, bbox):
-    # Mirrors NasaGibsUrl.BuildBaseTemplate / BuildTemplate so the pixels are identical; keep
-    # them in step.
+    # Mirrors NasaGibsUrl.BuildBaseTemplate / BuildTemplate (the WMS requests, on the pack's
+    # 2 x 1, 180-degree grid) so the pixels are identical; keep them in step. Streaming without a
+    # pack uses GIBS's WMTS tiles for the listed layers instead (NasaGibsUrl.TryBuildTileTemplate).
     parts = [
         "SERVICE=WMS", "REQUEST=GetMap", "VERSION=1.1.1",
         f"LAYERS={layer}", "STYLES=default",
