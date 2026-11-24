@@ -8,7 +8,10 @@ namespace Argus.Simulation.Host
     // Headless simulation host (G2): the gateway and sensor models over BasiliskEngine, recording
     // dataset v1 with Core RunRecorder when --record is given (D6), and streaming decimated states
     // and sensor frames to Unity through Streaming/StateStreamServer (CON-1). With --replay it
-    // plays a recorded run over the same stream instead, with no Basilisk service (HOST-7).
+    // plays a recorded run over the same stream instead, with no Basilisk service (HOST-7). With
+    // --start-basilisk it starts the Basilisk service itself and stops it on exit
+    // (Basilisk/BasiliskServiceProcess), and with --stop-on-stdin-eof it stops when a launcher such
+    // as Unity's HostLauncher closes its standard input.
     // TODO(D7, G1): HOST-6 serves the gateway's controller interface (IControllerGateway, CORE-9) to HIL and
     // external controllers through Gateway/GatewayServer.
     public static class Program
@@ -49,6 +52,11 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
+            if (options.ValidateOnly)
+            {
+                return Validate(options, run);
+            }
+
             // A recording that cannot work is also bad input, rejected before connecting: an ID the
             // recorder cannot turn into a directory name, or a root it cannot write.
             using RunRecorder recorder = options.RecordDirectory == null ? null : OpenRecorder(options, run);
@@ -57,15 +65,13 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
-            using CancellationTokenSource cancellation = new CancellationTokenSource();
-            Console.CancelKeyPress += (sender, eventArgs) =>
-            {
-                eventArgs.Cancel = true;
-                cancellation.Cancel();
-            };
-
+            using CancellationTokenSource cancellation = StopRequests(options);
             try
             {
+                using BasiliskServiceProcess service = options.StartBasilisk
+                    ? BasiliskServiceProcess.Start(
+                        options.BasiliskDirectory, options.BasiliskAddress, run.Configuration.KernelSetId, cancellation.Token)
+                    : null;
                 Run(options, run, recorder, cancellation.Token);
                 return 0;
             }
@@ -99,13 +105,7 @@ namespace Argus.Simulation.Host
                 return 2;
             }
 
-            using CancellationTokenSource cancellation = new CancellationTokenSource();
-            Console.CancelKeyPress += (sender, eventArgs) =>
-            {
-                eventArgs.Cancel = true;
-                cancellation.Cancel();
-            };
-
+            using CancellationTokenSource cancellation = StopRequests(options);
             try
             {
                 StateStreamServer stream = StateStreamServer.StartAsync(options.StreamEndpoint, options.StreamPeriod)
@@ -154,7 +154,7 @@ namespace Argus.Simulation.Host
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
-                Console.Error.WriteLine("Cancelled (Ctrl+C)");
+                Console.Error.WriteLine(_stopReason);
                 return 0;
             }
             catch (Exception exception)
@@ -162,6 +162,76 @@ namespace Argus.Simulation.Host
                 Console.Error.WriteLine(exception.Message);
                 return 1;
             }
+        }
+
+        // --validate: the run file and profile have already parsed; what is left is whether the kernel
+        // set covers the run, which the service would otherwise refuse with OUT_OF_RANGE (or
+        // NOT_FOUND) once started. Exits 0 when valid and 2 when not, as a bad run file does.
+        private static int Validate(HostOptions options, RunConfigurationFile.LoadedRun run)
+        {
+            SimulationConfiguration configuration = run.Configuration;
+            string problem = KernelSetCoverage.Problem(
+                options.BasiliskDirectory ?? BasiliskServiceProcess.FindDirectory(),
+                configuration.KernelSetId,
+                configuration.EpochUtc,
+                options.DurationSeconds);
+            if (problem != null)
+            {
+                Console.Error.WriteLine($"Run configuration {options.RunConfigurationPath}: {problem}");
+                return 2;
+            }
+
+            string profile = run.ProfileFile == null ? "an inline spacecraft profile" : $"spacecraft profile {run.ProfileFile}";
+            Console.WriteLine(
+                $"Run configuration {options.RunConfigurationPath} is valid: {profile} ({run.ProfileId}), " +
+                $"{configuration.Devices.Count} devices, epoch {configuration.EpochUtc.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}, " +
+                $"{options.DurationSeconds:R} s inside kernel set {configuration.KernelSetId}'s coverage.");
+            return 0;
+        }
+
+        // Why the run was cancelled, for the log and the recorded manifest.
+        private static volatile string _stopReason = "Cancelled (Ctrl+C)";
+
+        // Cancelled by Ctrl+C, or with --stop-on-stdin-eof once standard input reaches end of file:
+        // the launcher closed it or exited.
+        private static CancellationTokenSource StopRequests(HostOptions options)
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            Console.CancelKeyPress += (sender, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                _stopReason = "Cancelled (Ctrl+C)";
+                cancellation.Cancel();
+            };
+
+            if (options.StopOnStandardInputEnd)
+            {
+                Thread watch = new Thread(() =>
+                {
+                    using Stream input = Console.OpenStandardInput();
+                    byte[] buffer = new byte[4096];
+                    while (input.Read(buffer, 0, buffer.Length) > 0)
+                    {
+                    }
+
+                    _stopReason = "Cancelled (standard input closed)";
+                    try
+                    {
+                        cancellation.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The run has already ended.
+                    }
+                })
+                {
+                    IsBackground = true,
+                    Name = "stdin-eof"
+                };
+                watch.Start();
+            }
+
+            return cancellation;
         }
 
         // Why a run that lifts the physical-actuator inhibit can't run at this pace, or null (CORE-9).
@@ -343,7 +413,7 @@ namespace Argus.Simulation.Host
             {
                 // The manifest says the run was stopped, not that it reached its duration. A Ctrl+C
                 // during a Step RPC has already ended it, with the cancelled step as the reason.
-                gateway.Stop("Cancelled (Ctrl+C)");
+                gateway.Stop(_stopReason);
                 throw;
             }
 

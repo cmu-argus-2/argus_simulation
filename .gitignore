@@ -70,3 +70,6 @@ ImageryPacks/
 Thumbs.db
 *.userprefs
 *.suo
+
+# Host Launcher Inspector: unsaved run-file edits while Validate runs (deleted afterwards).
+.*.unsaved.json

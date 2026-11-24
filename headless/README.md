@@ -33,8 +33,9 @@ The **Basilisk service and host run** job (BSK-11, #24) checks the two sides of 
 Basilisk link together. It installs the service from `Argus.Basilisk/uv.lock` (bsk
 included), generates its Protobuf code, and fetches and verifies the P0 kernel set
 (cached; `Argus.Basilisk/README.md` §8 "Kernels in CI"). It runs the service tests,
-where only the `argus-2026-09-25` tests may skip, then starts the service and runs the
-host against it for 60 s of the P0 run file. Last, it applies a torque through the gateway and
+where only the `argus-2026-09-25` tests may skip, then runs the host for 60 s of the P0 run
+file with `--start-basilisk`, so the host starts the service itself and must leave none
+running when it exits. Last, with a service started by the job, it applies a torque through the gateway and
 `BasiliskEngine` and checks the body rate over that step
 (`AGatewayOverTheServiceAppliesATorqueOverItsStep`, BSK-8 #21). Both sides build from `Argus.Contracts/proto`,
 so a contract change that one side does not follow fails the job: the host build, a
@@ -57,13 +58,44 @@ dotnet test headless/Tests/Argus.Simulation.Tests.EditMode.Headless.csproj
 dotnet test headless/Host.Tests/Argus.Simulation.Host.Tests.csproj
 ```
 
-The host needs a running Basilisk service (`Argus.Basilisk/README.md`). It reads a run
-configuration file, runs the gateway and its sensors over `BasiliskEngine`, and prints one
-line per simulated second:
+The host reads a run configuration file, runs the gateway and its sensors over
+`BasiliskEngine`, and prints one line per simulated second. With `--start-basilisk` it starts
+the Basilisk service itself, so nothing else needs starting:
 
 ```bash
-dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 60 --real-time-factor 0 --basilisk-endpoint 127.0.0.1:50051 --run-config headless/Host/runs/p0-default.json
+dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --start-basilisk --duration-s 60 --real-time-factor 0 --run-config headless/Host/runs/p0-default.json
 ```
+
+`--start-basilisk` needs `Argus.Basilisk/.venv` (`uv sync --frozen --all-extras`, root README)
+and nothing else set up:
+- It finds `Argus.Basilisk` above the host binary or the current directory, or takes
+  `--basilisk-dir <dir>`.
+- It runs the service's own setup steps first: `scripts/generate_protos.py`, then
+  `scripts/fetch_kernels.py <kernelSetId>` for the run file's kernel set. That check only hashes
+  files already in `kernels/` and downloads the ones that are missing.
+- It serves on the Basilisk endpoint with `--stop-on-stdin-eof` and waits for its "listening"
+  line. The service's output appears with a `[basilisk]` prefix.
+- When the host exits, for any reason including being killed, the service's standard input
+  closes and it stops.
+- If a service is already listening on the endpoint, the host uses that one and starts none.
+
+Without `--start-basilisk`, start the service first (`Argus.Basilisk/README.md` §2).
+
+`--validate` checks a run file without running it: the run file and its spacecraft profile, read
+exactly as a run reads them, then the kernel set's coverage of the whole run, from `epochUtc` to
+`epochUtc + --duration-s`. Coverage comes from the set's manifest in `Argus.Basilisk/kernel_sets/`,
+the check the service would otherwise make with OUT_OF_RANGE once the run had started. It prints
+the result and exits 0 when valid or 2 when not, and it starts and connects to nothing. Unity's
+Host Launcher Inspector runs it for its **Validate** button.
+
+```bash
+dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --validate --run-config headless/Host/runs/p0-default.json --duration-s 3600
+```
+
+`--stop-on-stdin-eof` stops the run, as Ctrl+C does, when the host's standard input closes. It is
+for a launcher such as Unity's `HostLauncher` (root README, Run the Unity visualization), so the
+host never outlives whatever started it. Don't pass it from a shell that gives the host no
+standard input, or the run stops at once.
 
 The endpoint comes from `--basilisk-endpoint`, then `ARGUS_BASILISK_ENDPOINT`, then
 `127.0.0.1:50051`. `--run-config` defaults to the `runs/p0-default.json` copied next to the
