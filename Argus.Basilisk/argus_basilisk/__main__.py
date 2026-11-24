@@ -3,6 +3,7 @@
 import argparse
 import ipaddress
 import os
+import signal
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -96,6 +97,9 @@ def main() -> None:
 
     server.start()
     if arguments.stop_on_stdin_eof:
+        # Ctrl+C in the parent's terminal reaches this process too. The parent stops it by closing
+        # stdin once its run has ended, so an interrupt here would only cut that run short.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         start_stdin_watch(server)
     print(f"BasiliskSimulationService listening on {endpoint}", flush=True)
     try:

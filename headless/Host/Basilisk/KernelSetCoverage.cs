@@ -35,7 +35,8 @@ namespace Argus.Simulation.Host
                 end = Parse(coverage.GetProperty("end").GetString());
             }
             catch (Exception exception) when (exception is JsonException || exception is FormatException ||
-                exception is InvalidOperationException || exception is System.Collections.Generic.KeyNotFoundException)
+                exception is InvalidOperationException || exception is System.Collections.Generic.KeyNotFoundException ||
+                exception is IOException || exception is UnauthorizedAccessException)
             {
                 return $"kernelSetId: cannot read coverage_utc from {manifest}: {exception.Message}";
             }
@@ -55,8 +56,12 @@ namespace Argus.Simulation.Host
             return null;
         }
 
+        // A JSON null reads as a null string, which is as unreadable as a malformed date.
         private static DateTimeOffset Parse(string value) =>
-            DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+            DateTimeOffset.Parse(
+                value ?? throw new FormatException("a coverage date is null"),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
 
         private static string Format(DateTimeOffset value) =>
             value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);

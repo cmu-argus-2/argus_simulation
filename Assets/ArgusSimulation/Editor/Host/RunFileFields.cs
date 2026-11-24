@@ -53,7 +53,7 @@ namespace Argus.Simulation.Editor
 
         public static bool Integer(string label, RunFileJson.JsonObject parent, string key, string tooltip = null)
         {
-            if (!(parent[key] is RunFileJson.Scalar scalar))
+            if (!(parent[key] is RunFileJson.Scalar scalar) || !scalar.IsInteger)
             {
                 return WrongShape(label, parent[key], "a whole number");
             }

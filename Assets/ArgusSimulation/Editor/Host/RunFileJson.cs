@@ -313,6 +313,9 @@ namespace Argus.Simulation.Editor
                 set => Text = value ? "true" : "false";
             }
 
+            public bool IsInteger => !IsString && long.TryParse(Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
+
+            // 0 when the text is not a whole number; check IsInteger first.
             public long IntegerValue
             {
                 get => long.TryParse(Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value) ? value : 0;

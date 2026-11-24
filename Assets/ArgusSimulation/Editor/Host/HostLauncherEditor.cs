@@ -140,7 +140,9 @@ namespace Argus.Simulation.Editor
             DrawProfile();
 
             EditorGUILayout.Space();
-            using (new EditorGUI.DisabledScope(_validation != null))
+            // Validate builds the host, which Play's launcher is building or running (its DLL is
+            // locked on Windows), so it waits for Play to end.
+            using (new EditorGUI.DisabledScope(_validation != null || EditorApplication.isPlayingOrWillChangePlaymode))
             {
                 if (GUILayout.Button(_validation != null ? "Validating..." : "Validate Run File and Spacecraft"))
                 {
@@ -399,56 +401,18 @@ namespace Argus.Simulation.Editor
             }
         }
 
-        private void StringField(string label, RunFileJson.JsonObject parent, string key, string tooltip)
-        {
-            if (!(parent[key] is RunFileJson.Scalar scalar) || !scalar.IsString)
-            {
-                return;
-            }
+        // A value of the wrong shape shows as a note and is never rewritten (RunFileFields).
+        private void StringField(string label, RunFileJson.JsonObject parent, string key, string tooltip) =>
+            _dirty |= RunFileFields.Text(label, parent, key, tooltip);
 
-            string value = scalar.StringValue;
-            string edited = EditorGUILayout.DelayedTextField(new GUIContent(label, tooltip), value);
-            if (edited != value)
-            {
-                scalar.StringValue = edited;
-                _dirty = true;
-            }
-        }
+        private void NumberField(string label, RunFileJson.JsonObject parent, string key, string tooltip) =>
+            _dirty |= RunFileFields.Number(label, parent, key, tooltip);
 
-        private void NumberField(string label, RunFileJson.JsonObject parent, string key, string tooltip)
-        {
-            if (parent[key] is RunFileJson.Scalar scalar)
-            {
-                NumberField(label, scalar, tooltip);
-            }
-        }
+        private void NumberField(string label, RunFileJson.Scalar scalar, string tooltip) =>
+            _dirty |= RunFileFields.Number(label, scalar, tooltip);
 
-        private void NumberField(string label, RunFileJson.Scalar scalar, string tooltip)
-        {
-            double value = scalar.NumberValue;
-            double edited = EditorGUILayout.DelayedDoubleField(new GUIContent(label, tooltip), value);
-            if (!edited.Equals(value))
-            {
-                scalar.NumberValue = edited;
-                _dirty = true;
-            }
-        }
-
-        private void IntegerField(string label, RunFileJson.JsonObject parent, string key, string tooltip)
-        {
-            if (!(parent[key] is RunFileJson.Scalar scalar))
-            {
-                return;
-            }
-
-            long value = scalar.IntegerValue;
-            long edited = EditorGUILayout.LongField(new GUIContent(label, tooltip), value);
-            if (edited != value)
-            {
-                scalar.IntegerValue = edited;
-                _dirty = true;
-            }
-        }
+        private void IntegerField(string label, RunFileJson.JsonObject parent, string key, string tooltip) =>
+            _dirty |= RunFileFields.Integer(label, parent, key, tooltip);
 
         private static string RunsDirectory => Path.Combine(HostLauncher.RepositoryRoot, "headless", "Host", "runs");
 
@@ -519,6 +483,9 @@ namespace Argus.Simulation.Editor
             }
 
             target = Path.GetFullPath(target);
+            // Kept so a file that can't be written leaves the run file and its edits as they were.
+            string loadedPath = _loadedPath;
+            RunFileJson.JsonObject runFile = (RunFileJson.JsonObject)_runFile.Clone();
             string profile = ProfilePath();
             if (profile != null && !Path.IsPathRooted(((RunFileJson.Scalar)_runFile["spacecraftProfile"]).StringValue))
             {
@@ -527,7 +494,13 @@ namespace Argus.Simulation.Editor
             }
 
             _loadedPath = target;
-            Save();
+            if (!Save())
+            {
+                _loadedPath = loadedPath;
+                _runFile = runFile;
+                return;
+            }
+
             _runConfiguration.stringValue = RepositoryPath(target);
             serializedObject.ApplyModifiedProperties();
             Load(target);
@@ -575,17 +548,20 @@ namespace Argus.Simulation.Editor
             }
         }
 
-        private void Save()
+        // False when the file could not be written; the edits stay unsaved.
+        private bool Save()
         {
             try
             {
                 File.WriteAllText(_loadedPath, _runFile.Write());
                 _dirty = false;
                 _lastValidation = null;
+                return true;
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
             {
                 _lastValidation = new ValidationResult(false, $"Could not save {Relative(_loadedPath)}: {exception.Message}");
+                return false;
             }
         }
 

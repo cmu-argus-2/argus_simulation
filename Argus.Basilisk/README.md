@@ -43,8 +43,8 @@ uv sync --frozen --all-extras
 
 `headless/Host --start-basilisk` runs these steps itself and stops the service when it exits
 (`headless/README.md`, Run). It serves with `--stop-on-stdin-eof`, so the service stops once its
-standard input closes, when the host closes it or exits. Without that flag the service runs
-until Ctrl+C.
+standard input closes, when the host closes it or exits. With that flag the service ignores
+Ctrl+C, which the host handles by ending its run first. Without it the service runs until Ctrl+C.
 
 ### Reproducible environment (BSK-12, #86)
 
