@@ -41,6 +41,29 @@ namespace Argus.Simulation.Tests
         }
 
         [Test]
+        public void TryBuildTileTemplate_UsesGibsPreRenderedTilesForListedLayersOnly()
+        {
+            DateTimeOffset date = new DateTimeOffset(2025, 6, 21, 0, 0, 0, TimeSpan.Zero);
+            Assert.That(NasaGibsUrl.TryBuildTileTemplate(NasaGibsUrl.DefaultLayer, date, out string observation, out int observationLevel), Is.True);
+            Assert.That(observation, Is.EqualTo(
+                "https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/" +
+                "2025-06-21/250m/{z}/{reverseY}/{x}.jpg"));
+            Assert.That(observationLevel, Is.EqualTo(8));
+
+            Assert.That(NasaGibsUrl.TryBuildTileTemplate(NasaGibsUrl.DefaultBaseLayer, date, out string baseLayer, out int baseLevel), Is.True);
+            Assert.That(baseLayer, Is.EqualTo(
+                "https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/BlueMarble_NextGeneration/default/500m/{z}/{reverseY}/{x}.jpeg"));
+            Assert.That(baseLevel, Is.EqualTo(7));
+
+            // Not listed: it streams through WMS.
+            Assert.That(NasaGibsUrl.TryBuildTileTemplate("MODIS_Terra_Aerosol", date, out _, out _), Is.False);
+
+            // 2 x 1 root tiles of 288 degrees, as GIBS's EPSG:4326 tile matrix sets.
+            Assert.That((NasaGibsUrl.TileGridEast - NasaGibsUrl.TileGridWest) / 2.0, Is.EqualTo(288.0));
+            Assert.That(NasaGibsUrl.TileGridNorth - NasaGibsUrl.TileGridSouth, Is.EqualTo(288.0));
+        }
+
+        [Test]
         public void TryParseDate_AcceptsIsoDateOnly()
         {
             Assert.That(NasaGibsUrl.TryParseDate("2025-06-21", out DateTimeOffset date), Is.True);

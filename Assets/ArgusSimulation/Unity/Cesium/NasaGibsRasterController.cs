@@ -242,21 +242,11 @@ namespace Argus.Simulation.Unity
             try
             {
                 // Build the streaming templates first: BuildTemplate validates the layer, which
-                // also names the pack folder.
-                string baseTemplate = NasaGibsUrl.BuildBaseTemplate();
+                // also names the pack folder. A pack keeps its own grid; otherwise a layer GIBS
+                // serves as pre-rendered tiles streams from them, and any other layer from WMS.
                 string observationTemplate = NasaGibsUrl.BuildTemplate(layer, date);
-                ConfigureOverlay(
-                    _baseOverlay,
-                    ResolvePackTemplate(NasaGibsUrl.DefaultBaseLayer, StaticPackDate) ?? baseTemplate,
-                    "0",
-                    false,
-                    90.0);
-                ConfigureOverlay(
-                    _observationOverlay,
-                    ResolvePackTemplate(layer, observationDateUtc) ?? observationTemplate,
-                    "1",
-                    true,
-                    90.0);
+                ConfigureLayer(_baseOverlay, NasaGibsUrl.DefaultBaseLayer, StaticPackDate, date, "0", false);
+                ConfigureLayer(_observationOverlay, layer, observationDateUtc, date, "1", true, observationTemplate);
 
                 if (!NasaGibsUrl.TryParseDate(nightDateUtc, out DateTimeOffset nightDate))
                 {
@@ -284,7 +274,34 @@ namespace Argus.Simulation.Unity
             }
         }
 
-        // The night layer keeps streaming: its tiles follow the moving night-side rectangle,
+        private void ConfigureLayer(
+            CesiumUrlTemplateRasterOverlay overlay,
+            string gibsLayer,
+            string packDate,
+            DateTimeOffset date,
+            string materialKey,
+            bool showCredits,
+            string wmsTemplate = null)
+        {
+            string packTemplate = ResolvePackTemplate(gibsLayer, packDate);
+            if (packTemplate != null)
+            {
+                ConfigureOverlay(overlay, packTemplate, materialKey, showCredits, 90.0);
+                return;
+            }
+
+            if (NasaGibsUrl.TryBuildTileTemplate(gibsLayer, date, out string tileTemplate, out int tileLevel))
+            {
+                ConfigureOverlay(overlay, tileTemplate, materialKey, showCredits, NasaGibsUrl.TileGridNorth,
+                    NasaGibsUrl.TileGridWest, NasaGibsUrl.TileGridEast, NasaGibsUrl.TileGridSouth,
+                    Math.Min(maximumLevel, tileLevel));
+                return;
+            }
+
+            ConfigureOverlay(overlay, wmsTemplate ?? NasaGibsUrl.BuildBaseTemplate(), materialKey, showCredits, 90.0);
+        }
+
+        // The night layer keeps streaming from WMS: its tiles follow the moving night-side rectangle,
         // so they never line up with a pre-downloaded grid. packLayer and packDate are already
         // validated, so they cannot leave the pack root.
         private string ResolvePackTemplate(string packLayer, string packDate)
@@ -411,12 +428,18 @@ namespace Argus.Simulation.Unity
                 : gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
         }
 
+        // The 2 x 1 grid of 180-degree root tiles over the globe, which WMS and the packs use,
+        // unless a tile grid is given.
         private void ConfigureOverlay(
             CesiumUrlTemplateRasterOverlay overlay,
             string templateUrl,
             string materialKey,
             bool showCredits,
-            double northLatitude)
+            double northLatitude,
+            double west = -180.0,
+            double east = 180.0,
+            double south = -90.0,
+            int? levels = null)
         {
             overlay.enabled = false;
             overlay.materialKey = materialKey;
@@ -425,12 +448,12 @@ namespace Argus.Simulation.Unity
             overlay.specifyTilingScheme = true;
             overlay.rootTilesX = 2;
             overlay.rootTilesY = 1;
-            overlay.rectangleWest = -180.0;
-            overlay.rectangleSouth = -90.0;
-            overlay.rectangleEast = 180.0;
+            overlay.rectangleWest = west;
+            overlay.rectangleSouth = south;
+            overlay.rectangleEast = east;
             overlay.rectangleNorth = northLatitude;
             overlay.minimumLevel = 0;
-            overlay.maximumLevel = maximumLevel;
+            overlay.maximumLevel = levels ?? maximumLevel;
             overlay.tileWidth = 512;
             overlay.tileHeight = 512;
             overlay.showCreditsOnScreen = showCredits;

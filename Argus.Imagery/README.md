@@ -1,6 +1,7 @@
 # Offline NASA GIBS imagery pack
 
-By default the simulator streams NASA GIBS imagery tile by tile while it runs. For tests and
+By default the simulator streams NASA GIBS imagery tile by tile while it runs: the base and the
+true-color layers as GIBS's pre-rendered JPEG tiles (WMTS), other layers through WMS. For tests and
 dataset generation you can instead download the full-resolution imagery once and have Unity
 read it from disk. The base and observation layers then give identical pixels every time,
 load without GIBS, and never hit a load timeout. Night lights still stream (see below).
@@ -15,7 +16,7 @@ from tiles sampled from GIBS in September 2026:
 
 | Layer | Format | Size |
 |---|---|---|
-| VIIRS true color, one date | PNG (what the simulator streams) | ~30 GB |
+| VIIRS true color, one date | PNG (as WMS serves it) | ~30 GB |
 | VIIRS true color, one date | JPEG (`--format jpeg`) | ~3 GB |
 | Blue Marble base (shared by every date) | JPEG | ~1.6 GB |
 

@@ -62,11 +62,13 @@ From the repository root:
 
 ```bash
 dotnet test headless/Tests/Argus.Simulation.Tests.EditMode.Headless.csproj
-dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --duration-s 60 --basilisk-endpoint 127.0.0.1:50051
+dotnet run --project headless/Host/Argus.Simulation.Host.csproj -- --start-basilisk --duration-s 60
 ```
 
-The first command needs only the .NET SDK. The second runs the host against a Basilisk
-service that is already serving, with the P0 run file `headless/Host/runs/p0-default.json`.
+The first command needs only the .NET SDK. The second runs the host with the P0 run file
+`headless/Host/runs/p0-default.json`. `--start-basilisk` starts the Basilisk service for the run
+(it needs the `.venv` above) and stops it afterwards. Without it, the host uses a service that
+is already serving on `--basilisk-endpoint` (default `127.0.0.1:50051`).
 To keep the run, add `--record <dir>`:
 
 ```bash
@@ -123,18 +125,49 @@ When Unity opens for the first time:
 
 1. Wait for the Cesium package and other dependencies to finish importing.
 2. Open `Assets/ArgusSimulation/Scenes/Foundation.unity`. It is tracked in Git; **Argus Simulation > Create Foundation Scene** regenerates it and overwrites the tracked file.
-3. Start the simulation: the Basilisk service and `headless/Host`, as in
-   [headless/README.md](headless/README.md). The host's run file is the only simulation; Unity
-   runs none of its own and follows the host's state stream on `127.0.0.1:50052`.
-4. Press the **Play** button. The toolbar shows **FOLLOWING HOST** once states arrive, or
-   **CONNECTING TO HOST** / **HOST DISCONNECTED** while the host is not streaming; Unity keeps
-   retrying, so the host can start before or after Play. While the host replays a recorded run
+3. Set up the Basilisk service once (`uv sync`, above) and install the .NET 8 SDK. You don't
+   start anything yourself: the scene's **Simulation** object has a **Host Launcher**
+   component. On Play it builds `headless/Host` and runs it with `--start-basilisk`, which also
+   starts the Basilisk service, and it stops both when Play ends. Its Inspector sets the run:
+   - the run file (default `headless/Host/runs/p0-default.json`);
+   - the duration (default 3600 s);
+   - the real-time factor (default 1, real time);
+   - an optional record folder, or a recorded run to replay instead.
+
+   Under those settings you edit the scenario without opening any JSON:
+   - **Run File** picks a run file from `headless/Host/runs/` and shows its scenario: the epoch,
+     fixed step, random seed, kernel set, initial orbit, initial attitude and body rate, and the
+     spacecraft profile it flies.
+   - **Spacecraft Profile** shows that profile: its ID, the body's mass and inertia, and every
+     device. Each device has its ID, model, frame, sample period, controller visibility and
+     mount, then the parameters its kind declares, with a field of the right type for each. The
+     fields come from Core's kind registry (`Core/Contracts/DeviceKinds.cs`), so a new kind
+     appears with no Unity change. **Add Device** adds a device of any registered kind: it
+     copies the profile's last device of that kind with a new ID, or starts from zeros.
+     **Remove** takes one out.
+   - **Save** writes only the values you changed, keeping the rest of each file as it was;
+     **Revert** reloads. **Save As...** starts a new run file, and **Save Profile As...** a new
+     spacecraft that the run file then flies. A profile that other run files fly says so before
+     you change it.
+   - **Validate Run File and Spacecraft** asks the host to check both as shown, saved or not,
+     with the parser a run uses. It also checks that the kernel set covers the run from the epoch
+     to the epoch plus the duration, and shows the result or the error, naming the field.
+
+   Play runs the saved files.
+   The host's and the service's output appears in the Console with `[host]` and `[basilisk]`
+   prefixes. The host's run file is the only simulation; Unity runs none of its own and follows
+   the host's state stream on `127.0.0.1:50052`. To follow a host you started yourself
+   ([headless/README.md](headless/README.md)), untick **Launch On Play**.
+4. Press the **Play** button. The toolbar shows **CONNECTING TO HOST** while the host builds
+   and the service starts (a few seconds), then **FOLLOWING HOST** once states arrive, or
+   **HOST DISCONNECTED** after the run ends; Unity keeps retrying, so a host you start by hand
+   can start before or after Play. While the host replays a recorded run
    (`--replay`, HOST-7) instead of running one, it shows **REPLAYING RECORDED RUN**, and the
    stream panel tags the run `REPLAY`.
 
 The scene is at `Assets/ArgusSimulation/Scenes/Foundation.unity`. On later runs, open that scene and press **Play**; it does not need to be regenerated.
 
-NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-06-21`, a date with daylight imagery up to the north pole. To change it, use the **SETTINGS** panel in the top toolbar, pass `-gt-date YYYY-MM-DD` and `-gt-layer LAYER` on the command line, or select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
+NASA imagery defaults to `VIIRS_SNPP_CorrectedReflectance_TrueColor` for `2025-06-21`, a date with daylight imagery up to the north pole. The Blue Marble base and the VIIRS and MODIS true-color layers stream as GIBS's pre-rendered tiles (WMTS, JPEG). That source is reliable, unlike GIBS's on-demand WMS, which sometimes answers with an error page instead of an image. In those tiles a day's orbit gaps are black rather than showing the base. Other layers, and the night lights, still stream through WMS (`Core/Imaging/NasaGibsUrl.cs`). To change it, use the **SETTINGS** panel in the top toolbar, pass `-gt-date YYYY-MM-DD` and `-gt-layer LAYER` on the command line, or select **Cesium World Terrain + NASA GIBS** in the Unity hierarchy and edit the layer or date in the Inspector.
 
 For tests and dataset generation you can optionally download the full-resolution imagery once
 (~31 GB per date as PNG, ~5 GB as JPEG) and have Unity read it from disk instead of streaming.
