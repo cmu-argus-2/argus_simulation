@@ -1180,3 +1180,26 @@ def test_magnetic_torquers_need_the_wmm_file_in_the_kernel_set(service, monkeypa
     code, details = status_of(stub.ConfigureRun, actuator_request(magnetic_torquer()))
     assert code == grpc.StatusCode.FAILED_PRECONDITION
     assert "WMM2025.COF" in details and "magnetic torquer" in details
+
+
+# --- Started by headless/Host (--start-basilisk) ------------------------------------------------
+
+
+def test_the_service_stops_when_its_standard_input_closes():
+    # headless/Host --start-basilisk holds the service's stdin; closing it, or the host exiting, ends the service.
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    service = subprocess.Popen(
+        [sys.executable, "-m", "argus_basilisk", "--endpoint", f"127.0.0.1:{port}", "--stop-on-stdin-eof"],
+        cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        assert service.stdout.readline().startswith(f"BasiliskSimulationService listening on 127.0.0.1:{port}")
+        service.stdin.close()
+        assert service.wait(timeout=30) == 0
+    finally:
+        if service.poll() is None:
+            service.kill()
+            service.wait()

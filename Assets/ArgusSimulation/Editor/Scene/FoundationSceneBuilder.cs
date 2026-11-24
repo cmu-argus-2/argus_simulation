@@ -98,6 +98,8 @@ namespace Argus.Simulation.Editor
             SimulationRunner runner = simulation.AddComponent<SimulationRunner>();
             runner.Configure(stateSource);
             simulation.AddComponent<NavigationEpisodeExporter>();
+            // Starts headless/Host and the Basilisk service on Play and stops them after (Editor only).
+            simulation.AddComponent<HostLauncher>();
 
             GameObject spacecraft = new GameObject("CubeSat Truth Pose");
             spacecraft.transform.SetParent(geospatialRoot.transform, false);

@@ -1,8 +1,11 @@
-"""Serve BasiliskSimulationService: python -m argus_basilisk [--endpoint host:port]."""
+"""Serve BasiliskSimulationService: python -m argus_basilisk [--endpoint host:port] [--stop-on-stdin-eof]."""
 
 import argparse
 import ipaddress
 import os
+import signal
+import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import grpc
@@ -54,11 +57,32 @@ def build_server(servicer: BasiliskSimulationServicer | None = None) -> grpc.Ser
     return server
 
 
+def start_stdin_watch(server: grpc.Server) -> threading.Thread:
+    """Stop the server once standard input reaches end of file.
+
+    The parent holds the other end of the pipe, so it closes when the parent closes it or exits, even if the
+    parent is killed: a service started by headless/Host never outlives it (README §2).
+    """
+    def watch() -> None:
+        while sys.stdin.buffer.read(65536):
+            pass
+        server.stop(None)
+
+    thread = threading.Thread(target=watch, name="stdin-eof", daemon=True)
+    thread.start()
+    return thread
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="argus_basilisk", description=__doc__)
     parser.add_argument(
         "--endpoint",
         help=f"host:port to serve on (default: ${ENDPOINT_VARIABLE}, then {DEFAULT_ENDPOINT})")
+    parser.add_argument(
+        "--stop-on-stdin-eof",
+        action="store_true",
+        help="stop when standard input closes, so the service ends with the process that started it "
+             "(headless/Host --start-basilisk); without it the service runs until Ctrl+C")
     arguments = parser.parse_args()
     endpoint = parse_endpoint(
         parser, arguments.endpoint or os.environ.get(ENDPOINT_VARIABLE) or DEFAULT_ENDPOINT)
@@ -72,6 +96,11 @@ def main() -> None:
         raise SystemExit(f"Cannot bind {endpoint}")
 
     server.start()
+    if arguments.stop_on_stdin_eof:
+        # Ctrl+C in the parent's terminal reaches this process too. The parent stops it by closing
+        # stdin once its run has ended, so an interrupt here would only cut that run short.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        start_stdin_watch(server)
     print(f"BasiliskSimulationService listening on {endpoint}", flush=True)
     try:
         server.wait_for_termination()
