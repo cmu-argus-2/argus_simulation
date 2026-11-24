@@ -515,6 +515,21 @@ from the SPICE Sun planet state; plus the per-sensor links below.
 The accelerometer keys follow the gyroscope rules. Noise density and random walk exclude each
 other per channel.
 
+**One noise term per channel (BSK-10, #23).** bsk 2.12.2's `imuSensor` still keeps one
+Gauss-Markov state per axis, so each channel models white noise or a bias random walk, not
+both. The service adds neither an upstream patch with a separate bias state nor a service-side
+combination, and keeps refusing a channel with both terms (§3).
+- **P0 keeps white noise on both channels**, with both random walks and bounds 0 (DATA-1, #67):
+  - gyroscope noise density 1.2217e-4 rad/s/√Hz;
+  - accelerometer noise density 1.7652e-3 m/s²/√Hz.
+- **Why:**
+  - the BMX160 gyroscope's bias stability, 3 °/h (1.45e-5 rad/s), is small next to its
+    zero-rate offset of up to ±3 °/s, which P0 doesn't model either;
+  - the accelerometer has no in-run stability spec.
+- **A part whose bias drift matters** needs a separate bias state, from an upstream
+  `imuSensor` change or a walk the service adds from its own seed stream (§10), before the
+  refusal is lifted.
+
 | Output key | Type | Basilisk |
 |---|---|---|
 | `angular_velocity_sensor_rad_per_s` | vector3 | Gyroscope module `sensorOutMsg.AngVelPlatform`: body relative to inertial, sensor axes |
