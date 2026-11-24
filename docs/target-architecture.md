@@ -86,7 +86,7 @@ flowchart TB
 
 | Block | Where | On `main` today | Target role | Status |
 |---|---|---|---|---|
-| Globe view + visualization | `Unity/Cesium/`, `Unity/Visualization/` | Cesium tileset, GIBS layers, globe camera, CubeSat pose, orbit trail; fixed Sun light | Sun light and night side follow the state's environment; orbit trail from state history | main (environment lighting planned) |
+| Globe view + visualization | `Unity/Cesium/`, `Unity/Visualization/` | Cesium tileset, GIBS layers, globe camera, CubeSat pose, orbit trail; environment-driven Sun light | Sun light and night side follow the state's environment; orbit trail from state history | implemented (UNITY-3) |
 | Camera rig / renderer | `Unity/Cameras/` | `CubeSatCameraRig` renders 4 body cameras and a north-up nadir ground-truth camera every frame | Implements `IImageRenderer`: renders each `CameraModel` `RenderRequest` and returns an `ImageFrame` | main (renderer role planned) |
 | SimulationRunner | `Unity/Runtime/SimulationRunner.cs` | Follower: publishes the host's states as `StateStreamClient` delivers them, never stepping, re-timing or pausing them; `CesiumSpacecraftPoseDriver` interpolates between them for display | Same | main (UNITY-6) |
 | State source | `Unity/Runtime/StateStreamClient.cs` (`ISimulationStateSource`) | The scene's only source: the host's state stream (UNITY-5). Unity runs no simulation of its own, so the host's run file is the one configuration (G5) | Same | main |
@@ -354,7 +354,6 @@ for provenance and the offline GPU validation command.
 
 **Known issues:**
 
-- The scene's Sun light is fixed.
 - The dated GIBS day layer comes from a single date, and no date has daylight imagery at
   both poles.
 - Orbit and attitude nudges are gone until they can be engine commands sent to the host

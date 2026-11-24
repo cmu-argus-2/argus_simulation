@@ -191,7 +191,7 @@ See [Argus.Imagery/README.md](Argus.Imagery/README.md).
   **LOADING NADIR** while Cesium loads only the nadir view (up to 30 s); the run is never held.
   A hidden look-ahead camera preloads imagery about 4 wall-clock seconds ahead of the nadir camera
   at the rate the host's run advances.
-- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar side of the scene's fixed Sun light, including the part past the antimeridian. The Sun itself is still fixed; see the known issues in [the target architecture](docs/target-architecture.md#7-gaps).
+- Daytime imagery and cloud coverage remain visible, while NASA `VIIRS_Night_Lights` follows the anti-solar side of the scene's Sun light, including the part past the antimeridian. SunLightDriver uses the streamed EnvironmentState Sun for both lighting and the night side. Without environment data it restores the fixed light and the dashboard labels it Non-physical lighting.
 
 Captured images and `navigation_metadata.jsonl` are written to:
 

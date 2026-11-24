@@ -65,6 +65,7 @@ namespace Argus.Simulation.Tests
             Assert.That(GameObject.Find("Pose Controls"), Is.Null);
             Assert.That(GameObject.Find("Stream Status"), Is.Not.Null);
             Text telemetry = GameObject.Find("Telemetry Text").GetComponent<Text>();
+            StringAssert.Contains("Non-physical lighting", telemetry.text);
             StringAssert.Contains("SPACECRAFT TRUTH", telemetry.text);
             StringAssert.Contains("HOST SENSORS", telemetry.text);
             // Every streamed sensor with its status; only frames with a reading show one.
